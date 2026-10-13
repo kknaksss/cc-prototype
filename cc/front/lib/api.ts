@@ -1,0 +1,108 @@
+// back 호출은 이 모듈에서만 한다(rules: 컴포넌트에서 직접 fetch 금지).
+import type {
+  Board,
+  LoginResult,
+  MutationResult,
+  OrderStep,
+  PatientDetail,
+  StaffAccount,
+  StaffHome,
+} from './types';
+
+export const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8600').replace(/\/$/, '');
+
+export class ApiError extends Error {
+  constructor(
+    public status: number,
+    public code: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+async function request<T>(path: string, init?: { method?: 'GET' | 'POST'; body?: unknown }): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(API_BASE + path, {
+      method: init?.method ?? 'GET',
+      headers: init?.body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+      body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
+      cache: 'no-store',
+    });
+  } catch {
+    throw new ApiError(0, 'network', '서버에 연결할 수 없어요');
+  }
+  const data: unknown = await res.json().catch(() => null);
+  if (!res.ok) {
+    const err = (data as { error?: { code?: string; message?: string } } | null)?.error;
+    throw new ApiError(res.status, err?.code ?? 'error', err?.message ?? '요청을 처리하지 못했어요');
+  }
+  return data as T;
+}
+
+const post = <T>(path: string, body: unknown) => request<T>(path, { method: 'POST', body });
+
+// §5.2 읽기
+export const getBoard = () => request<Board>('/api/board');
+export const getStaffList = () => request<StaffAccount[]>('/api/staff');
+export const getStaffHome = (staffId: string) => request<StaffHome>(`/api/staff/${encodeURIComponent(staffId)}/home`);
+export const getPatient = (scheduleId: string) => request<PatientDetail>(`/api/patients/${encodeURIComponent(scheduleId)}`);
+
+// §6 로그인
+export const login = (staffId: string) => post<LoginResult>('/api/login', { staffId });
+
+// §5.3 조작
+export const assign = (staffId: string, room: string) => post<MutationResult>('/api/board/assign', { staffId, room });
+export const complete = (staffId: string, room: string) => post<MutationResult>('/api/board/complete', { staffId, room });
+export const removeStaff = (staffId: string, room: string) =>
+  post<MutationResult>('/api/board/remove-staff', { staffId, room });
+export const place = (scheduleId: string, room: string) => post<MutationResult>('/api/board/place', { scheduleId, room });
+// 현장 접수는 일정이 없어 scheduleId 대신 이름을 보낸다
+export const checkIn = (scheduleId: string | null, order: OrderStep[], name?: string) =>
+  post<MutationResult>('/api/board/check-in', scheduleId ? { scheduleId, order } : { scheduleId: null, name, order });
+export const undo = (version: number) => post<MutationResult>('/api/board/undo', { version });
+export const startCare = (staffId: string, scheduleId: string) =>
+  post<MutationResult>(`/api/staff/${encodeURIComponent(staffId)}/start`, { scheduleId });
+export const finishCare = (staffId: string, scheduleId: string) =>
+  post<MutationResult>(`/api/staff/${encodeURIComponent(staffId)}/finish`, { scheduleId });
+
+// §5.4 초기화
+export const resetBoard = () => post<MutationResult>('/api/admin/reset', {});
+
+// §5.2 SSE — `event: state` `data: {"version": n}`. 화면 안 구독자는 연결 하나를 같이 쓴다.
+// 끊기면 EventSource 가 알아서 다시 붙고, 붙을 때마다(open) 한 번 다시 읽는다(끊긴 사이 변경을 놓치지 않게)
+type StateListener = (version: number | null) => void;
+const listeners = new Set<StateListener>();
+let source: EventSource | null = null;
+
+export function subscribeState(onState: StateListener): () => void {
+  listeners.add(onState);
+  if (!source) {
+    source = new EventSource(API_BASE + '/api/events');
+    source.addEventListener('state', (e) => {
+      let v: number | null = null;
+      try {
+        v = (JSON.parse((e as MessageEvent<string>).data) as { version?: number }).version ?? null;
+      } catch {
+        v = null;
+      }
+      listeners.forEach((l) => l(v));
+    });
+    source.addEventListener('open', () => listeners.forEach((l) => l(null)));
+  }
+  return () => {
+    listeners.delete(onState);
+    if (!listeners.size && source) {
+      source.close();
+      source = null;
+    }
+  };
+}
+
+// §7 통역 WS — `ws://<back>/api/interpret` (계약: interpret-ws-contract.md). 주소는 API_BASE 의 http→ws
+export function openInterpretSocket(): WebSocket {
+  const ws = new WebSocket(API_BASE.replace(/^http/, 'ws') + '/api/interpret');
+  ws.binaryType = 'arraybuffer';
+  return ws;
+}

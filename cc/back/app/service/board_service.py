@@ -1,4 +1,4 @@
-"""현황판 상태 서비스 — 조작(§5.3) · 되돌리기 · version · 초기화(§4.2) · 「이걸 시드로」(§4.3)."""
+"""현황판 서비스 — 읽기(§5.2) · 조작(§5.3) · 되돌리기 · version · 초기화 · 「이걸 시드로」(§6)."""
 
 import json
 import threading
@@ -7,18 +7,46 @@ from datetime import datetime
 from pathlib import Path
 
 from app.domain import board as B
-from app.domain.errors import BadRequest, Conflict, NotFound
+from app.domain.errors import BadRequest, NotFound
 from app.domain.rooms import CORRIDORS, rooms_payload
 from app.repository.state_repo import StateRepository
 from app.seed.capture import KST
 from app.service.events import EventBus
 from app.service.snapshot import snapshot_to_state, state_to_snapshot
 
-CUSTOMER_FIELDS = ("scheduleId", "name", "nationality", "room", "order", "step", "since", "prev", "done")
+CUSTOMER_FIELDS = ("scheduleId", "name", "isNew", "nationality", "location", "prevRoom", "flowStep",
+                   "receptionAt", "completedAt", "since", "unpaidAmount", "paid")
+STEP_FIELDS = ("stepId", "order", "kind", "label", "kosSequence", "ticketId", "assigneeId", "state",
+               "assignedAt", "startedAt", "endedAt", "paymentRequired")
+DESK = "desk"
 
 
 def now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def step_view(d: dict, s: dict) -> dict:
+    return {**{k: s.get(k) for k in STEP_FIELDS}, "assigneeName": B.staff_name(d, s.get("assigneeId")) or None}
+
+
+def customer_view(d: dict, c: dict) -> dict:
+    view = {k: c.get(k) for k in CUSTOMER_FIELDS}
+    view["unpaidAmount"] = view["unpaidAmount"] or 0
+    view["paid"] = bool(view["paid"])
+    return {**view, "status": B.status_of(d, c),
+            "steps": [step_view(d, s) for s in B.steps_of(d, c["scheduleId"])]}
+
+
+def staff_work(d: dict, staff_id: str) -> list[dict]:
+    """직원의 지금 일 — 진행 중 → 배정(시작 전, 배정 순)."""
+    mine = [s for s in d["steps"] if s.get("assigneeId") == staff_id and s["state"] in ("in_progress", "assigned")]
+    mine.sort(key=lambda s: (s["state"] != "in_progress", s.get("assignedAt") or 0))
+    out = []
+    for s in mine:
+        c = next((x for x in d["customers"] if x["scheduleId"] == s["scheduleId"]), {})
+        out.append({"stepId": s["stepId"], "scheduleId": s["scheduleId"], "customerName": c.get("name"),
+                    "location": c.get("location"), "kind": s["kind"], "label": s["label"], "state": s["state"]})
+    return out
 
 
 class BoardService:
@@ -38,98 +66,84 @@ class BoardService:
 
     def board(self) -> dict:
         with self._lock:
-            st = self.repo.load_state()
+            d = self.repo.load_state()
             version = self.version()
         return {
-            "customers": [{k: c.get(k) for k in CUSTOMER_FIELDS} for c in st["customers"]],
-            "staff": st["staff"],
-            "resv": st["resv"],
-            "rooms": rooms_payload(),
+            "rooms": [{**r, "unpaidAmount": sum((c.get("unpaidAmount") or 0) for c in d["customers"]
+                                                if B.is_here(c) and c["location"] == r["id"])} for r in rooms_payload()],
             "corridors": CORRIDORS,
+            "customers": [customer_view(d, c) for c in d["customers"]],
+            "staff": [{**s, "work": staff_work(d, s["staffId"])} for s in d["staff"]],
+            "resv": d["resv"],
             "version": version,
             "now": self.clock(),
         }
 
-    # ── 쓰기 공통: 시안 commit → 저장 → version+1 → SSE ──
-    def _mutate(self, fn: B.Mutation, undoable: bool = True) -> dict:
+    # ── 쓰기 공통: 조작 → commit → 저장 → version+1 → SSE ──
+    def _run(self, make_op, actor: str = DESK) -> dict:
         with self._lock:
             before = self.repo.load_state()
-            after = B.commit(before, fn, self.clock())
+            now = self.clock()
+            after = B.commit(before, make_op({"now": now, "actor": actor}), now)
             version = self.version() + 1
-            undo = {"version": version, "state": before} if undoable else None
-            self.repo.save_state(after, {"version": version, "undo": undo})
+            self.repo.save_state(after, {"version": version, "undo": {"version": version, "state": before}})
         self.bus.publish(version)
         return {"version": version}
 
-    def assign(self, staff_id: str, room: str) -> dict:
-        B.check_room(room)
-        return self._mutate(B.assign(staff_id, room))
-
-    def complete(self, staff_id: str, room: str) -> dict:
-        B.check_room(room)
-        return self._mutate(B.complete(staff_id, room))
-
-    def remove_staff(self, staff_id: str, room: str) -> dict:
-        B.check_room(room)
-        return self._mutate(B.remove_staff(staff_id, room))
+    def check_in(self, schedule_id: str, steps: list[dict]) -> dict:
+        return self._run(lambda ctx: B.check_in(ctx, schedule_id, steps))
 
     def place(self, schedule_id: str, room: str) -> dict:
-        B.check_room(room)
-        return self._mutate(B.place(schedule_id, room))
+        return self._run(lambda ctx: B.place(ctx, schedule_id, room))
 
-    def check_in(self, schedule_id: str | None, name: str | None, order: list[dict] | None) -> dict:
-        with self._lock:
-            st = self.repo.load_state()
-            if schedule_id:
-                row = next((r for r in st["resv"] if r["scheduleId"] == schedule_id), None)
-                if not row:
-                    raise NotFound("reservation_not_found", f"예약 {schedule_id} 이 없어요")
-                if row["st"] != "booked" or any(c["scheduleId"] == schedule_id for c in st["customers"]):
-                    raise Conflict("already_checked_in", "이미 접수했거나 접수할 수 없는 예약이에요")
-                derived = self.repo.get_reference("derived", schedule_id) or {}
-                ref = self.repo.get_reference("schedule", schedule_id) or {}
-                use = order or derived.get("plannedOrder") or []
-                if not use:
-                    raise BadRequest("empty_order", "오더가 비어 있어요")
-                cust = {"scheduleId": schedule_id, "name": row["name"], "order": use,
-                        "nationality": (ref.get("visitor") or {}).get("nationality", "")}
-                return self._mutate(B.check_in(cust, row, None))
-            if not name or not name.strip():
-                raise BadRequest("name_required", "현장 접수는 이름이 필요해요")
-            if not order:
-                raise BadRequest("empty_order", "오더가 비어 있어요")
-            n = int(self.repo.get_meta("walkN", 0)) + 1
-            self.repo.set_meta("walkN", n)
-            sid = f"walkin-{n}"
-            hm = datetime.fromtimestamp(self.clock() / 1000, KST).strftime("%H:%M")
-            walk = {"scheduleId": sid, "time": hm, "name": name.strip(), "procedure": "현장 접수", "doctor": "미정",
-                    "st": "checked"}
-            cust = {"scheduleId": sid, "name": name.strip(), "order": order, "nationality": ""}
-            return self._mutate(B.check_in(cust, None, walk))
+    def move_sleep(self, schedule_id: str, room: str) -> dict:
+        return self._run(lambda ctx: B.move_sleep(ctx, schedule_id, room))
+
+    def return_room(self, schedule_id: str) -> dict:
+        return self._run(lambda ctx: B.return_room(ctx, schedule_id))
+
+    def assign(self, step_id: str, staff_id: str) -> dict:
+        return self._run(lambda ctx: B.assign(ctx, step_id, staff_id))
+
+    def unassign(self, step_id: str) -> dict:
+        return self._run(lambda ctx: B.unassign(ctx, step_id))
+
+    def add_procedures(self, schedule_id: str, items: list[dict]) -> dict:
+        return self._run(lambda ctx: B.add_procedures(ctx, schedule_id, items))
+
+    def reorder(self, schedule_id: str, step_ids: list[str]) -> dict:
+        return self._run(lambda ctx: B.reorder(ctx, schedule_id, step_ids))
+
+    def discharge(self, schedule_id: str) -> dict:
+        return self._run(lambda ctx: B.discharge(ctx, schedule_id))
+
+    def start(self, staff_id: str, step_id: str) -> dict:
+        return self._run(lambda ctx: B.start(ctx, staff_id, step_id), actor=staff_id)
+
+    def _events(self, schedule_id: str) -> dict:
+        return self.repo.get_reference("events", schedule_id) or {}
+
+    def _schedule_of_step(self, step_id: str) -> str:
+        return B.find_step(self.repo.load_state(), step_id)["scheduleId"]
+
+    def finish(self, staff_id: str, step_id: str) -> dict:
+        events = self._events(self._schedule_of_step(step_id))
+        return self._run(lambda ctx: B.finish(ctx, staff_id, step_id, events), actor=staff_id)
+
+    def payment_complete(self, schedule_id: str) -> dict:
+        event = self._events(schedule_id).get("paymentDone")
+        return self._run(lambda ctx: B.payment_complete(ctx, schedule_id, event))
 
     def undo(self, version: int) -> dict:
         with self._lock:
             undo = self.repo.get_meta("undo")
             current = self.version()
             if not undo or undo["version"] != version or current != version:
-                raise Conflict("undo_unavailable", "되돌릴 수 있는 건 마지막 변경 하나뿐이에요")
+                raise BadRequest("undo_unavailable", "되돌릴 수 있는 건 마지막 조작 하나뿐이에요")
             new_version = current + 1
             self.repo.save_state(undo["state"], {"version": new_version, "undo": None})
         self.bus.publish(new_version)
         return {"version": new_version}
-
-    def doctor_start(self, staff_id: str, schedule_id: str) -> dict:
-        self._require_doctor(staff_id)
-        return self._mutate(B.doctor_start(staff_id, schedule_id))
-
-    def doctor_finish(self, staff_id: str, schedule_id: str) -> dict:
-        self._require_doctor(staff_id)
-        return self._mutate(B.doctor_finish(staff_id, schedule_id))
-
-    def _require_doctor(self, staff_id: str) -> None:
-        s = B.find_staff(self.repo.load_state(), staff_id)
-        if s["role"] != "의사":
-            raise BadRequest("not_doctor", "진료 시작 · 완료는 의사만 할 수 있어요")
 
     # ── 시드 ──
     def load_snapshot(self, snap: dict) -> dict:
@@ -138,8 +152,7 @@ class BoardService:
             self.repo.replace_reference(snap["reference"])
             state = snapshot_to_state(snap["state"], self.clock())
             version = self.version() + 1
-            self.repo.save_state(state, {"version": version, "undo": None, "walkN": snap.get("walkN", 0),
-                                         "seedMeta": snap.get("meta", {})})
+            self.repo.save_state(state, {"version": version, "undo": None, "seedMeta": snap.get("meta", {})})
         self.bus.publish(version)
         return {"version": version}
 
@@ -154,9 +167,5 @@ class BoardService:
             base = self.clock()
             meta = dict(self.repo.get_meta("seedMeta", {}) or {})
             meta.update({"kind": "save", "savedAt": datetime.fromtimestamp(base / 1000, KST).isoformat()})
-            return {
-                "meta": meta,
-                "reference": self.repo.all_reference(),
-                "state": state_to_snapshot(self.repo.load_state(), base),
-                "walkN": int(self.repo.get_meta("walkN", 0)),
-            }
+            return {"meta": meta, "reference": self.repo.all_reference(),
+                    "state": state_to_snapshot(self.repo.load_state(), base)}

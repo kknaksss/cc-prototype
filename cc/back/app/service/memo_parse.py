@@ -1,6 +1,7 @@
-"""메모 양식 파싱 — SPEC-001 §5.5 · research-patient-detail-report §A · design-staff-r2/r3.
+"""메모 양식 파싱 — SPEC-001 0.1.0 §5.5 · 0.2.0 §3.4 · research-patient-detail-report §A.
 
-원문은 고치지 않는다(자르기 · 고르기만). 앞뒤 공백 · 폭 없는 공백만 다듬는다.
+원문은 고치지 않는다(자르기 · 고르기만). 앞뒤 공백 · 폭 없는 공백만 다듬는다. `**…**` 기호도 원문 그대로 둔다(굵게는 front).
+값 없는 양식 줄(「고민:」 처럼 콜론 뒤가 빈 줄 · 「H)」 · 빈 번호 「1.」)은 숨긴다(0.2.0 §3.4).
 """
 
 import re
@@ -14,6 +15,17 @@ EMPTY_VALUES = {"", "x", "X", "x .", "X .", "-"}
 OUT_HINT = re.compile(r"(\d{1,2}\s*시[^\n]*아웃|아웃[^\n]*\d{1,2}\s*시|\d{1,2}\s*:\s*\d{2}\s*전)")
 HISTORY_LINE = re.compile(r"^\s*(H\)|받은\s*시술\s*:)\s*(.*)$")
 HISTORY_SENTENCE = re.compile(r"\d{1,2}\s*월[^\n]*하(심|셨)")
+
+
+EMPTY_FORM = re.compile(r"^\s*(?:[^:：\n]{1,30}[:：]|[A-Za-z]\)|\d{1,2}\s*[.)])\s*$")
+
+
+def is_empty_form(line: str) -> bool:
+    return bool(EMPTY_FORM.match(line))
+
+
+def drop_empty_form(lines: list[str]) -> list[str]:
+    return [ln for ln in lines if not is_empty_form(ln)]
 
 
 def clean(text: str | None) -> str:
@@ -89,7 +101,7 @@ def order_lines(order_memo: str | None) -> tuple[list[str], str | None]:
     anesthesia = None
     for ln in lines_of(order_memo):
         s = ln.strip()
-        if not s or s in flags or OUT_TIME.search(s) or TAG_LINE.match(s):
+        if not s or s in flags or OUT_TIME.search(s) or TAG_LINE.match(s) or is_empty_form(s):
             continue
         is_anes = "마취" in s
         if NUMBERED.match(s) or (s.startswith("*") and not s.startswith("**")) or is_anes:
@@ -103,7 +115,7 @@ def order_lines(order_memo: str | None) -> tuple[list[str], str | None]:
 
 def consult_summary(consult_memo: str | None) -> list[str]:
     top, _ = split_consult(consult_memo)
-    return [ln.strip() for ln in top if ln.strip() and ln.strip() != "[상담내용]"]
+    return [ln.strip() for ln in top if ln.strip() and ln.strip() != "[상담내용]" and not is_empty_form(ln)]
 
 
 def other_clinic_history(consult_memo: str | None) -> list[str]:

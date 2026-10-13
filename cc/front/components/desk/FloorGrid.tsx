@@ -1,19 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  CORRIDORS,
-  EMPTY,
-  LAYOUT,
-  ROLE_DOT,
-  STAFFED,
-  STATUS,
-  capOf,
-  custIn,
-  presentIn,
-  queuedIn,
-  statusOf,
-} from '@/lib/board';
+import { BOX, EMPTY, ROLE_COLOR, boxKey, capOf, custIn, roomName, staffRole } from '@/lib/board';
 import { fmtElapsed } from '@/lib/time';
 import type { Board } from '@/lib/types';
 
@@ -33,17 +21,27 @@ interface Person {
   key: string;
   name: string;
   sub: string;
-  cls: string;
+  color: string;
+  op: number;
   textCls: string;
 }
 
-const person = (key: string, role: string, name: string, sub = ''): Person => ({
+const customer = (key: string, name: string, sub = ''): Person => ({
   key,
   name,
   sub,
-  cls: ROLE_DOT[role],
-  textCls:
-    role === '고객' ? 'text-typo-caption-md-600 text-ms-gray-800' : 'text-typo-caption-md-400 text-ms-gray-700',
+  color: ROLE_COLOR.고객,
+  op: 1,
+  textCls: 'text-typo-caption-md-600 text-ms-gray-800',
+});
+// 진행 중 직원 = 진한 점, 배정 대기 직원 = 「대기 ○○」 흐리게(시안 v4)
+const staffPerson = (key: string, name: string, color: string, waiting: boolean): Person => ({
+  key,
+  name: (waiting ? '대기 ' : '') + name,
+  sub: '',
+  color,
+  op: waiting ? 0.6 : 1,
+  textCls: 'text-typo-caption-md-400 text-ms-gray-700',
 });
 
 // 도면 — 시안 rooms · corridors · 경로 화살표
@@ -139,7 +137,7 @@ export function FloorGrid({
         gap: 6,
       }}
     >
-      {CORRIDORS.map((c) => (
+      {board.corridors.map((c) => (
         <div
           key={c.row}
           className="border-ms-gray-300 text-ms-gray-500"
@@ -160,44 +158,45 @@ export function FloorGrid({
           복도
         </div>
       ))}
-      {LAYOUT.map((d) => {
+      {board.rooms.map((d) => {
         const cs = custIn(board, d.id);
-        const pres = presentIn(board, d.id);
-        const idle = board.staff.filter((s) => !s.queue.length && s.home === d.id);
-        const clickable = capOf(d.id) > 0 || d.id === 'lounge';
+        const clickable = capOf(d.id) > 0 || d.id === 'reception';
         let cls = EMPTY;
         let timer = '';
         let label = '';
+        let labelCls = 'text-typo-caption-md-400 text-ms-gray-700';
         let people: Person[] = [];
-        let queued: { key: string; name: string; cls: string }[] = [];
-        if (d.id === 'lounge') {
-          cls = cs.length ? STATUS.wait.cls : EMPTY;
+        if (d.id === 'reception') {
+          cls = cs.length ? BOX.wait : EMPTY;
           timer = '대기 ' + cs.length + '명';
-          label = '접수 후 대기';
-          people = cs.map((c) => person(c.scheduleId, '고객', c.name, fmtElapsed(c.since, now)));
+          label = '접수한 고객';
+          people = cs.map((c) => customer(c.scheduleId, c.name, fmtElapsed(c.receptionAt ?? c.since, now)));
         } else if (cs.length) {
-          const st = statusOf(board, d.id)!;
-          cls = STATUS[st.key].cls;
-          timer = fmtElapsed(cs[0].since, now);
-          label = st.label;
+          const c = cs[0];
+          cls = BOX[boxKey(c.status)];
+          timer = fmtElapsed(c.since, now);
+          label = c.status?.label ?? '';
+          if (c.status?.need) labelCls = 'text-typo-caption-md-600 text-red';
+          const color = (id: string | null) => ROLE_COLOR[staffRole(board, id) ?? ''] ?? ROLE_COLOR.고객;
           people = [
-            ...cs.map((c) => person(c.scheduleId, '고객', c.name)),
-            ...pres.map((s) => person(s.staffId, s.role, s.name)),
+            ...cs.map((x) => customer(x.scheduleId, x.name)),
+            ...c.steps
+              .filter((s) => s.state === 'in_progress')
+              .map((s) => staffPerson(s.stepId, s.assigneeName ?? '', color(s.assigneeId), false)),
+            ...c.steps
+              .filter((s) => s.state === 'assigned')
+              .map((s) => staffPerson(s.stepId, s.assigneeName ?? '', color(s.assigneeId), true)),
           ];
-          queued = queuedIn(board, d.id).map((s) => ({ key: s.staffId, name: '다음 ' + s.name, cls: ROLE_DOT[s.role] }));
         } else {
-          const away = board.customers.find((c) => !c.done && c.prev === d.id);
+          const away = board.customers.find((c) => c.location && c.prevRoom === d.id);
           if (away) {
-            cls = STAFFED;
-            label = away.name + ' 수면 중 · 복귀 예정';
-          } else if (idle.length) cls = STAFFED;
-          else if (capOf(d.id)) label = '비어있음';
-          people = idle.map((s) => person(s.staffId, s.role, s.name));
+            cls = 'bg-ms-white border-ms-gray-300 text-ms-gray-800';
+            label = away.name + ' ' + roomName(away.location, board.rooms) + ' · 복귀 예정';
+          } else if (capOf(d.id)) label = '비어있음';
         }
         const inRoute = route ? route.ids.includes(d.id) : false;
         const isCur = inRoute && route!.ids[route!.cur] === d.id;
-        const isNext = inRoute && !isCur && route!.ids.slice(route!.cur + 1).includes(d.id);
-        return (
+                return (
           <div
             key={d.id}
             data-room={d.id}
@@ -215,7 +214,7 @@ export function FloorGrid({
               display: 'flex',
               flexDirection: 'column',
               gap: 4,
-              outline: isCur ? '2px solid var(--ms-primary)' : isNext ? '2px dashed var(--ms-primary)' : 'none',
+              outline: isCur ? '2px solid var(--ms-primary)' : inRoute ? '2px dashed var(--ms-primary)' : 'none',
               outlineOffset: 2,
               opacity: route && !inRoute ? 0.45 : 1,
               transition: 'opacity 160ms ease, box-shadow 160ms ease',
@@ -234,7 +233,7 @@ export function FloorGrid({
                 {timer}
               </span>
             </div>
-            <span className="text-typo-caption-md-400 text-ms-gray-700" style={{ wordBreak: 'keep-all' }}>
+            <span className={labelCls} style={{ wordBreak: 'keep-all' }}>
               {label}
             </span>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 8px' }}>
@@ -249,9 +248,10 @@ export function FloorGrid({
                     whiteSpace: 'nowrap',
                     minWidth: 0,
                     maxWidth: '100%',
+                    opacity: p.op,
                   }}
                 >
-                  <span className={p.cls} style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0 }} />
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: p.color }} />
                   {/* 실데이터의 긴 로마자 이름이 칸 밖으로 나가지 않게 줄임표(전체 이름은 title) */}
                   <span
                     className={p.textCls}
@@ -269,19 +269,6 @@ export function FloorGrid({
                 </span>
               ))}
             </div>
-            {queued.length > 0 && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 8px' }}>
-                {queued.map((q) => (
-                  <span
-                    key={q.key}
-                    style={{ display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap', opacity: 0.6 }}
-                  >
-                    <span className={q.cls} style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0 }} />
-                    <span className="text-typo-caption-md-400 text-ms-gray-700">{q.name}</span>
-                  </span>
-                ))}
-              </div>
-            )}
           </div>
         );
       })}

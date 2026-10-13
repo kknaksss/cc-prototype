@@ -1,0 +1,106 @@
+{
+ "consultationDone": {
+  "consultation": {
+   "counselors": [
+    {
+     "id": "c2",
+     "name": "상담사B"
+    }
+   ],
+   "content": {
+    "text": "[상담내용]\n고민:처짐\nH) 2월 울쎄라 하심\n----------------------------------\nOUT TIME : 3시\n1. 울쎄라 300샷\n[특이사항] 아스피린 복용\n[임플란트 여부] 앞니 O"
+   }
+  },
+  "orderMemo": "OUT TIME : 3시\n0. 자가세안 O\n- 마취크림 : 40분\n1. 울쎄라 300샷(얼전)\n2. 리쥬란 2cc\n3. 시트팩\n4.\n[특이사항] 아스피린 복용",
+  "tasks": [
+   {
+    "sequence": 1,
+    "type": "ETCETERA",
+    "title": "방 점유/원장 상담",
+    "paymentRequired": true,
+    "doctors": [],
+    "assignees": []
+   },
+   {
+    "sequence": 2,
+    "type": "PROCEDURE",
+    "title": "울쎄라피 프라임 300shot",
+    "paymentRequired": true,
+    "doctors": [],
+    "assignees": [],
+    "procedureConfiguration": {
+     "ticketConfiguration": {}
+    }
+   },
+   {
+    "sequence": 3,
+    "type": "PROCEDURE",
+    "title": "리쥬란 힐러 2cc",
+    "paymentRequired": true,
+    "doctors": [],
+    "assignees": [],
+    "procedureConfiguration": {
+     "ticketConfiguration": {}
+    }
+   },
+   {
+    "sequence": 4,
+    "type": "PROCEDURE",
+    "title": "시트팩",
+    "paymentRequired": true,
+    "doctors": [],
+    "assignees": [],
+    "procedureConfiguration": {
+     "ticketConfiguration": {}
+    }
+   }
+  ],
+  "payment": {
+   "totalAmount": 1280000,
+   "items": [
+    {
+     "productTitle": "울쎄라",
+     "productOptionTitle": "[첫방문] 울쎄라 300샷",
+     "cost": {
+      "totalAmount": {
+       "currency": "KRW",
+       "value": 990000
+      }
+     }
+    },
+    {
+     "productTitle": "리쥬란",
+     "productOptionTitle": "리쥬란 힐러 2cc",
+     "cost": {
+      "totalAmount": {
+       "currency": "KRW",
+       "value": 290000
+      }
+     }
+    },
+    {
+     "productTitle": "시트팩",
+     "productOptionTitle": "시트팩",
+     "cost": {
+      "totalAmount": {
+       "currency": "KRW",
+       "value": 0
+      }
+     }
+    }
+   ]
+  }
+ },
+ "paymentDone": {
+  "ticketIdsBySequence": {
+   "2": "tk-2",
+   "3": "tk-3",
+   "4": "tk-4"
+  }
+ },
+ "taskDone": {
+  "2": {
+   "assigneeMemo": "어시 간호A / 시트증정"
+  }
+ }
+}

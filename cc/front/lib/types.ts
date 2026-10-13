@@ -1,65 +1,121 @@
-// SPEC-001 §5 · §6 계약 모양 — back 응답(JSON camelCase)을 그대로 받는 타입.
-// 시각 값(since)은 epoch ms 숫자(계약 보충 2026-10-13). 화면용 시각 문자열은 HH:MM.
+// SPEC-001 0.2.1 계약 — `cc/back/README.md` 의 요청 · 응답 예시 그대로(JSON camelCase).
+// 시각은 전부 epoch ms(숫자). 화면용 시각 문자열(예약 시각 등)은 HH:MM.
 
-export type Role = '의사' | '상담사' | '코디';
-export type StepKind = 'consult' | 'doctor' | 'treat' | 'sleep' | 'calm';
+export type Role = '의사' | '상담사' | '피부관리사' | '간호사' | '코디';
+export type Frame = 'assigned' | 'rounds' | 'desk';
 export type TimeValue = number;
 
-export interface OrderStep {
-  kind: StepKind;
+export type StepKind = 'consult' | 'doctor_consult' | 'procedure';
+export type StepState = 'planned' | 'assigned' | 'in_progress' | 'done' | 'skipped';
+export type FlowStep =
+  | 'RESERVED'
+  | 'RECEPTION'
+  | 'CONSULTATION_WAITING'
+  | 'CONSULTATION'
+  | 'PROCEDURE_WAITING'
+  | 'PROCEDURE'
+  | 'PROCEDURE_DONE'
+  | 'COMPLETED';
+
+export type StatusKey = 'reception' | 'wait' | 'consult' | 'treat';
+export type Need = 'next' | 'discharge' | null;
+
+// 고객 지금 상태(§5.1 방 상태) — 귀가 · 접수 전이면 null
+export interface CustomerStatus {
+  key: StatusKey;
   label: string;
-  role: Role;
+  need: Need;
 }
 
-// §5.1 customers[]
+// 동선 단계 — 시술은 시술권 1장 = 한 줄
+export interface Step {
+  stepId: string;
+  order: number;
+  kind: StepKind;
+  label: string;
+  kosSequence: number | null;
+  ticketId: string | null;
+  assigneeId: string | null;
+  assigneeName: string | null;
+  state: StepState;
+  assignedAt: TimeValue | null;
+  startedAt: TimeValue | null;
+  endedAt: TimeValue | null;
+  paymentRequired: boolean;
+}
+
+// GET /api/board customers[] — 귀가한 고객도 남는다(location null · COMPLETED · status null)
 export interface BoardCustomer {
   scheduleId: string;
   name: string;
-  room: string | null;
-  order: OrderStep[];
-  step: number;
-  since: TimeValue;
-  prev: string | null;
-  done: boolean;
+  isNew: boolean;
+  nationality: string;
+  location: string | null; // null · "reception"(접수대기실) · 방 id
+  prevRoom: string | null;
+  flowStep: FlowStep;
+  receptionAt: TimeValue | null;
+  completedAt: TimeValue | null;
+  since: TimeValue | null;
+  unpaidAmount: number;
+  paid: boolean;
+  status: CustomerStatus | null;
+  steps: Step[];
 }
 
-// §5.1 staff[]
+// 직원의 지금 일(배정 · 진행 중 단계)
+export interface StaffWork {
+  stepId: string;
+  scheduleId: string;
+  customerName: string;
+  location: string | null;
+  kind: StepKind;
+  label: string;
+  state: StepState;
+}
+
 export interface BoardStaff {
   staffId: string;
   name: string;
   role: Role;
-  queue: string[];
-  home: string;
+  frame: Frame;
+  work: StaffWork[];
 }
 
-export type ResvState = 'booked' | 'checked' | 'noshow' | 'canceled';
+export type ResvState = 'booked' | 'checked' | 'canceled';
 
-// §5.1 resv[]
 export interface Reservation {
-  scheduleId: string | null;
+  scheduleId: string;
   time: string;
   name: string;
-  procedure: string;
+  isNew: boolean;
+  nationality: string;
+  procedure: string; // KOS 예약 칸 그대로 — 비면 「-」
   doctor: string;
   st: ResvState;
 }
 
-// 현황판 칸(시안 LAYOUT). back 이 주면 이름을 그쪽 값으로 쓴다
 export interface BoardRoom {
   id: string;
   name: string;
+  col: number;
+  row: number;
+  cs: number;
+  cap: number;
+  unpaidAmount: number;
 }
 
 // GET /api/board
 export interface Board {
+  rooms: BoardRoom[];
+  corridors: { row: number }[];
   customers: BoardCustomer[];
   staff: BoardStaff[];
   resv: Reservation[];
-  rooms?: BoardRoom[];
   version: number;
+  now: TimeValue;
 }
 
-// §5.3 조작 응답
+// 조작 응답
 export interface MutationResult {
   version: number;
 }
@@ -68,47 +124,70 @@ export interface MutationResult {
 export interface StaffAccount {
   staffId: string;
   name: string;
-  role: string; // 데스크 | 의사 | 코디 (상담사 등 다른 값도 올 수 있음)
+  role: Role | '데스크';
+  frame: Frame;
 }
 
 // POST /api/login
 export interface LoginResult {
   staffId: string;
   name: string;
-  role: string;
+  role: Role | '데스크';
+  frame: Frame;
   home: string;
 }
 
-// 현황판 상태 키 — 시안 STATUS (lounge = 라운지 대기)
-export type BoardState = 'lounge' | 'wait' | 'consult' | 'treat';
+// GET /api/staff/{id}/home — 배정형 한 줄(내 단계 + 그 고객)
+export interface AssignedItem {
+  stepId: string;
+  scheduleId: string;
+  kind: StepKind;
+  label: string;
+  state: StepState;
+  assignedAt: TimeValue | null;
+  startedAt: TimeValue | null;
+  endedAt: TimeValue | null;
+  name: string;
+  nationality: string;
+  isNew: boolean;
+  location: string | null;
+  time: string;
+  status: CustomerStatus | null;
+  unpaidAmount: number;
+}
 
-// GET /api/staff/{staffId}/home 의 환자 한 줄
-export interface HomePatient {
+export interface AssignedHome {
+  frame: 'assigned';
+  current: AssignedItem | null;
+  next: AssignedItem[];
+  done: AssignedItem[];
+}
+
+// 순회형 한 줄 — 지금 내원 고객
+export interface RoundsPatient {
   scheduleId: string;
   name: string;
   nationality: string;
-  time: string; // 예약 시각 HH:MM
-  procedure: string; // 오더 요약(「첫 시술 외 n」)
-  room: string | null; // 현황판 칸 id — 귀가/도착 전이면 null
-  state: BoardState | null;
-  label: string; // 현황판 라벨(원장 대기 · 마무리 대기 …)
+  isNew: boolean;
+  location: string | null;
+  prevRoom: string | null;
+  time: string;
+  status: CustomerStatus | null;
+  need: Need;
   since: TimeValue | null;
+  unpaidAmount: number;
+  procedures: { stepId: string; label: string; state: StepState; assigneeName: string | null }[];
 }
 
-export interface DoctorHome {
-  current: HomePatient | null;
-  next: HomePatient | null;
-  done: HomePatient[];
+export interface RoundsHome {
+  frame: 'rounds';
+  patients: RoundsPatient[];
+  summary: { wait: number; consult: number; treat: number; needNext: number; needDischarge: number };
 }
 
-export interface CodiHome {
-  patients: HomePatient[]; // 경과 긴 순
-  summary: { wait: number; consult: number; treat: number };
-}
+export type StaffHome = AssignedHome | RoundsHome;
 
-export type StaffHome = DoctorHome | CodiHome;
-
-// GET /api/patients/{scheduleId} — §5.5
+// GET /api/patients/{scheduleId}?staffId=
 export interface Caution {
   text: string;
   source: string;
@@ -116,32 +195,27 @@ export interface Caution {
 
 export interface MemoSection {
   lines: string[];
-  source: string; // 「오더 메모 · 상담실장 ○○」 같은 출처 줄
-}
-
-export interface RouteStep {
-  room: string; // 현황판 칸 이름(대응표 적용 뒤)
-  task: string;
-  staff: string; // 「원장 ○○ · 담당자」
-  status: 'done' | 'now' | 'later' | 'canceled';
-  readyAt: string | null; // HH:MM
-  completedAt: string | null; // HH:MM
-  memo: string; // 끝난 작업의 assigneeMemo
-}
-
-export interface HistoryItem {
-  label: string; // 이 병원 · 타 병원
-  value: string;
   source: string;
 }
 
-export interface Ticket {
-  name: string;
-  left: number;
-  total: number;
-  expires: string;
-  role: Role;
-  sleep: boolean;
+export interface RouteStep extends Omit<Step, 'assigneeName'> {
+  assigneeName: string | null;
+  memo: string; // 그 시술 단계 done 일 때만 — 담당자 메모
+}
+
+export interface PastSchedule {
+  date: string;
+  consult: MemoSection | null;
+  order: MemoSection | null;
+  procedures: string[];
+  synthetic: boolean;
+}
+
+export interface MyAction {
+  stepId: string;
+  kind: StepKind;
+  action: 'start' | 'finish';
+  label: string; // 상담 시작 · 상담 종료 · 시술 시작 · 시술 종료
 }
 
 export interface PatientDetail {
@@ -150,19 +224,45 @@ export interface PatientDetail {
   nationality: string;
   sex: string;
   age: number | null;
-  firstVisit: boolean;
+  isNew: boolean;
   reservationTime: string;
-  leaveTime: string | null; // 귀가 시각 HH:MM
-  outTime: string | null; // 아웃 시각(메모 원문) — 없으면 숨김
+  flowStep: FlowStep;
+  location: string | null;
+  prevRoom: string | null;
+  status: CustomerStatus | null;
+  since: TimeValue | null;
+  leaveTime: string | number | null;
+  outTime: string | null;
   counselor: string | null;
   doctors: string[];
-  board: { room: string; state: BoardState; label: string; since: TimeValue } | null;
-  cautions: Caution[]; // ① — 고객 메모가 있으면 맨 앞
-  order: (MemoSection & { anesthesia: string | null }) | null; // ②
-  consult: MemoSection | null; // ③
-  reception: MemoSection | null; // ④
+  memoRevealed: boolean;
+  unpaidAmount: number;
+  paid: boolean;
+  cautions: Caution[];
+  order: (MemoSection & { anesthesia: string | null }) | null;
+  consult: MemoSection | null;
+  reception: MemoSection | null;
   chart: { label: string; value: string }[];
-  history: HistoryItem[];
+  history: { label: string; value: string; source: string }[];
+  pastSchedules: PastSchedule[];
   route: RouteStep[];
-  tickets?: Ticket[]; // 접수 모달용(보유 시술권) — 없으면 「보유 시술권이 없어요」
+  tickets: { name: string; left: number; total: number }[];
+  myActions: MyAction[];
+}
+
+// GET /api/patients/{id}/procedure-candidates — 시술 후보(§5.4)
+export interface ProcedureCandidate {
+  kind: StepKind;
+  label: string;
+  ticketId: string | null;
+  kosSequence: number | null;
+  source: 'ticket' | 'task';
+}
+
+// 접수 · 시술 추가 요청의 단계 한 줄
+export interface StepInput {
+  kind: StepKind;
+  label?: string;
+  ticketId?: string | null;
+  kosSequence?: number | null;
 }

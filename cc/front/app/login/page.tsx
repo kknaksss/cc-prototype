@@ -4,24 +4,17 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@medisolve-ai/medikit';
 import { getStaffList, login } from '@/lib/api';
-import { homePath, isDeskRole, isDoctorRole, writeSession } from '@/lib/session';
+import { ROLE_COLOR } from '@/lib/board';
+import { homePath, writeSession } from '@/lib/session';
 import type { StaffAccount } from '@/lib/types';
 
-// 시연 카드 3장 — 데스크 · 의사 우동진 · 코디 이서은(§6, 시안 샘플과 같은 사람)
-const DEMO: { pick: (l: StaffAccount[]) => StaffAccount | undefined; dot: string; dest: string; suffix: string }[] = [
-  {
-    pick: (l) => l.find((a) => isDoctorRole(a.role) && a.name === '우동진') ?? l.find((a) => isDoctorRole(a.role)),
-    dot: 'bg-purple',
-    dest: '오늘 내 일정',
-    suffix: ' 원장',
-  },
-  {
-    pick: (l) => l.find((a) => a.role === '코디' && a.name === '이서은') ?? l.find((a) => a.role === '코디'),
-    dot: 'bg-primary',
-    dest: '지금 내원 환자',
-    suffix: ' 코디',
-  },
-  { pick: (l) => l.find((a) => isDeskRole(a.role)), dot: 'bg-ms-gray-800', dest: '현황판', suffix: '' },
+// 시연 카드 5장 — 데스크 · 의사 · 상담사 · 피부관리사 · 간호사(§7, 시안 r4). 시안 이름이 그날 근무에 없으면 그 직군 첫 사람
+const DEMO: { role: string; prefer: string; dest: string; suffix: string }[] = [
+  { role: '데스크', prefer: '', dest: '현황판', suffix: '' },
+  { role: '의사', prefer: '우동진', dest: '내 일(배정형)', suffix: ' 원장' },
+  { role: '상담사', prefer: '황유진', dest: '내 일(배정형)', suffix: ' 상담사' },
+  { role: '피부관리사', prefer: '김태연', dest: '내 일(배정형)', suffix: ' 피부관리사' },
+  { role: '간호사', prefer: '양지은', dest: '지금 내원 고객(순회형)', suffix: ' 간호사' },
 ];
 
 export default function LoginPage() {
@@ -42,7 +35,10 @@ export default function LoginPage() {
 
   const demo = useMemo(
     () =>
-      DEMO.map((d) => ({ ...d, a: d.pick(accounts) })).filter(
+      DEMO.map((d) => ({
+        ...d,
+        a: accounts.find((a) => a.role === d.role && (!d.prefer || a.name === d.prefer)) ?? accounts.find((a) => a.role === d.role),
+      })).filter(
         (d): d is typeof d & { a: StaffAccount } => !!d.a,
       ),
     [accounts],
@@ -58,9 +54,9 @@ export default function LoginPage() {
     }
     busy.current = true;
     try {
-      const r = await login(a.staffId);
-      writeSession({ staffId: r.staffId, name: r.name, role: r.role });
-      router.replace(homePath(r.role, r.home));
+      const r = await login(a.staffId, pw);
+      writeSession({ staffId: r.staffId, name: r.name, role: r.role, frame: r.frame });
+      router.replace(homePath(r.frame, r.home));
     } catch (e) {
       setToast(e instanceof Error ? e.message : '로그인하지 못했어요');
       setTimeout(() => setToast(''), 2400);
@@ -189,7 +185,7 @@ export default function LoginPage() {
                     borderStyle: 'solid',
                   }}
                 >
-                  <span className={d.dot} style={{ width: 8, height: 8, borderRadius: '50%' }} />
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: ROLE_COLOR[d.role] }} />
                   <span style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 }}>
                     <span className="text-typo-body-600 text-ms-gray-800">{d.a.name + d.suffix}</span>
                     <span className="text-typo-caption-md-400 text-ms-gray-600">{d.a.staffId}</span>
@@ -202,8 +198,8 @@ export default function LoginPage() {
               {loadErr && <span className="text-typo-caption-md-500 text-red">{loadErr}</span>}
             </div>
             <span className="text-typo-caption-md-400 text-ms-gray-600" style={{ wordBreak: 'keep-all' }}>
-              첫 화면은 계정의 역할로 정해져요 — 의사: 오늘 내 일정 · 코디: 지금 내원 환자 · 데스크: 현황판(데스크
-              페이지).
+              첫 화면은 계정의 역할로 정해져요 — 데스크: 현황판 · 의사 · 상담사 · 피부관리사: 내 일(배정형) · 코디 ·
+              간호사: 지금 내원 고객(순회형).
             </span>
           </div>
         </div>

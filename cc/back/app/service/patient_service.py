@@ -1,115 +1,129 @@
-"""환자 상세 — SPEC-001 §5.5. KOS 참조 문서(이름 치환본) + 현황판 상태에서 계산한다."""
+"""환자 상세(SPEC-001 0.2.0 §3.4 · 0.2.1 §0-a — 0.1.0 §5.5 안 A 위에) · 시술 후보(§5.4).
+
+- 원천: 시드(예약 · 고객 · 보유 시술권 · 지난 방문) + 이벤트로 들어온 것(고객 상태에 보관 — 상담 기록 · 오더 메모 · 결제)
+- 메모 공개 시점: 예약 메모 · 고객 메모는 처음부터. 상담 메모 · 오더 메모와 거기서 온 ⚠ 주의는 **상담 완료 이벤트 뒤**
+  (상담 단계 종료 때 들어온다). 담당자 메모는 시술 완료 이벤트 뒤 동선의 그 줄에. 차트 「오늘 결제」는 [결제 완료] 뒤
+- 출처는 칸 이름만(작성자 이름 없음). 상단 카드의 상담실장 · 원장은 관제 배정(동선 정본)에서
+"""
 
 from datetime import datetime
 
 from app.domain import board as B
 from app.domain.errors import NotFound
-from app.domain.rooms import map_kos_room, room_name
 from app.repository.state_repo import StateRepository
 from app.seed.capture import KST, parse_ts
 from app.service import memo_parse as M
 
-ANESTHESIA_ONLY = "마취용"
 SEX = {"FEMALE": "여", "MALE": "남"}
+ACTION_LABEL = {("consult", "start"): "상담 시작", ("consult", "finish"): "상담 종료",
+                ("doctor_consult", "start"): "상담 시작", ("doctor_consult", "finish"): "상담 종료",
+                ("procedure", "start"): "시술 시작", ("procedure", "finish"): "시술 종료"}
 
 
 def fmt_hm(ms: int | None) -> str | None:
     return datetime.fromtimestamp(ms / 1000, KST).strftime("%H:%M") if ms is not None else None
 
 
-def _doctor_names(task: dict) -> list[str]:
-    return [d["name"] for d in task.get("doctors") or [] if d.get("name") and d["name"] != ANESTHESIA_ONLY]
+def _section(lines: list[str], source: str) -> dict | None:
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return {"lines": lines, "source": source} if lines else None
 
 
 class PatientService:
     def __init__(self, repo: StateRepository):
         self.repo = repo
 
-    def detail(self, schedule_id: str) -> dict:
-        state = self.repo.load_state()
-        cust = next((c for c in state["customers"] if c["scheduleId"] == schedule_id), None)
-        resv = next((r for r in state["resv"] if r["scheduleId"] == schedule_id), None)
+    def _load(self, schedule_id: str) -> tuple[dict, dict, dict, dict | None, dict | None]:
+        d = self.repo.load_state()
         doc = self.repo.get_reference("schedule", schedule_id)
-        if not doc and not cust and not resv:
+        resv = next((r for r in d["resv"] if r["scheduleId"] == schedule_id), None)
+        if not doc or not resv:
             raise NotFound("patient_not_found", f"일정 {schedule_id} 이 없어요")
-        derived = self.repo.get_reference("derived", schedule_id) or {}
-        hist = [h for h in state["history"] if h["scheduleId"] == schedule_id]
+        cust = next((c for c in d["customers"] if c["scheduleId"] == schedule_id), None)
+        return d, doc, self.repo.get_reference("derived", schedule_id) or {}, resv, cust
 
-        board = None
-        if cust and not cust["done"]:
-            key, label = B.customer_state(state, cust)
-            board = {"room": cust["room"], "state": key, "label": label, "since": cust["since"]}
-
-        out = {
-            "scheduleId": schedule_id,
-            "name": (cust or resv or {}).get("name") or ((doc or {}).get("visitor") or {}).get("name", ""),
-            "nationality": "", "sex": "", "age": None, "firstVisit": True,
-            "reservationTime": (resv or {}).get("time", ""),
-            "leaveTime": fmt_hm(cust.get("doneAt")) if cust and cust["done"] else None,
-            "outTime": None, "counselor": None, "doctors": [],
-            "board": board,
-            "cautions": [], "order": None, "consult": None, "reception": None,
-            "chart": [], "history": [], "route": [],
-            "tickets": derived.get("tickets", []),
-        }
-        if not doc:  # 현장 접수 — KOS 참조 없음(이름 · 오더만)
-            out["route"] = self._route_from_order(cust, hist)
-            return out
+    def detail(self, schedule_id: str, viewer: str | None = None) -> dict:
+        d, doc, derived, resv, cust = self._load(schedule_id)
+        steps = B.steps_of(d, schedule_id)
+        revealed = bool(cust and cust.get("consultApplied"))
 
         v = doc.get("visitor") or {}
         r = doc.get("reservation") or {}
-        tasks = sorted(doc.get("tasks") or [], key=lambda t: t.get("sequence") or 0)
-        cons_text = ((doc.get("consultations") or [{}])[0].get("content") or {}).get("text") \
-            or (doc.get("consultation") or {}).get("consultationMemo")
-        order_memo = doc.get("orderMemo")
+        consult_memo = ((cust.get("consultation") or {}).get("content") or {}).get("text") if revealed else None
+        order_memo = cust.get("orderMemo") if revealed else None
         resv_memo = r.get("reservationMemo")
-        counselor = ((doc.get("consultation") or {}).get("counselor") or {}).get("name") or None
 
-        out.update({
+        def names(kinds: tuple[str, ...], role: str) -> list[str]:
+            out = []
+            for s in steps:
+                if s["kind"] in kinds and s.get("assigneeId") and s["state"] != "skipped":
+                    who = next((x for x in d["staff"] if x["staffId"] == s["assigneeId"]), None)
+                    if who and who["role"] == role and who["name"] not in out:
+                        out.append(who["name"])
+            return out
+
+        counselors = names(("consult",), "상담사")
+        out = {
+            "scheduleId": schedule_id,
+            "name": resv["name"],
             "nationality": v.get("nationality", ""),
             "sex": SEX.get(v.get("gender"), ""),
             "age": derived.get("age"),
-            "firstVisit": bool(derived.get("firstVisit", v.get("isNew", True))),
-            "outTime": M.out_time(order_memo, resv_memo) or self._desired_out(r),
-            "counselor": counselor,
-            "doctors": list(dict.fromkeys(n for t in tasks if t.get("status") != "CANCELED" for n in _doctor_names(t))),
-            "cautions": self._cautions(v.get("memo"), order_memo, cons_text, resv_memo),
-        })
-
+            "isNew": bool(v.get("isNew")),
+            "reservationTime": resv.get("time", ""),
+            "flowStep": cust["flowStep"] if cust else "RESERVED",
+            "location": cust["location"] if cust else None,
+            "prevRoom": cust.get("prevRoom") if cust else None,
+            "status": B.status_of(d, cust) if cust else None,
+            "since": cust["since"] if cust and B.is_here(cust) else None,
+            "leaveTime": fmt_hm(cust["completedAt"]) if cust and cust.get("completedAt") else None,
+            "outTime": M.out_time(order_memo, resv_memo) or fmt_hm(parse_ts(r.get("desiredDischargeDateTimeUtc"))),
+            "counselor": counselors[0] if counselors else None,
+            "doctors": names(("doctor_consult", "procedure"), "의사"),
+            "memoRevealed": revealed,
+            "unpaidAmount": (cust or {}).get("unpaidAmount") or 0,
+            "paid": bool((cust or {}).get("paid")),
+            "cautions": self._cautions(v.get("memo"), order_memo, consult_memo, resv_memo),
+            "order": None, "consult": None,
+            "reception": _section(M.drop_empty_form(M.lines_of(resv_memo)), "예약 메모"),
+            "chart": self._chart(r, derived, resv_memo, cust),
+            "history": self._history(bool(v.get("isNew")), consult_memo, derived.get("pastSchedules") or []),
+            "pastSchedules": self._past(derived.get("pastSchedules") or []),
+            "route": self._route(d, steps),
+            "tickets": [{"name": t["name"], "left": len(t["available"]), "total": t["total"]}
+                        for t in derived.get("tickets") or [] if t["available"]],
+            "myActions": self._actions(steps, viewer),
+        }
         lines, anesthesia = M.order_lines(order_memo)
         if lines:
-            out["order"] = {"lines": lines, "anesthesia": anesthesia,
-                            "source": "오더 메모" + (f" · 상담실장 {counselor}" if counselor else "")}
-        summary = M.consult_summary(cons_text)
-        if summary:
-            out["consult"] = {"lines": summary,
-                              "source": "상담 메모(구분선 위)" + (f" · 상담실장 {counselor}" if counselor else "")}
-        rl = M.lines_of(resv_memo)
-        while rl and not rl[0].strip():
-            rl.pop(0)
-        while rl and not rl[-1].strip():
-            rl.pop()
-        if rl:
-            assignee = (r.get("reservationAssignee") or {}).get("name")
-            out["reception"] = {"lines": rl, "source": "예약 메모" + (f" · 예약 담당 {assignee}" if assignee else "")}
-
-        out["chart"] = self._chart(r, derived, resv_memo)
-        out["history"] = self._history(out["firstVisit"], cons_text, counselor)
-        out["route"] = self._route(tasks, doc, derived, cust, hist)
+            out["order"] = {"lines": lines, "anesthesia": anesthesia, "source": "오더 메모"}
+        out["consult"] = _section(M.consult_summary(consult_memo), "상담 메모")
         return out
 
     @staticmethod
-    def _desired_out(r: dict) -> str | None:
-        return fmt_hm(parse_ts(r.get("desiredDischargeDateTimeUtc")))
+    def _actions(steps: list[dict], viewer: str | None) -> list[dict]:
+        if not viewer:
+            return []
+        out = []
+        for s in steps:
+            if s.get("assigneeId") != viewer:
+                continue
+            act = "start" if s["state"] == "assigned" else "finish" if s["state"] == "in_progress" else None
+            if act:
+                out.append({"stepId": s["stepId"], "kind": s["kind"], "action": act, "label": ACTION_LABEL[(s["kind"], act)]})
+        return out
 
     @staticmethod
-    def _cautions(visitor_memo, order_memo, cons_text, resv_memo) -> list[dict]:
+    def _cautions(visitor_memo, order_memo, consult_memo, resv_memo) -> list[dict]:
         out: list[dict] = []
         if visitor_memo and visitor_memo.strip():
             out.append({"text": M.clean(visitor_memo).strip(), "source": "고객 메모"})
-        _, cons_copy = M.split_consult(cons_text)
+        _, cons_copy = M.split_consult(consult_memo)
         merged: dict[str, list[str]] = {}
-        for src, ls in (("오더 메모", M.lines_of(order_memo)), ("상담 메모 사본", cons_copy)):
+        for src, ls in (("오더 메모", M.lines_of(order_memo) if order_memo else []), ("상담 메모", cons_copy)):
             for tag, value in M.tag_blocks(ls):
                 text = f"{tag} — {value}"
                 if src not in merged.setdefault(text, []):
@@ -124,112 +138,98 @@ class PatientService:
         return out
 
     @staticmethod
-    def _chart(r: dict, derived: dict, resv_memo) -> list[dict]:
+    def _chart(r: dict, derived: dict, resv_memo, cust: dict | None) -> list[dict]:
         rows = []
         funnel = ((r.get("funnel") or {}).get("funnel") or {}).get("name")
         detail = (r.get("funnel") or {}).get("funnelDetail")
         if funnel:
             rows.append({"label": "유입", "value": funnel + (f" · {detail}" if detail else "")})
-        if derived.get("groupTitle"):
-            rows.append({"label": "예약 그룹", "value": derived["groupTitle"]})
+        if r.get("reservationGroupTitle"):
+            rows.append({"label": "예약 그룹", "value": r["reservationGroupTitle"]})
         comp = M.companions(resv_memo)
         if comp:
             rows.append({"label": "동행", "value": comp})
-        tickets = derived.get("tickets") or []
+        tickets = [t for t in derived.get("tickets") or [] if t["available"]]
         if tickets:
-            rows.append({"label": "보유 시술권", "value": ", ".join(f"{t['name']} {t['left']}/{t['total']}회" for t in tickets)})
-        if derived.get("prepaid"):
-            rows.append({"label": "선불 잔액", "value": f"{derived['prepaid']:,}원"})
-        paid = [p for p in derived.get("purchases") or [] if p["amount"] > 0]
-        free = [p for p in derived.get("purchases") or [] if p["amount"] <= 0]
-        if paid:
-            rows.append({"label": "오늘 결제", "value": ", ".join(f"{p['title']} {p['amount']:,}원" for p in paid)})
-        if free:
-            rows.append({"label": "서비스(0원)", "value": ", ".join(p["title"] for p in free)})
+            value = ", ".join(f"{t['name']} {len(t['available'])}/{t['total']}회" for t in tickets)
+            rows.append({"label": "보유 시술권", "value": value})
+        if cust and cust.get("paid"):  # 「오늘 결제」는 [결제 완료] 뒤에만(§0-a)
+            items = [(it.get("productOptionTitle") or it.get("productTitle") or "",
+                      int((((it.get("cost") or {}).get("totalAmount")) or {}).get("value") or 0))
+                     for it in (cust.get("payment") or {}).get("items") or []]
+            paid = [f"{t} {a:,}원" for t, a in items if a > 0]
+            free = [t for t, a in items if a <= 0]
+            if paid:
+                rows.append({"label": "오늘 결제", "value": ", ".join(paid)})
+            if free:
+                rows.append({"label": "서비스(0원)", "value": ", ".join(free)})
         return rows
 
     @staticmethod
-    def _history(first_visit: bool, cons_text, counselor) -> list[dict]:
-        out = [{"label": "이 병원", "value": "첫 방문 — 이전 시술 기록 없음" if first_visit else "재방문",
-                "source": "KOS 일정"}]
-        lines = M.other_clinic_history(cons_text)
-        src = "상담 메모" + (f" · 상담실장 {counselor}" if counselor else "")
-        if lines:
-            out += [{"label": "타 병원", "value": ln, "source": src} for ln in lines]
-        else:
-            out.append({"label": "타 병원", "value": "상담 메모에 이력 없음", "source": ""})
+    def _history(is_new: bool, consult_memo, past: list[dict]) -> list[dict]:
+        out = [{"label": "이 병원", "value": "첫 방문" if is_new else "재방문", "source": ""}]
+        for p in past:
+            procs = ", ".join(x.get("title") or "" for x in p.get("procedures") or [] if x.get("title"))
+            if procs:
+                out.append({"label": "이 병원", "value": f"{p.get('date', '')} · {procs}", "source": "지난 방문"})
+        out += [{"label": "타 병원", "value": ln, "source": "상담 메모"} for ln in M.other_clinic_history(consult_memo)]
         return out
 
     @staticmethod
-    def _step_status(idx: int | None, cust: dict | None) -> str:
-        if idx is None or not cust:
-            return "later"
-        if cust["done"] or idx < cust["step"]:
-            return "done"
-        return "now" if idx == cust["step"] else "later"
-
-    @staticmethod
-    def _hist_for(hist: list[dict], step: dict | None, used: set[int]) -> dict | None:
-        if not step:
-            return None
-        for i, h in enumerate(hist):
-            if i not in used and h["kind"] == step["kind"] and h["label"] == step["label"]:
-                used.add(i)
-                return h
-        return None
-
-    def _route(self, tasks, doc, derived, cust, hist) -> list[dict]:
-        order = (cust or {}).get("order") or derived.get("plannedOrder") or []
-        task_step = derived.get("taskStep") or {}
-        used: set[int] = set()
-        hist_by_step: dict[int, dict | None] = {}
-        for i, st in enumerate(order):
-            hist_by_step[i] = self._hist_for(hist, st, used)
-
-        def times(idx: int | None, status: str) -> tuple[str | None, str | None]:
-            h = hist_by_step.get(idx) if idx is not None else None
-            if status == "done" and h:
-                return fmt_hm(h["startedAt"]), fmt_hm(h["completedAt"])
-            if status == "now" and cust:
-                return fmt_hm(cust["since"]), None
-            return None, None
-
+    def _past(past: list[dict]) -> list[dict]:
+        """재내원 — 지난 방문(시드 pastSchedules): 날짜 · 상담 메모(상담 요약 · 오더지) · 오더 메모 · 받은 시술."""
         out = []
-        if order and order[0]["kind"] == "consult":
-            status = self._step_status(0, cust)
-            ready, done = times(0, status)
-            counselor = ((doc.get("consultation") or {}).get("counselor") or {}).get("name")
-            h = hist_by_step.get(0)
-            out.append({"room": room_name(h["room"]) if h and h.get("room") else "", "task": "상담",
-                        "staff": f"상담실장 {counselor}" if counselor else "", "status": status,
-                        "readyAt": ready, "completedAt": done, "memo": ""})
-        for t in tasks:
-            idx = task_step.get(str(t.get("sequence")))
-            if t.get("status") == "CANCELED":
-                status = "canceled"
-            else:
-                status = self._step_status(idx, cust)
-            ready, done = times(idx, status) if status != "canceled" else (None, None)
-            rid = map_kos_room((t.get("room") or {}).get("title"))
-            staff = [f"원장 {n}" for n in _doctor_names(t)] + [a["name"] for a in t.get("assignees") or [] if a.get("name")]
+        for p in sorted(past, key=lambda x: x.get("date") or "", reverse=True):
+            cons = (p.get("consultations") or [{}])[0]
+            text = (cons.get("content") or {}).get("text")
             out.append({
-                "room": room_name(rid) if rid else ((t.get("room") or {}).get("title") or ""),
-                "task": t.get("title") or (t.get("etceteraConfiguration") or {}).get("name") or "",
-                "staff": " · ".join(staff), "status": status, "readyAt": ready, "completedAt": done,
-                "memo": M.clean(t.get("assigneeMemo")).strip() if status == "done" else "",
+                "date": p.get("date", ""),
+                "consult": _section(M.consult_summary(text), "상담 메모"),
+                "order": _section(M.order_lines(p.get("orderMemo"))[0], "오더 메모"),
+                "procedures": [x.get("title") for x in p.get("procedures") or [] if x.get("title")],
+                "synthetic": bool(p.get("synthetic")),
             })
         return out
 
-    def _route_from_order(self, cust, hist) -> list[dict]:
-        if not cust:
-            return []
-        used: set[int] = set()
-        out = []
-        for i, st in enumerate(cust["order"]):
-            status = self._step_status(i, cust)
-            h = self._hist_for(hist, st, used)
-            ready = fmt_hm(h["startedAt"]) if status == "done" and h else (fmt_hm(cust["since"]) if status == "now" else None)
-            out.append({"room": room_name(h["room"]) if h and h.get("room") else "", "task": st["label"],
-                        "staff": "", "status": status, "readyAt": ready,
-                        "completedAt": fmt_hm(h["completedAt"]) if status == "done" and h else None, "memo": ""})
+    @staticmethod
+    def _route(d: dict, steps: list[dict]) -> list[dict]:
+        return [{
+            "stepId": s["stepId"], "order": s["order"], "kind": s["kind"], "label": s["label"],
+            "assigneeId": s.get("assigneeId"), "assigneeName": B.staff_name(d, s.get("assigneeId")) or None,
+            "state": s["state"], "assignedAt": s["assignedAt"], "startedAt": s["startedAt"], "endedAt": s["endedAt"],
+            "paymentRequired": bool(s.get("paymentRequired")), "ticketId": s.get("ticketId"),
+            "kosSequence": s.get("kosSequence"),
+            "memo": (s.get("assigneeMemo") or "").strip() if s["state"] == "done" else "",  # 시술 완료 이벤트
+        } for s in steps]
+
+    # ── §5.4 시술 후보 ──
+    def candidates(self, schedule_id: str) -> list[dict]:
+        """상담사가 넣은 시술(상담 완료 이벤트 뒤 — 동선에서 빠진 것) + 보유 시술권(AVAILABLE). 동선에 있는 것은 뺀다."""
+        d, _, derived, _, cust = self._load(schedule_id)
+        steps = B.steps_of(d, schedule_id)
+        used_tickets = {s["ticketId"] for s in steps if s.get("ticketId")}
+        used_seq = {s["kosSequence"] for s in steps if s.get("kosSequence") is not None}
+        out: list[dict] = []
+        seen: set[str] = set()
+        if cust and cust.get("consultApplied"):
+            event = (self.repo.get_reference("events", schedule_id) or {}).get("consultationDone") or {}
+            for t in sorted(event.get("tasks") or [], key=lambda t: t.get("sequence") or 0):
+                seq = t.get("sequence")
+                ticket = ((t.get("procedureConfiguration") or {}).get("ticketConfiguration") or {}).get("ticketId") or None
+                if seq in used_seq or (ticket and ticket in used_tickets):
+                    continue
+                if t.get("type") == "ETCETERA":
+                    out.append({"kind": "doctor_consult", "label": "원장 상담", "ticketId": None, "kosSequence": seq,
+                                "source": "task", "kosTitle": t.get("title") or ""})
+                else:
+                    out.append({"kind": "procedure", "label": t.get("title") or "", "ticketId": ticket, "kosSequence": seq,
+                                "source": "task", "paymentRequired": bool(t.get("paymentRequired"))})
+                if ticket:
+                    seen.add(ticket)
+        for ts in derived.get("tickets") or []:
+            for tid in ts["available"]:
+                if tid in seen or tid in used_tickets:
+                    continue
+                seen.add(tid)
+                out.append({"kind": "procedure", "label": ts["name"], "ticketId": tid, "kosSequence": None, "source": "ticket"})
         return out

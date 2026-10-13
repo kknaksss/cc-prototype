@@ -1,22 +1,28 @@
-"""front 계약 — 요청 본문(SPEC-001 §5.3 · §6 · cc/front/lib/types.ts)."""
+"""front 계약 — 요청 본문(SPEC-001 0.2.0 §5.3 · §7)."""
 
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
-Role = Literal["의사", "상담사", "코디"]
-StepKind = Literal["consult", "doctor", "treat", "sleep", "calm"]
+StepKind = Literal["consult", "doctor_consult", "procedure"]
 
 
-class OrderStep(BaseModel):
+class StepItem(BaseModel):
     kind: StepKind
+    label: str | None = None  # 상담 · 원장 상담은 비우면 기본 이름
+    ticketId: str | None = None
+    kosSequence: int | None = None
+
+
+class ProcedureItem(BaseModel):
     label: str = Field(min_length=1)
-    role: Role
+    ticketId: str | None = None
+    kosSequence: int | None = None
 
 
-class StaffRoom(BaseModel):
-    staffId: str
-    room: str
+class CheckInBody(BaseModel):
+    scheduleId: str
+    steps: list[StepItem] = []
 
 
 class PlaceBody(BaseModel):
@@ -24,18 +30,31 @@ class PlaceBody(BaseModel):
     room: str
 
 
-class CheckInBody(BaseModel):
-    scheduleId: str | None = None
-    name: str | None = None  # 현장 접수(scheduleId null) 때
-    order: list[OrderStep] | None = None
+class ScheduleBody(BaseModel):
+    scheduleId: str
+
+
+class AssignBody(BaseModel):
+    stepId: str
+    staffId: str
+
+
+class StepBody(BaseModel):
+    stepId: str
+
+
+class AddProceduresBody(BaseModel):
+    scheduleId: str
+    items: list[ProcedureItem]
+
+
+class ReorderBody(BaseModel):
+    scheduleId: str
+    stepIds: list[str]
 
 
 class UndoBody(BaseModel):
     version: int
-
-
-class ScheduleBody(BaseModel):
-    scheduleId: str
 
 
 class LoginBody(BaseModel):

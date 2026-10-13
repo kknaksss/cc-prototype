@@ -12,14 +12,26 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=BACK_DIR / ".env", extra="ignore")
 
     soniox_api_key: str = ""
-    cc_capture_dir: str = ""
+    cc_capture_dir: str = ""  # 0.2.1 부터 시드는 시나리오 파일(CC_SCENARIO_DIR) — 캡처는 직접 읽지 않는다
     cc_back_port: int = 8600
     cc_db_path: str = "data/cc.db"
     cc_front_origin: str = "http://localhost:3600"
+    cc_kos_staff_path: str = "data/kos-staff.json"
+    cc_scenario_dir: str = "data/scenario"
 
     @property
     def db_path(self) -> Path:
         p = Path(self.cc_db_path)
+        return p if p.is_absolute() else BACK_DIR / p
+
+    @property
+    def kos_staff_path(self) -> Path:
+        p = Path(self.cc_kos_staff_path)
+        return p if p.is_absolute() else BACK_DIR / p
+
+    @property
+    def scenario_dir(self) -> Path:
+        p = Path(self.cc_scenario_dir)
         return p if p.is_absolute() else BACK_DIR / p
 
     @property

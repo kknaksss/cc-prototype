@@ -24,11 +24,14 @@ class StateRepository:
         def rows(sql: str) -> list[dict]:
             return [json.loads(r[0]) for r in con.execute(sql)]
 
+        seq = con.execute("SELECT value FROM meta WHERE key = 'stepSeq'").fetchone()
         return {
             "customers": rows("SELECT doc FROM customer ORDER BY seq"),
+            "steps": rows("SELECT doc FROM step ORDER BY seq"),
             "staff": rows("SELECT doc FROM staff ORDER BY seq"),
             "resv": rows("SELECT doc FROM resv ORDER BY seq"),
-            "history": rows("SELECT doc FROM history ORDER BY seq"),
+            "log": rows("SELECT doc FROM log ORDER BY seq"),
+            "stepSeq": json.loads(seq[0]) if seq else 0,
         }
 
     def save_state(self, state: dict, meta: dict | None = None) -> None:
@@ -43,7 +46,8 @@ class StateRepository:
         con.execute("DELETE FROM customer")
         con.execute("DELETE FROM staff")
         con.execute("DELETE FROM resv")
-        con.execute("DELETE FROM history")
+        con.execute("DELETE FROM step")
+        con.execute("DELETE FROM log")
         con.executemany(
             "INSERT INTO customer (seq, schedule_id, doc) VALUES (?, ?, ?)",
             [(i, c["scheduleId"], _dump(c)) for i, c in enumerate(state["customers"])],
@@ -57,9 +61,14 @@ class StateRepository:
             [(i, r["scheduleId"], _dump(r)) for i, r in enumerate(state["resv"])],
         )
         con.executemany(
-            "INSERT INTO history (seq, schedule_id, staff_id, doc) VALUES (?, ?, ?, ?)",
-            [(i, h["scheduleId"], h.get("staffId"), _dump(h)) for i, h in enumerate(state["history"])],
+            "INSERT INTO step (seq, step_id, schedule_id, doc) VALUES (?, ?, ?, ?)",
+            [(i, s["stepId"], s["scheduleId"], _dump(s)) for i, s in enumerate(state["steps"])],
         )
+        con.executemany(
+            "INSERT INTO log (seq, schedule_id, doc) VALUES (?, ?, ?)",
+            [(i, x.get("scheduleId"), _dump(x)) for i, x in enumerate(state["log"])],
+        )
+        StateRepository._set_meta(con, "stepSeq", state.get("stepSeq", 0))
 
     # ── meta(version · 되돌리기 스냅샷 · 시드 정보) ──
     def get_meta(self, key: str, default=None):

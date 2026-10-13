@@ -4,17 +4,17 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { Badge } from '@medisolve-ai/medikit';
 import * as api from '@/lib/api';
-import { roomName } from '@/lib/board';
+import { ROLE_COLOR, RTITLE, SSTATE, STATUS, boxKey, hhmm, roomName } from '@/lib/board';
 import { useLive, useNow, useSession } from '@/lib/hooks';
-import { isDeskRole, isDoctorRole } from '@/lib/session';
 import { fmtMinSec, pad } from '@/lib/time';
-import type { CodiHome, DoctorHome, HomePatient, StaffHome } from '@/lib/types';
-import { MY, STAFF_STATUS, card, isForeign, natName, type MySt } from './common';
+import type { AssignedHome, AssignedItem, Role, RoundsHome, StaffAccount, StaffHome } from '@/lib/types';
+import { card, isForeign, natName } from './common';
 import { PatientView } from './PatientView';
 
-const isCodiHome = (h: StaffHome): h is CodiHome => 'patients' in h;
+const isRounds = (h: StaffHome): h is RoundsHome => h.frame === 'rounds';
 
-// 직원 화면 틀 — 넓으면(≥760) 목록 + 상세 두 칸, 좁으면 /staff = 목록 · /staff/patient/[id] = 상세(시안 baseVals)
+// 직원 화면 틀 — 배정형(의사 · 상담사 · 피부관리사) / 순회형(코디 · 간호사).
+// 넓으면(≥760) 목록 + 상세 두 칸, 좁으면 /staff = 목록 · /staff/patient/[id] = 상세(시안 baseVals)
 export function StaffShell() {
   const session = useSession();
   const router = useRouter();
@@ -22,6 +22,7 @@ export function StaffShell() {
   const now = useNow();
   const wrapRef = useRef<HTMLDivElement>(null);
   const [w, setW] = useState(390);
+  const [accounts, setAccounts] = useState<StaffAccount[]>([]);
 
   const staffId = session?.staffId ?? null;
   const loadHome = useCallback(() => api.getStaffHome(staffId as string), [staffId]);
@@ -36,8 +37,16 @@ export function StaffShell() {
     return () => ro.disconnect();
   }, [session]);
 
+  // 동선 담당 줄의 직군(「원장 ○○」) — 직원 목록에서
   useEffect(() => {
-    if (session && isDeskRole(session.role)) router.replace('/desk');
+    api
+      .getStaffList()
+      .then(setAccounts)
+      .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    if (session && session.frame === 'desk') router.replace('/desk');
   }, [session, router]);
 
   if (!session) return null;
@@ -45,11 +54,11 @@ export function StaffShell() {
   const m = /^\/staff\/patient\/([^/]+)/.exec(pathname ?? '');
   const routeSel = m ? decodeURIComponent(m[1]) : null;
   const wide = w >= 760;
-  const doctor = isDoctorRole(session.role);
+  const role = session.role as Role;
+  const rounds = session.frame === 'rounds';
   const h = home.data;
+  const roleOf = (id: string | null) => accounts.find((a) => a.staffId === id)?.role;
 
-  // 목록 · 기본 선택 · 의사 기준 내 일정 상태
-  let mineSt: Record<string, MySt> = {};
   let defaultSel: string | null = null;
   let list: React.ReactNode = null;
   const select = (id: string) => {
@@ -57,22 +66,15 @@ export function StaffShell() {
     if (!wide) window.scrollTo({ top: 0 });
   };
 
-  if (h && isCodiHome(h)) {
-    const rows = h.patients;
-    defaultSel = (rows.find((p) => isForeign(p.nationality)) ?? rows[0])?.scheduleId ?? null;
-    list = <CodiList home={h} now={now} selId={wide ? routeSel ?? defaultSel : null} onSelect={select} />;
+  if (h && isRounds(h)) {
+    // 손 필요 먼저, 그다음 경과 긴 순(시안)
+    const rows = [...h.patients].sort((a, b) => Number(!!b.need) - Number(!!a.need) || (a.since ?? 0) - (b.since ?? 0));
+    defaultSel = rows[0]?.scheduleId ?? null;
+    list = <RoundsList home={h} rows={rows} now={now} selId={wide ? routeSel ?? defaultSel : null} onSelect={select} />;
   } else if (h) {
-    const d = h as DoctorHome;
-    const mine: (HomePatient & { st: MySt })[] = [
-      ...d.done.map((p) => ({ ...p, st: 'done' as const })),
-      ...(d.current ? [{ ...d.current, st: 'now' as const }] : []),
-      ...(d.next ? [{ ...d.next, st: 'next' as const }] : []),
-    ].sort((a, b) => a.time.localeCompare(b.time));
-    mineSt = Object.fromEntries(mine.map((p) => [p.scheduleId, p.st]));
-    defaultSel = (d.next ?? d.current ?? mine[0])?.scheduleId ?? null;
-    list = (
-      <DoctorList mine={mine} current={d.current} now={now} selId={wide ? routeSel ?? defaultSel : null} onSelect={select} />
-    );
+    const a = h as AssignedHome;
+    defaultSel = (a.current ?? a.next[0] ?? a.done[0])?.scheduleId ?? null;
+    list = <AssignedList home={a} now={now} selId={wide ? routeSel ?? defaultSel : null} onSelect={select} />;
   }
 
   const selId = routeSel ?? (wide ? defaultSel : null);
@@ -81,7 +83,10 @@ export function StaffShell() {
   const d = new Date(now);
 
   return (
-    <div data-screen-label={doctor ? '직원 · 의사' : '직원 · 코디'} style={{ minHeight: '100vh', display: 'flex', justifyContent: 'center', background: '#e9ecef' }}>
+    <div
+      data-screen-label={rounds ? '직원 · 순회형' : '직원 · 배정형'}
+      style={{ minHeight: '100vh', display: 'flex', justifyContent: 'center', background: '#e9ecef' }}
+    >
       <div
         ref={wrapRef}
         className="bg-ms-gray-100"
@@ -118,9 +123,9 @@ export function StaffShell() {
             </span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span className={doctor ? 'bg-purple' : 'bg-primary'} style={{ width: 8, height: 8, borderRadius: '50%' }} />
+            <span style={{ width: 8, height: 8, borderRadius: '50%', background: ROLE_COLOR[role] }} />
             <span className="text-typo-body-600 text-ms-gray-800" style={{ whiteSpace: 'nowrap' }}>
-              {session.name} {doctor ? '원장' : '코디'}
+              {session.name} {RTITLE[role] ?? role}
             </span>
             <span className="text-typo-caption-md-400 text-ms-gray-600" style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
               {pad(d.getHours()) + ':' + pad(d.getMinutes())}
@@ -168,7 +173,7 @@ export function StaffShell() {
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M15 18l-6-6 6-6" />
                 </svg>
-                {h && isCodiHome(h) ? '지금 내원 환자' : '오늘 내 일정'}
+                {rounds ? '지금 내원 고객' : '내 일'}
               </button>
             )}
             {selId && showDetail && (
@@ -176,8 +181,8 @@ export function StaffShell() {
                 key={selId}
                 scheduleId={selId}
                 staffId={session.staffId}
-                role={doctor ? 'doctor' : 'codi'}
-                mySt={doctor ? mineSt[selId] ?? null : null}
+                frame={rounds ? 'rounds' : 'assigned'}
+                roleOf={roleOf}
                 now={now}
                 wide={wide}
                 width={w}
@@ -194,24 +199,47 @@ export function StaffShell() {
   );
 }
 
-function DoctorList({
-  mine,
-  current,
+const rowStyle = {
+  display: 'grid',
+  gridTemplateColumns: '44px minmax(0,1fr) auto',
+  gap: 10,
+  alignItems: 'center',
+  padding: '12px 16px',
+  minHeight: 56,
+  boxSizing: 'border-box',
+  borderTopWidth: 1,
+  borderTopStyle: 'solid',
+  cursor: 'pointer',
+} as const;
+
+// 배정형 — 지금 진행 중 · 다음(배정 순) · 완료. 예정 없음
+function AssignedList({
+  home,
   now,
   selId,
   onSelect,
 }: {
-  mine: (HomePatient & { st: MySt })[];
-  current: HomePatient | null;
+  home: AssignedHome;
   now: number;
   selId: string | null;
   onSelect: (id: string) => void;
 }) {
+  const cur = home.current;
+  const groups: { title: string; count: string; rows: AssignedItem[]; done: boolean; emptyText: string }[] = [
+    {
+      title: '다음',
+      count: home.next.length + '건 · 배정 순',
+      rows: home.next,
+      done: false,
+      emptyText: '배정된 일이 없어요 — 데스크가 배정하면 여기에 떠요',
+    },
+    { title: '완료', count: home.done.length + '건', rows: home.done, done: true, emptyText: '오늘 끝낸 일이 없어요' },
+  ];
   return (
     <>
-      {current && (
+      {cur ? (
         <div
-          onClick={() => onSelect(current.scheduleId)}
+          onClick={() => onSelect(cur.scheduleId)}
           className="bg-primary text-ms-white"
           style={{ borderRadius: 12, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 6, cursor: 'pointer' }}
         >
@@ -220,103 +248,106 @@ function DoctorList({
               지금 진행 중
             </span>
             <span className="text-typo-body-600" style={{ fontVariantNumeric: 'tabular-nums' }}>
-              {fmtMinSec(current.since, now)}
+              {fmtMinSec(cur.startedAt, now)}
             </span>
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-            <span className="text-typo-title-sm-600">{roomName(current.room)}</span>
+            <span className="text-typo-title-sm-600">{roomName(cur.location)}</span>
             <span className="text-typo-body-500">
-              {current.name} · {current.procedure}
+              {cur.name} · {cur.label}
             </span>
           </div>
         </div>
-      )}
-      <div className="bg-ms-white" style={{ borderRadius: 12, display: 'flex', flexDirection: 'column', ...card, overflow: 'hidden' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px 10px' }}>
-          <span className="text-typo-heading-md-500 text-ms-gray-800">오늘 내 일정</span>
-          <span className="text-typo-caption-md-400 text-ms-gray-600">
-            {mine.filter((p) => p.st === 'done').length} / {mine.length} 완료
-          </span>
+      ) : (
+        <div className="bg-ms-white border-ms-gray-300" style={{ borderRadius: 12, padding: '14px 16px', borderWidth: 1, borderStyle: 'dashed' }}>
+          <span className="text-typo-body-500 text-ms-gray-600">지금 진행 중인 일이 없어요</span>
         </div>
-        {mine.map((p) => {
-          const done = p.st === 'done';
-          return (
-            <div
-              key={p.scheduleId}
-              onClick={() => onSelect(p.scheduleId)}
-              className={p.scheduleId === selId ? 'bg-primary-100 border-ms-gray-200' : 'bg-ms-white border-ms-gray-200'}
-              style={{
-                display: 'grid',
-                gridTemplateColumns: '44px minmax(0,1fr) auto',
-                gap: 10,
-                alignItems: 'center',
-                padding: '12px 16px',
-                minHeight: 56,
-                boxSizing: 'border-box',
-                borderTopWidth: 1,
-                borderTopStyle: 'solid',
-                cursor: 'pointer',
-              }}
-            >
-              <span
-                className={done ? 'text-typo-caption-md-500 text-ms-gray-500' : 'text-typo-caption-md-600 text-ms-gray-800'}
-                style={{ fontVariantNumeric: 'tabular-nums' }}
+      )}
+      {groups.map((g) => (
+        <div key={g.title} className="bg-ms-white" style={{ borderRadius: 12, display: 'flex', flexDirection: 'column', ...card, overflow: 'hidden' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px 10px' }}>
+            <span className="text-typo-heading-md-500 text-ms-gray-800">{g.title}</span>
+            <span className="text-typo-caption-md-400 text-ms-gray-600">{g.count}</span>
+          </div>
+          {g.rows.map((x) => {
+            const ss = SSTATE[x.state];
+            return (
+              <div
+                key={x.stepId}
+                onClick={() => onSelect(x.scheduleId)}
+                className={x.scheduleId === selId ? 'bg-primary-100 border-ms-gray-200' : 'bg-ms-white border-ms-gray-200'}
+                style={rowStyle}
               >
-                {p.time}
-              </span>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
                 <span
-                  className={done ? 'text-typo-body-500 text-ms-gray-500' : 'text-typo-body-600 text-ms-gray-800'}
-                  style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                  className={g.done ? 'text-typo-caption-md-500 text-ms-gray-500' : 'text-typo-caption-md-600 text-ms-gray-800'}
+                  style={{ fontVariantNumeric: 'tabular-nums' }}
                 >
-                  {p.name} <span className="text-typo-caption-md-400 text-ms-gray-600">{roomName(p.room)}</span>
+                  {g.done ? hhmm(x.endedAt) : hhmm(x.assignedAt)}
                 </span>
-                <span
-                  className="text-typo-caption-md-400 text-ms-gray-600"
-                  style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-                >
-                  {p.procedure}
-                </span>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+                  <span
+                    className={g.done ? 'text-typo-body-500 text-ms-gray-500' : 'text-typo-body-600 text-ms-gray-800'}
+                    style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                  >
+                    {x.name} <span className="text-typo-caption-md-400 text-ms-gray-600">{roomName(x.location)}</span>
+                  </span>
+                  <span
+                    className="text-typo-caption-md-400 text-ms-gray-600"
+                    style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                  >
+                    {x.label}
+                  </span>
+                </div>
+                <Badge variant={ss.variant} size="sm" dot={ss.dot}>
+                  {ss.name}
+                </Badge>
               </div>
-              <Badge variant={MY[p.st].variant} size="sm" dot={MY[p.st].dot}>
-                {MY[p.st].name}
-              </Badge>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+          {!g.rows.length && (
+            <span
+              className="text-typo-body-400 text-ms-gray-500 border-ms-gray-200"
+              style={{ padding: '12px 16px 14px', borderTopWidth: 1, borderTopStyle: 'solid' }}
+            >
+              {g.emptyText}
+            </span>
+          )}
+        </div>
+      ))}
     </>
   );
 }
 
-function CodiList({
+// 순회형 — 지금 내원 고객 · 손 필요 · 오늘 시술
+function RoundsList({
   home,
+  rows,
   now,
   selId,
   onSelect,
 }: {
-  home: CodiHome;
+  home: RoundsHome;
+  rows: RoundsHome['patients'];
   now: number;
   selId: string | null;
   onSelect: (id: string) => void;
 }) {
-  const rows = home.patients;
   return (
     <div className="bg-ms-white" style={{ borderRadius: 12, display: 'flex', flexDirection: 'column', ...card, overflow: 'hidden' }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '14px 16px 10px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-          <span className="text-typo-heading-md-500 text-ms-gray-800">지금 내원 환자</span>
+          <span className="text-typo-heading-md-500 text-ms-gray-800">지금 내원 고객</span>
           <span className="text-typo-caption-md-400 text-ms-gray-600">
             {rows.length}명 · 외국인 {rows.filter((p) => isForeign(p.nationality)).length}명
           </span>
         </div>
         <span className="text-typo-caption-md-400 text-ms-gray-600">
-          대기 {home.summary.wait} · 상담 {home.summary.consult} · 시술 {home.summary.treat} · 경과 긴 순
+          손 필요 {home.summary.needNext + home.summary.needDischarge} · 손 필요 먼저, 그다음 경과 긴 순
         </span>
       </div>
       {rows.map((p) => {
-        const s = STAFF_STATUS[p.state ?? 'wait'];
-        const foreign = isForeign(p.nationality);
+        const k = boxKey(p.status);
+        const procs = p.procedures;
         return (
           <div
             key={p.scheduleId}
@@ -326,9 +357,8 @@ function CodiList({
               display: 'grid',
               gridTemplateColumns: 'minmax(0,1fr) auto',
               gap: 10,
-              alignItems: 'center',
+              alignItems: 'start',
               padding: '12px 16px',
-              minHeight: 60,
               boxSizing: 'border-box',
               borderTopWidth: 1,
               borderTopStyle: 'solid',
@@ -336,14 +366,14 @@ function CodiList({
             }}
           >
             <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flexWrap: 'wrap' }}>
                 <span
                   className="text-typo-body-600 text-ms-gray-800"
                   style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
                 >
                   {p.name}
                 </span>
-                {foreign && (
+                {isForeign(p.nationality) && (
                   <span
                     className="bg-ms-gray-200 text-typo-caption-md-500 text-ms-gray-700"
                     style={{ padding: '1px 6px', borderRadius: 4, whiteSpace: 'nowrap' }}
@@ -351,20 +381,33 @@ function CodiList({
                     {natName(p.nationality)}
                   </span>
                 )}
+                {p.need && (
+                  <span
+                    className="bg-red-100 text-red text-typo-caption-md-600"
+                    style={{ padding: '1px 6px', borderRadius: 4, whiteSpace: 'nowrap' }}
+                  >
+                    손 필요 · {p.status?.label}
+                  </span>
+                )}
               </div>
-              <span
-                className="text-typo-caption-md-400 text-ms-gray-600"
-                style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-              >
+              <span className="text-typo-caption-md-400 text-ms-gray-600" style={{ overflowWrap: 'anywhere' }}>
                 <b className="text-primary" style={{ fontWeight: 600 }}>
-                  {roomName(p.room)}
+                  {roomName(p.location)}
                 </b>{' '}
-                · {p.label}
+                · {p.status?.label}
+              </span>
+              <span className="text-typo-caption-md-400 text-ms-gray-700" style={{ overflowWrap: 'anywhere' }}>
+                오늘 시술 ·{' '}
+                {procs.length
+                  ? procs
+                      .map((s) => s.label + (s.state === 'done' ? ' ✓' : s.state === 'in_progress' ? ' (진행 중)' : ''))
+                      .join(' · ')
+                  : '아직 없음'}
               </span>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
-              <Badge variant={s.variant} size="sm" dot={s.dot}>
-                {s.name}
+              <Badge variant={STATUS[k].variant} size="sm" dot>
+                {STATUS[k].name}
               </Badge>
               <span className="text-typo-caption-md-500 text-ms-gray-700" style={{ fontVariantNumeric: 'tabular-nums' }}>
                 {fmtMinSec(p.since, now)}

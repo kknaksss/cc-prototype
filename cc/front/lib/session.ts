@@ -1,8 +1,11 @@
-// 로그인 상태 — 토큰 없이 localStorage 에 staffId(§6)
+// 로그인 상태 — 토큰 없이 localStorage 에 staffId(§7)
+import type { Frame } from './types';
+
 export interface Session {
   staffId: string;
   name: string;
   role: string;
+  frame: Frame;
 }
 
 const KEY = 'cc.session';
@@ -23,7 +26,11 @@ export function parseSession(raw: string | null): Session | null {
   try {
     if (!raw) return null;
     const s = JSON.parse(raw) as Partial<Session>;
-    return s.staffId ? { staffId: s.staffId, name: s.name ?? '', role: s.role ?? '' } : null;
+    if (!s.staffId) return null;
+    const role = s.role ?? '';
+    // 0.1.0 세션(frame 없음)은 역할로 틀을 짐작하지 않고 다시 로그인하게 한다
+    if (s.frame !== 'assigned' && s.frame !== 'rounds' && s.frame !== 'desk') return null;
+    return { staffId: s.staffId, name: s.name ?? '', role, frame: s.frame };
   } catch {
     return null;
   }
@@ -45,11 +52,8 @@ export function clearSession() {
   }
 }
 
-export const isDeskRole = (role: string) => role === '데스크' || role.toLowerCase() === 'desk';
-export const isDoctorRole = (role: string) => role === '의사' || role.toLowerCase() === 'doctor';
-
-// 역할별 첫 화면(§6) — back 이 경로를 주면 그 값을 쓴다
-export function homePath(role: string, home?: string): string {
+// 틀별 첫 화면 — back 이 경로를 주면 그 값(데스크 /desk · 직원 /staff)
+export function homePath(frame: Frame, home?: string): string {
   if (home && home.startsWith('/')) return home;
-  return isDeskRole(role) ? '/desk' : '/staff';
+  return frame === 'desk' ? '/desk' : '/staff';
 }

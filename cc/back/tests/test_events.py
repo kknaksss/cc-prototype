@@ -14,9 +14,8 @@ def test_sse_sends_version_on_change(container):
         assert first.startswith("event: state\n")
         v0 = json.loads(first.split("data: ")[1])["version"]
         b = container.board.board()
-        cust = next(c for c in b["customers"] if not c["done"] and c["room"] != "lounge")
-        doc = next(s for s in b["staff"] if s["role"] == "의사")
-        t = threading.Thread(target=container.board.assign, args=(doc["staffId"], cust["room"]))
+        sid = next(r["scheduleId"] for r in b["resv"] if r["st"] == "booked")
+        t = threading.Thread(target=container.board.check_in, args=(sid, [{"kind": "consult"}]))
         t.start()
         msg = await asyncio.wait_for(gen.__anext__(), timeout=5)
         t.join()

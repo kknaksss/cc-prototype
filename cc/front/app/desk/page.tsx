@@ -4,15 +4,14 @@ import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Header, Menu } from '@medisolve-ai/medikit';
 import * as api from '@/lib/api';
-import { KEYS, LAYOUT, ROLE_DOT, ROLE_ORDER, STATUS, custIn, statusOf } from '@/lib/board';
+import { BOX, KEYS, ROLES, ROLE_COLOR, STATUS, hereCustomers } from '@/lib/board';
 import { useLive, useNow, useSession } from '@/lib/hooks';
 import { clearSession } from '@/lib/session';
 import type { Board, Reservation } from '@/lib/types';
 import { Aside, type TabId } from '@/components/desk/Aside';
-import { CheckInModal, type CheckInTarget } from '@/components/desk/CheckInModal';
+import { CheckInModal } from '@/components/desk/CheckInModal';
 import { FloorGrid, type Route } from '@/components/desk/FloorGrid';
 import { RoomPanel } from '@/components/desk/RoomPanel';
-import { clearPatientInfo, usePatientInfo } from '@/components/desk/usePatientInfo';
 import { useDeskActions } from '@/components/desk/useDeskActions';
 
 const PATH = '/board/live';
@@ -29,20 +28,22 @@ const MENUS = [
   },
 ];
 
-// 데스크가 고른 직원 · 고객의 동선(시안 activeRoute)
+// 데스크가 고른 직원 · 고객의 동선(시안 v4 activeRoute)
 function activeRoute(board: Board, tab: TabId, sel: string | null, selC: string | null): Route | null {
   if (tab === 'staff' && sel) {
     const s = board.staff.find((x) => x.staffId === sel);
     if (!s) return null;
-    const ids = s.queue.length ? [...s.queue] : s.home && s.home !== 'office' ? [s.home] : [];
-    return ids.length ? { ids, cur: 0 } : null;
+    const now = s.work.find((w) => w.state === 'in_progress');
+    const next = s.work.filter((w) => w.state === 'assigned');
+    const ids = [now, ...next].filter((w) => w && w.location).map((w) => w!.location as string);
+    return ids.length ? { ids, cur: now ? 0 : -1 } : null;
   }
   if (tab === 'customer' && selC) {
     const c = board.customers.find((x) => x.scheduleId === selC);
-    if (!c || c.done || !c.room) return null;
-    if (c.room === 'lounge') return { ids: ['lounge'], cur: 0 };
-    if (c.prev) return { ids: ['lounge', c.prev, c.room, c.prev], cur: 2 };
-    return { ids: ['lounge', c.room], cur: 1 };
+    if (!c || !c.location) return null;
+    if (c.location === 'reception') return { ids: ['reception'], cur: 0 };
+    if (c.prevRoom) return { ids: ['reception', c.prevRoom, c.location, c.prevRoom], cur: 2 };
+    return { ids: ['reception', c.location], cur: 1 };
   }
   return null;
 }
@@ -61,8 +62,8 @@ export default function DeskPage() {
   const [sel, setSel] = useState<string | null>(null);
   const [selC, setSelC] = useState<string | null>(null);
   const [rp, setRp] = useState<string | null>(null);
-  const [ci, setCi] = useState<CheckInTarget | null>(null);
-  const ciInfo = usePatientInfo(ci?.scheduleId ? [ci.scheduleId] : []);
+  const [ci, setCi] = useState<Reservation | null>(null);
+  const [resetAsk, setResetAsk] = useState(false);
 
   useEffect(() => {
     const on = () => setVw(document.documentElement.clientWidth);
@@ -71,18 +72,22 @@ export default function DeskPage() {
     return () => window.removeEventListener('resize', on);
   }, []);
 
+  useEffect(() => {
+    if (session && session.frame !== 'desk') router.replace('/staff');
+  }, [session, router]);
+
   const selectTab = useCallback(
     (id: TabId) => {
       setTab(id);
       if (!board) return;
       // 처음 여는 탭은 동선이 보이는 사람을 먼저 고른다(시안은 샘플 이름으로 고정)
       if (id === 'staff' && !sel) {
-        const list = ROLE_ORDER.flatMap((r) => board.staff.filter((s) => s.role === r));
-        setSel((list.find((s) => s.queue.length) ?? list[0])?.staffId ?? null);
+        const list = ROLES.flatMap((r) => board.staff.filter((s) => s.role === r));
+        setSel((list.find((s) => s.work.length) ?? list[0])?.staffId ?? null);
       }
       if (id === 'customer' && !selC) {
-        const list = board.customers.filter((c) => !c.done);
-        setSelC((list.find((c) => c.room && c.room !== 'lounge') ?? list[0])?.scheduleId ?? null);
+        const list = hereCustomers(board);
+        setSelC((list.find((c) => c.location !== 'reception') ?? list[0])?.scheduleId ?? null);
       }
     },
     [board, sel, selC],
@@ -92,30 +97,18 @@ export default function DeskPage() {
 
   const narrow = vw < 1280;
   const open = narrow && drawer;
+  const itemCount = board ? hereCustomers(board).length : 0;
 
-  // 진행 목록 건수 = 상태가 있는 방 + 라운지 대기(시안 items)
-  const itemCount = board
-    ? LAYOUT.filter((d) => statusOf(board, d.id)).length + custIn(board, 'lounge').length
-    : 0;
-
-  const reset = async () => {
-    if (!window.confirm('현황판을 시드 상태로 되돌릴까요?')) return;
-    clearPatientInfo();
+  const doReset = async () => {
+    setResetAsk(false);
     setRp(null);
     setCi(null);
-    await run(() => api.resetBoard(), null);
-  };
-
-  const openCheckIn = (r: Reservation) =>
-    setCi({ scheduleId: r.scheduleId, name: r.name, time: r.time, procedure: r.procedure, doctor: r.doctor });
-  const walkIn = () => {
-    const n = board ? board.resv.filter((r) => r.procedure === '현장 접수').length + 1 : 1;
-    setCi({ scheduleId: null, name: '현장 고객 ' + n, time: '', procedure: '현장 접수', doctor: '미정' });
+    await run(() => api.resetBoard(), '시드 상태로 초기화');
   };
 
   return (
     <div
-      data-screen-label="실시간 현황판 v3"
+      data-screen-label="실시간 현황판 v4"
       style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--ms-gray-100, #f5f6f8)' }}
     >
       <Header
@@ -127,7 +120,7 @@ export default function DeskPage() {
         currentPath={PATH}
         onMenuClick={(_href: string, e: React.MouseEvent) => e?.preventDefault()}
         branchName="세라미크 명동점"
-        userName="관리자"
+        userName="데스크"
         onLogout={() => {
           clearSession();
           router.replace('/login');
@@ -153,14 +146,14 @@ export default function DeskPage() {
                 실시간 현황판
               </h1>
               <span className="text-typo-body-400 text-ms-gray-600" style={{ whiteSpace: 'nowrap' }}>
-                명동점 · 1층 · 방을 눌러 배정
+                명동점 · 1층 · 방을 눌러 고객 동선 배정
               </span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px 20px', flexWrap: 'wrap' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                {Object.keys(ROLE_DOT).map((name) => (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                {['고객', ...ROLES].map((name) => (
                   <span key={name} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span className={ROLE_DOT[name]} style={{ width: 8, height: 8, borderRadius: '50%' }} />
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: ROLE_COLOR[name] }} />
                     <span className="text-typo-caption-md-400 text-ms-gray-700" style={{ whiteSpace: 'nowrap' }}>
                       {name}
                     </span>
@@ -172,7 +165,7 @@ export default function DeskPage() {
                 {KEYS.map((k) => (
                   <span key={k} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <span
-                      className={STATUS[k].cls}
+                      className={BOX[k]}
                       style={{ width: 14, height: 10, borderRadius: 3, borderWidth: 1, borderStyle: 'solid', boxSizing: 'border-box' }}
                     />
                     <span className="text-typo-caption-md-400 text-ms-gray-700" style={{ whiteSpace: 'nowrap' }}>
@@ -181,6 +174,9 @@ export default function DeskPage() {
                   </span>
                 ))}
               </div>
+              <Button variant="outlined" color="gray" size="sm" onClick={() => setResetAsk(true)}>
+                초기화
+              </Button>
               {narrow && (
                 <Button variant="outlined" color="gray" size="sm" onClick={() => setDrawer(true)}>
                   <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -189,10 +185,6 @@ export default function DeskPage() {
                   </span>
                 </Button>
               )}
-              {/* SPEC §5.4 — 시안에 없는 유일한 추가 요소 */}
-              <Button variant="outlined" color="gray" size="sm" onClick={() => void reset()}>
-                초기화
-              </Button>
             </div>
           </div>
           <div style={{ display: 'flex', gap: 12, flex: 1, minHeight: 0 }}>
@@ -209,12 +201,7 @@ export default function DeskPage() {
               }}
             >
               {board ? (
-                <FloorGrid
-                  board={board}
-                  now={now}
-                  route={activeRoute(board, tab, sel, selC)}
-                  onOpen={(id) => setRp(id)}
-                />
+                <FloorGrid board={board} now={now} route={activeRoute(board, tab, sel, selC)} onOpen={(id) => setRp(id)} />
               ) : (
                 <span className="text-typo-body-400 text-ms-gray-500" style={{ padding: 12 }}>
                   {live.error ?? '불러오는 중…'}
@@ -241,14 +228,46 @@ export default function DeskPage() {
                   setDrawer(false);
                 }}
                 onOpenRoom={(id) => setRp(id)}
-                onCheckIn={openCheckIn}
-                onWalkIn={walkIn}
+                onCheckIn={(r) => setCi(r)}
+                onWalkIn={() => undefined}
                 narrow={narrow}
                 open={open}
                 onClose={() => setDrawer(false)}
               />
             )}
           </div>
+
+          {resetAsk && (
+            <div
+              className="bg-ms-white"
+              style={{
+                position: 'fixed',
+                top: 84,
+                right: 28,
+                zIndex: 9998,
+                width: 300,
+                borderRadius: 12,
+                padding: '14px 16px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 10,
+                boxShadow: '0 6px 20px rgba(0,0,0,0.18)',
+              }}
+            >
+              <span className="text-typo-body-600 text-ms-gray-800">시드 상태로 초기화할까요?</span>
+              <span className="text-typo-caption-md-400 text-ms-gray-700" style={{ wordBreak: 'keep-all' }}>
+                지금까지의 접수 · 배정 · 시작/종료 기록을 지우고 시드 상태로 돌아가요. 직원 화면도 같이 바뀌어요.
+              </span>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
+                <Button variant="text" color="gray" size="sm" onClick={() => setResetAsk(false)}>
+                  취소
+                </Button>
+                <Button variant="solid" color="red" size="sm" onClick={() => void doReset()}>
+                  초기화
+                </Button>
+              </div>
+            </div>
+          )}
 
           {toast && (
             <div
@@ -285,19 +304,20 @@ export default function DeskPage() {
 
           {board && ci && (
             <CheckInModal
-              key={ci.scheduleId ?? ci.name}
-              target={ci}
-              info={ci.scheduleId ? ciInfo[ci.scheduleId] : undefined}
+              key={ci.scheduleId}
+              resv={ci}
               onClose={() => setCi(null)}
-              onConfirm={(order) => {
+              onConfirm={(steps) => {
                 const t = ci;
                 setCi(null);
-                void run(() => api.checkIn(t.scheduleId, order, t.name), t.name + ' 접수 · 라운지 대기');
+                void run(() => api.checkIn(t.scheduleId, steps), t.name + ' 접수 · 접수대기실');
               }}
             />
           )}
 
-          {board && rp && <RoomPanel key={rp} board={board} now={now} id={rp} onClose={() => setRp(null)} run={run} />}
+          {board && rp && (
+            <RoomPanel key={rp} board={board} now={now} id={rp} onClose={() => setRp(null)} onSwitch={(id) => setRp(id)} run={run} />
+          )}
         </main>
       </div>
     </div>

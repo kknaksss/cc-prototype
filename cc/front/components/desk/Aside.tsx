@@ -1,9 +1,10 @@
 'use client';
 
 import { Badge, Button, Tabs } from '@medisolve-ai/medikit';
-import { KEYS, LAYOUT, RLABEL, ROLE_DOT, ROLE_ORDER, STATUS, custIn, presentIn, roomName, statusOf, stepView, taskAt } from '@/lib/board';
+import { BOX, KEYS, ROLES, ROLE_COLOR, SSTATE, STATUS, boxKey, hereCustomers, roomName, stepNum } from '@/lib/board';
 import { elapsedSec, fmtElapsed } from '@/lib/time';
-import type { Board, Reservation, ResvState } from '@/lib/types';
+import type { Board, Reservation, StaffWork } from '@/lib/types';
+import { natName } from '@/components/staff/common';
 
 export type TabId = 'resv' | 'status' | 'staff' | 'customer';
 const TABS = [
@@ -14,10 +15,18 @@ const TABS = [
 ];
 
 const rowBorder = { borderBottomWidth: 1, borderBottomStyle: 'solid' } as const;
+const list = { flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' } as const;
 
-function SummaryCards({ items }: { items: { name: string; count: number; cls: string }[] }) {
+function SummaryCards({ items, cols }: { items: { name: string; count: number; cls: string }[]; cols: number }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 8, padding: '16px 16px 12px' }}>
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`,
+        gap: cols > 3 ? 6 : 8,
+        padding: '16px 16px 12px',
+      }}
+    >
       {items.map((s) => (
         <div
           key={s.name}
@@ -26,13 +35,15 @@ function SummaryCards({ items }: { items: { name: string; count: number; cls: st
             borderRadius: 8,
             borderWidth: 1,
             borderStyle: 'solid',
-            padding: '8px 10px',
+            padding: cols > 3 ? '8px 8px' : '8px 10px',
             display: 'flex',
             flexDirection: 'column',
             gap: 2,
           }}
         >
-          <span className="text-typo-caption-md-500">{s.name}</span>
+          <span className="text-typo-caption-md-500" style={{ whiteSpace: 'nowrap' }}>
+            {s.name}
+          </span>
           <span className="text-typo-title-sm-600" style={{ fontVariantNumeric: 'tabular-nums' }}>
             {s.count}
           </span>
@@ -42,6 +53,9 @@ function SummaryCards({ items }: { items: { name: string; count: number; cls: st
   );
 }
 
+// 직원의 지금 일 한 줄 — 「관리실 03 · 상담 (고객)」
+export const workText = (board: Board, w: StaffWork) =>
+  (w.location ? roomName(w.location, board.rooms) : '') + ' · ' + w.label + ' (' + w.customerName + ')';
 
 export function Aside({
   board,
@@ -110,10 +124,10 @@ export function Aside({
       </div>
       {tab === 'resv' && <ResvTab board={board} now={now} onCheckIn={onCheckIn} onWalkIn={onWalkIn} />}
       {tab === 'staff' && (
-        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
-          {ROLE_ORDER.flatMap((role) => board.staff.filter((s) => s.role === role)).map((s) => {
-            const cur = s.queue[0];
-            const rest = s.queue.slice(1);
+        <div style={list}>
+          {ROLES.flatMap((role) => board.staff.filter((s) => s.role === role)).map((s) => {
+            const cur = s.work.find((w) => w.state === 'in_progress');
+            const next = s.work.filter((w) => w.state === 'assigned');
             return (
               <div
                 key={s.staffId}
@@ -122,50 +136,32 @@ export function Aside({
                 style={{ padding: '12px 16px', ...rowBorder, display: 'flex', flexDirection: 'column', gap: 8, cursor: 'pointer' }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span className={ROLE_DOT[s.role]} style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0 }} />
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: ROLE_COLOR[s.role] }} />
                   <span className="text-typo-body-600 text-ms-gray-800" style={{ whiteSpace: 'nowrap' }}>
                     {s.name}
                   </span>
                   <span className="text-typo-caption-md-400 text-ms-gray-600" style={{ whiteSpace: 'nowrap' }}>
-                    {RLABEL[s.role]}
+                    {s.role}
                   </span>
                   <span
                     className={
-                      rest.length >= 2
-                        ? 'text-typo-caption-md-600 text-red'
-                        : 'text-typo-caption-md-500 text-ms-gray-600'
+                      next.length >= 2 ? 'text-typo-caption-md-600 text-red' : 'text-typo-caption-md-500 text-ms-gray-600'
                     }
                     style={{ marginLeft: 'auto', whiteSpace: 'nowrap' }}
                   >
-                    {rest.length ? '대기 ' + rest.length + '건' : ''}
+                    {next.length ? '대기 ' + next.length + '건' : ''}
                   </span>
                 </div>
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: '28px minmax(0,1fr)',
-                    gap: '4px 8px',
-                    alignItems: 'baseline',
-                  }}
-                >
-                  <span className="text-typo-caption-md-500 text-ms-gray-600">현재</span>
-                  <span
-                    className={
-                      cur ? 'text-typo-caption-md-400 text-ms-gray-800' : 'text-typo-caption-md-400 text-primary'
-                    }
-                  >
-                    <b style={{ fontWeight: 600 }}>{cur ? rn(cur) : '비어있음'}</b>
-                    {cur ? taskAt(board, cur) : ' · ' + rn(s.home)}
+                <div style={{ display: 'grid', gridTemplateColumns: '28px minmax(0,1fr)', gap: '4px 8px', alignItems: 'baseline' }}>
+                  <span className="text-typo-caption-md-500 text-ms-gray-600">지금</span>
+                  <span className={cur ? 'text-typo-caption-md-400 text-ms-gray-800' : 'text-typo-caption-md-400 text-ms-gray-500'}>
+                    {cur ? workText(board, cur) : '진행 중인 일 없음'}
                   </span>
-                  <span className="text-typo-caption-md-500 text-primary">다음</span>
+                  <span className="text-typo-caption-md-500 text-primary">대기</span>
                   <span
-                    className={
-                      rest.length
-                        ? 'text-typo-caption-md-400 text-ms-gray-800'
-                        : 'text-typo-caption-md-400 text-ms-gray-500'
-                    }
+                    className={next.length ? 'text-typo-caption-md-400 text-ms-gray-800' : 'text-typo-caption-md-400 text-ms-gray-500'}
                   >
-                    {rest.length ? rest.map((id) => rn(id) + taskAt(board, id)).join(' → ') : '다음 일정 없음'}
+                    {next.length ? next.map((w) => workText(board, w)).join(' → ') : '배정된 일 없음'}
                   </span>
                 </div>
               </div>
@@ -174,76 +170,74 @@ export function Aside({
         </div>
       )}
       {tab === 'customer' && (
-        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
-          {board.customers
-            .filter((c) => !c.done)
-            .map((c) => {
-              const st =
-                c.room === 'lounge' || !c.room ? { key: 'wait' as const } : statusOf(board, c.room) || { key: 'wait' as const };
-              return (
-                <div
-                  key={c.scheduleId}
-                  onClick={() => onSelCustomer(c.scheduleId)}
-                  className={
-                    selC === c.scheduleId ? 'bg-primary-100 border-ms-gray-200' : 'bg-ms-white border-ms-gray-200'
-                  }
-                  style={{ padding: '12px 16px', ...rowBorder, display: 'flex', flexDirection: 'column', gap: 8, cursor: 'pointer' }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                      <Badge variant={STATUS[st.key].variant} size="sm" dot>
-                        {STATUS[st.key].name}
-                      </Badge>
-                      <span className="text-typo-body-600 text-ms-gray-800" style={{ whiteSpace: 'nowrap' }}>
-                        {c.name}
-                      </span>
-                    </div>
-                    <span className="text-typo-caption-md-500 text-ms-gray-700" style={{ whiteSpace: 'nowrap' }}>
-                      {rn(c.room)}
+        <div style={list}>
+          {hereCustomers(board).map((c) => {
+            const k = boxKey(c.status);
+            return (
+              <div
+                key={c.scheduleId}
+                onClick={() => onSelCustomer(c.scheduleId)}
+                className={selC === c.scheduleId ? 'bg-primary-100 border-ms-gray-200' : 'bg-ms-white border-ms-gray-200'}
+                style={{ padding: '12px 16px', ...rowBorder, display: 'flex', flexDirection: 'column', gap: 8, cursor: 'pointer' }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                    <Badge variant={STATUS[k].variant} size="sm" dot>
+                      {STATUS[k].name}
+                    </Badge>
+                    <span
+                      className="text-typo-body-600 text-ms-gray-800"
+                      style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                    >
+                      {c.name}
                     </span>
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    {c.order.map((s, i) => {
-                      const v = stepView(s, i, c.step);
-                      return (
-                        <div
-                          key={i}
+                  <span className="text-typo-caption-md-500 text-ms-gray-700" style={{ whiteSpace: 'nowrap' }}>
+                    {rn(c.location)}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {c.steps.map((s, i) => {
+                    const v = stepNum(s.state);
+                    return (
+                      <div
+                        key={s.stepId}
+                        style={{ display: 'grid', gridTemplateColumns: '18px minmax(0,1fr) auto', gap: 8, alignItems: 'center' }}
+                      >
+                        <span
+                          className={v.numCls}
                           style={{
-                            display: 'grid',
-                            gridTemplateColumns: '18px minmax(0,1fr) auto',
-                            gap: 8,
+                            width: 18,
+                            height: 18,
+                            borderRadius: '50%',
+                            display: 'flex',
                             alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: 11,
+                            fontWeight: 600,
+                            boxSizing: 'border-box',
+                            borderWidth: 1,
+                            borderStyle: 'solid',
                           }}
                         >
-                          <span
-                            className={v.numCls}
-                            style={{
-                              width: 18,
-                              height: 18,
-                              borderRadius: '50%',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              fontSize: 11,
-                              fontWeight: 600,
-                              boxSizing: 'border-box',
-                              borderWidth: 1,
-                              borderStyle: 'solid',
-                            }}
-                          >
-                            {v.n}
-                          </span>
-                          <span className={v.textCls} style={{ minWidth: 0 }}>
-                            {v.label}
-                          </span>
-                          <span className="text-typo-caption-md-400 text-ms-gray-500">{v.role}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
+                          {i + 1}
+                        </span>
+                        <span
+                          className={v.textCls}
+                          style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                        >
+                          {s.label}
+                        </span>
+                        <span className="text-typo-caption-md-400 text-ms-gray-500" style={{ whiteSpace: 'nowrap' }}>
+                          {(s.assigneeName ? s.assigneeName + ' · ' : '') + SSTATE[s.state].name}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
-              );
-            })}
+              </div>
+            );
+          })}
         </div>
       )}
       {tab === 'status' && <StatusTab board={board} now={now} onOpenRoom={onOpenRoom} />}
@@ -252,58 +246,30 @@ export function Aside({
 }
 
 function StatusTab({ board, now, onOpenRoom }: { board: Board; now: number; onOpenRoom: (id: string) => void }) {
-  const counts = { wait: 0, consult: 0, treat: 0 };
-  const items: {
-    key: string;
-    room: string;
-    status: string;
-    variant: 'neutral' | 'purple' | 'primary';
-    sec: number;
-    elapsed: string;
-    customer: string;
-    label: string;
-    open: () => void;
-    staff: { key: string; role: string; name: string; cls: string }[];
-  }[] = [];
-  LAYOUT.forEach((d) => {
-    const st = statusOf(board, d.id);
-    if (!st) return;
-    const cs = custIn(board, d.id);
-    counts[st.key]++;
-    items.push({
-      key: d.id,
-      room: roomName(d.id, board.rooms),
-      status: STATUS[st.key].name,
-      variant: STATUS[st.key].variant,
-      sec: elapsedSec(cs[0].since, now),
-      elapsed: fmtElapsed(cs[0].since, now),
-      customer: cs.map((c) => c.name).join(', '),
-      label: st.label,
-      open: () => onOpenRoom(d.id),
-      staff: presentIn(board, d.id).map((s) => ({ key: s.staffId, role: RLABEL[s.role], name: s.name, cls: ROLE_DOT[s.role] })),
-    });
-  });
-  custIn(board, 'lounge').forEach((c) => {
-    counts.wait++;
-    items.push({
-      key: 'lounge-' + c.scheduleId,
-      room: '라운지',
-      status: '대기',
-      variant: 'neutral',
+  const counts = { wait: 0, consult: 0, treat: 0, need: 0 };
+  const items = hereCustomers(board).map((c) => {
+    const k = boxKey(c.status);
+    counts[k]++;
+    return {
+      key: c.scheduleId,
+      room: roomName(c.location, board.rooms),
+      status: STATUS[k].name,
+      variant: STATUS[k].variant,
       sec: elapsedSec(c.since, now),
       elapsed: fmtElapsed(c.since, now),
       customer: c.name,
-      label: '접수 후 대기 · 관리실 배정 필요',
-      open: () => onOpenRoom('lounge'),
-      staff: [],
-    });
+      label: c.status?.label ?? '',
+      need: c.status?.need ? 1 : 0,
+      open: () => onOpenRoom(c.location as string),
+    };
   });
-  items.sort((a, b) => b.sec - a.sec);
+  // 손 필요 먼저, 그다음 경과 긴 순
+  items.sort((a, b) => b.need - a.need || b.sec - a.sec);
   return (
     <>
-      <SummaryCards items={KEYS.map((k) => ({ name: STATUS[k].name, count: counts[k], cls: STATUS[k].cls }))} />
+      <SummaryCards cols={4} items={KEYS.map((k) => ({ name: STATUS[k].name, count: counts[k], cls: BOX[k] }))} />
       <div className="border-ms-gray-200" style={{ borderTopWidth: 1, borderTopStyle: 'solid' }} />
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
+      <div style={list}>
         {items.map((it) => (
           <div
             key={it.key}
@@ -328,16 +294,6 @@ function StatusTab({ board, now, onOpenRoom }: { board: Board; now: number; onOp
               <span className="text-typo-body-500 text-ms-gray-800">{it.customer}</span>
               <span className="text-typo-body-400 text-ms-gray-600">{it.label}</span>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '4px 10px', flexWrap: 'wrap' }}>
-              {it.staff.map((m) => (
-                <span key={m.key} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <span className={m.cls} style={{ width: 8, height: 8, borderRadius: '50%' }} />
-                  <span className="text-typo-caption-md-400 text-ms-gray-700" style={{ whiteSpace: 'nowrap' }}>
-                    {m.role} {m.name}
-                  </span>
-                </span>
-              ))}
-            </div>
           </div>
         ))}
       </div>
@@ -345,7 +301,9 @@ function StatusTab({ board, now, onOpenRoom }: { board: Board; now: number; onOp
   );
 }
 
-const RESV_ORDER: Record<ResvState, number> = { booked: 0, noshow: 1, canceled: 2, checked: 3 };
+// 예약 줄 상태 — 접수 뒤 지금 위치 · 귀가 · 취소(시안 resvVals)
+type RState = 'booked' | 'checked' | 'gone' | 'canceled';
+const RESV_ORDER: Record<RState, number> = { booked: 0, checked: 1, gone: 2, canceled: 3 };
 
 function ResvTab({
   board,
@@ -359,17 +317,23 @@ function ResvTab({
   onWalkIn: () => void;
 }) {
   const d = new Date(now);
-  const nowMin = d.getHours() * 60 + d.getMinutes(); // 예약 지연/임박 판단 기준(시안 DEMO_NOW → 지금 시각)
-  const list = [...board.resv].sort((a, b) => RESV_ORDER[a.st] - RESV_ORDER[b.st] || a.time.localeCompare(b.time));
-  const n = { booked: 0, checked: 0, noshow: 0, canceled: 0 };
-  board.resv.forEach((r) => n[r.st]++);
+  const nowMin = d.getHours() * 60 + d.getMinutes(); // 지연/임박 기준 = 지금 시각(시안 DEMO_NOW 자리)
+  const rows = board.resv.map((r) => {
+    const c = board.customers.find((x) => x.scheduleId === r.scheduleId);
+    const st: RState = r.st === 'canceled' ? 'canceled' : r.st === 'booked' ? 'booked' : c && c.location ? 'checked' : 'gone';
+    return { r, c, st };
+  });
+  rows.sort((a, b) => RESV_ORDER[a.st] - RESV_ORDER[b.st] || a.r.time.localeCompare(b.r.time));
+  const n = { booked: 0, checked: 0, gone: 0, canceled: 0 };
+  rows.forEach((x) => n[x.st]++);
   return (
     <>
       <SummaryCards
+        cols={3}
         items={[
           { name: '예정', count: n.booked, cls: 'bg-ms-white border-primary text-ms-gray-800' },
           { name: '접수', count: n.checked, cls: 'bg-primary-100 border-primary text-ms-gray-800' },
-          { name: '노쇼', count: n.noshow, cls: 'bg-ms-gray-100 border-ms-gray-300 text-ms-gray-600' },
+          { name: '귀가', count: n.gone, cls: 'bg-ms-gray-100 border-ms-gray-300 text-ms-gray-600' },
         ]}
       />
       <div
@@ -377,23 +341,19 @@ function ResvTab({
         style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 16px 10px', ...rowBorder }}
       >
         <span className="text-typo-caption-md-400 text-ms-gray-600">오늘 예약 {board.resv.length}건</span>
-        <Button variant="outlined" color="gray" size="sm" onClick={onWalkIn}>
+        {/* 0.2.x 계약에 현장 접수(예약 없는 고객)가 없다 — 시안처럼 버튼만 두고 막아 둔다 */}
+        <Button variant="outlined" color="gray" size="sm" disabled onClick={onWalkIn}>
           현장 접수
         </Button>
       </div>
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
-        {list.map((r, i) => {
+      <div style={list}>
+        {rows.map(({ r, c, st }) => {
           const [h, m] = r.time.split(':').map(Number);
           const diff = h * 60 + m - nowMin;
-          const booked = r.st === 'booked';
-          const c =
-            r.st === 'checked' ? board.customers.find((x) => x.scheduleId === r.scheduleId) : undefined;
-          const gone = r.st === 'noshow' || r.st === 'canceled' || !c || c.done;
-          const stateText =
-            r.st === 'noshow' ? '노쇼' : r.st === 'canceled' ? '취소' : !c || c.done ? '귀가' : roomName(c.room, board.rooms);
+          const booked = st === 'booked';
           return (
             <div
-              key={(r.scheduleId ?? 'w') + i}
+              key={r.scheduleId}
               className="border-ms-gray-200"
               style={{
                 display: 'grid',
@@ -414,10 +374,18 @@ function ResvTab({
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
                   <span
                     className={booked ? 'text-typo-body-600 text-ms-gray-800' : 'text-typo-body-500 text-ms-gray-600'}
-                    style={{ whiteSpace: 'nowrap' }}
+                    style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
                   >
                     {r.name}
                   </span>
+                  {r.isNew && (
+                    <span
+                      className="bg-primary-100 text-primary text-typo-caption-md-600"
+                      style={{ padding: '1px 6px', borderRadius: 4, whiteSpace: 'nowrap' }}
+                    >
+                      첫 방문
+                    </span>
+                  )}
                   <span
                     className={diff < 0 ? 'text-typo-caption-md-600 text-red' : 'text-typo-caption-md-600 text-primary'}
                     style={{ whiteSpace: 'nowrap' }}
@@ -429,7 +397,7 @@ function ResvTab({
                   className="text-typo-caption-md-400 text-ms-gray-600"
                   style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
                 >
-                  {r.procedure} · {r.doctor}
+                  시술 {r.procedure || '-'} · 원장 {r.doctor || '-'} · {natName(r.nationality)}
                 </span>
               </div>
               {booked ? (
@@ -438,10 +406,12 @@ function ResvTab({
                 </Button>
               ) : (
                 <span
-                  className={gone ? 'text-typo-caption-md-500 text-ms-gray-500' : 'text-typo-caption-md-500 text-primary'}
+                  className={
+                    st === 'checked' ? 'text-typo-caption-md-500 text-primary' : 'text-typo-caption-md-500 text-ms-gray-500'
+                  }
                   style={{ whiteSpace: 'nowrap' }}
                 >
-                  {stateText}
+                  {st === 'canceled' ? '취소' : st === 'gone' ? '귀가' : roomName(c?.location, board.rooms)}
                 </span>
               )}
             </div>

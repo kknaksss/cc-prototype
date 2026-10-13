@@ -1,9 +1,9 @@
-"""로그인 · 직원 첫 화면 · 의사 진료 시작/완료 — §5.2 · §5.3 · §6."""
+"""로그인 · 직원 첫 화면 · 단계 시작/종료(본인) — §5.2 · §5.3 · §7."""
 
 from fastapi import APIRouter
 
 from app.api.deps import Ctr
-from app.schemas.requests import LoginBody, ScheduleBody
+from app.schemas.requests import LoginBody, StepBody
 
 router = APIRouter(prefix="/api", tags=["staff"])
 
@@ -24,10 +24,10 @@ def home(staff_id: str, c: Ctr) -> dict:
 
 
 @router.post("/staff/{staff_id}/start")
-def start(staff_id: str, body: ScheduleBody, c: Ctr) -> dict:
-    return c.board.doctor_start(staff_id, body.scheduleId)
+def start(staff_id: str, body: StepBody, c: Ctr) -> dict:
+    return c.board.start(staff_id, body.stepId)
 
 
 @router.post("/staff/{staff_id}/finish")
-def finish(staff_id: str, body: ScheduleBody, c: Ctr) -> dict:
-    return c.board.doctor_finish(staff_id, body.scheduleId)
+def finish(staff_id: str, body: StepBody, c: Ctr) -> dict:
+    return c.board.finish(staff_id, body.stepId)

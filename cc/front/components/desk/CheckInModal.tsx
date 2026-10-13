@@ -1,167 +1,195 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button, Modal } from '@medisolve-ai/medikit';
-import { RLABEL, buildOrder } from '@/lib/board';
-import type { Ticket } from '@/lib/types';
-import type { PatientInfo } from './usePatientInfo';
+import * as api from '@/lib/api';
+import { checkBox, pickCls } from '@/lib/board';
+import { Bold } from '@/lib/memo';
+import type { PatientDetail, ProcedureCandidate, Reservation, StepInput } from '@/lib/types';
+import { natName } from '@/components/staff/common';
 
-export interface CheckInTarget {
-  scheduleId: string | null; // 현장 접수면 null
-  name: string;
-  time: string;
-  procedure: string;
-  doctor: string;
+interface Row {
+  key: string;
+  label: string;
+  sub: string;
+  step: StepInput;
+  ticket: boolean;
 }
 
-const box = (on: boolean) =>
-  on ? 'bg-primary border-primary text-ms-white' : 'bg-ms-white border-ms-gray-400 text-ms-white';
-const checkBox = {
-  width: 18,
-  height: 18,
-  borderRadius: 4,
-  borderWidth: 1,
-  borderStyle: 'solid',
-  boxSizing: 'border-box',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  fontSize: 12,
-  fontWeight: 700,
-} as const;
-const rowStyle = {
-  borderWidth: 1,
-  borderStyle: 'solid',
-  borderRadius: 8,
-  padding: '10px 12px',
-  display: 'grid',
-  gridTemplateColumns: '18px minmax(0,1fr)',
-  gap: 10,
-  alignItems: 'center',
-} as const;
+const candSub = (c: ProcedureCandidate) =>
+  (c.source === 'ticket' ? '보유 시술권' : '오늘 결제 시술권') + (c.kosSequence ? ' · 순번 ' + c.kosSequence : '');
 
-// 접수 모달 — 시안 ciVals. 고른 오더를 check-in 으로 보낸다(결과 상태는 back)
+// 접수 모달(§3.1) — 오늘 동선 단계를 데스크가 고른다. 자동으로 끼우는 단계 없음
 export function CheckInModal({
-  target,
-  info,
+  resv,
   onClose,
   onConfirm,
 }: {
-  target: CheckInTarget;
-  info: PatientInfo | undefined;
+  resv: Reservation;
   onClose: () => void;
-  onConfirm: (order: ReturnType<typeof buildOrder>) => void;
+  onConfirm: (steps: StepInput[]) => void;
 }) {
-  const tickets: Ticket[] = info?.tickets ?? [];
-  const has = tickets.length > 0;
-  // 시안: 시술권이 있으면 첫 시술권을 미리 고르고, 없으면 상담 필요를 켠다
-  const [sel, setSel] = useState<number[] | null>(null);
-  const [consult, setConsult] = useState<boolean | null>(null);
-  const firstOk = tickets.findIndex((t) => t.left > 0);
-  const curSel = sel ?? (has && firstOk >= 0 ? [firstOk] : []);
-  const curConsult = consult ?? !has;
-  const order = buildOrder(tickets, curSel, curConsult);
-  const walk = target.scheduleId === null;
-  const cautions = info?.cautions ?? [];
+  const [p, setP] = useState<PatientDetail | null>(null);
+  const [cands, setCands] = useState<ProcedureCandidate[]>([]);
+  const [sel, setSel] = useState<string[] | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .getPatient(resv.scheduleId)
+      .then((x) => alive && setP(x))
+      .catch(() => undefined);
+    api
+      .getProcedureCandidates(resv.scheduleId)
+      .then((x) => alive && setCands(x))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [resv.scheduleId]);
+
+  const dc = cands.find((c) => c.kind === 'doctor_consult');
+  const rows: Row[] = [
+    { key: 'consult', label: '상담', sub: '상담사', step: { kind: 'consult', label: '상담' }, ticket: false },
+    {
+      key: 'doctor_consult',
+      label: '원장 상담',
+      sub: '의사',
+      step: { kind: 'doctor_consult', label: '원장 상담', kosSequence: dc?.kosSequence ?? null },
+      ticket: false,
+    },
+    ...cands
+      .filter((c) => c.kind === 'procedure')
+      .map((c, i) => ({
+        key: 'c' + i,
+        label: c.label,
+        sub: candSub(c),
+        step: { kind: c.kind, label: c.label, ticketId: c.ticketId, kosSequence: c.kosSequence },
+        ticket: c.source === 'ticket',
+      })),
+  ];
+  // 첫 방문 기본 = 「상담」 · 재내원 기본 = 보유 시술권 전부
+  const isNew = p ? p.isNew : resv.isNew;
+  const curSel = sel ?? (isNew ? ['consult'] : rows.filter((r) => r.ticket).map((r) => r.key));
+  const picked = rows.filter((r) => curSel.includes(r.key));
+  const meta = [p?.sex, p && p.age !== null ? p.age + '세' : '', natName(resv.nationality)].filter(Boolean).join(' · ');
 
   return (
     <Modal isOpen onBackdropClick={onClose}>
       <div
         style={{
           width: 'min(560px, calc(100vw - 64px))',
-          maxHeight: 'min(760px, calc(100vh - 96px))',
+          maxHeight: 'min(780px, calc(100vh - 96px))',
           display: 'flex',
           flexDirection: 'column',
-          gap: 18,
+          gap: 16,
           overflow: 'auto',
         }}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           <span className="text-typo-title-sm-600 text-ms-gray-800">접수</span>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-            <span className="text-typo-body-600 text-ms-gray-800">{target.name}</span>
-            <span className="text-typo-body-400 text-ms-gray-600">{info?.meta || (walk ? '현장 접수 · 신규' : '')}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span className="text-typo-body-600 text-ms-gray-800">{resv.name}</span>
+            {isNew ? (
+              <span className="bg-primary-100 text-primary text-typo-caption-md-600" style={{ padding: '1px 6px', borderRadius: 4 }}>
+                첫 방문
+              </span>
+            ) : (
+              <span className="bg-ms-gray-200 text-ms-gray-700 text-typo-caption-md-600" style={{ padding: '1px 6px', borderRadius: 4 }}>
+                재내원
+              </span>
+            )}
+            <span className="text-typo-body-400 text-ms-gray-600">{meta}</span>
           </div>
           <span className="text-typo-caption-md-400 text-ms-gray-600">
-            {walk ? '예약 없음' : target.time + ' 예약 · ' + target.procedure + ' · 담당 ' + target.doctor}
+            {resv.time} 예약 · 시술 {resv.procedure || '-'} · 원장 {resv.doctor || '-'}
           </span>
         </div>
-        {cautions.length > 0 && (
-          <div className="bg-red-100" style={{ borderRadius: 8, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-            <span className="text-typo-caption-md-600 text-red">주의사항</span>
-            <span className="text-typo-body-500 text-ms-gray-800">{cautions.join(' · ')}</span>
+        {p && p.cautions.length > 0 && (
+          <div className="bg-red-100" style={{ borderRadius: 8, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <span className="text-typo-caption-md-600 text-red">⚠ 주의</span>
+            {p.cautions.map((cu, i) => (
+              <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                <span className="text-typo-body-400 text-ms-gray-800" style={{ overflowWrap: 'anywhere' }}>
+                  <Bold text={cu.text} />
+                </span>
+                <span className="text-typo-caption-md-400 text-ms-gray-600">{cu.source}</span>
+              </div>
+            ))}
           </div>
         )}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <span className="text-typo-caption-md-600 text-ms-gray-700">보유 시술권 · 오늘 받을 시술 선택</span>
-          {tickets.map((t, i) => {
-            const on = curSel.includes(i);
-            const out = t.left <= 0;
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+            <span className="text-typo-caption-md-600 text-ms-gray-700">오늘 동선 단계 고르기</span>
+            <span className="text-typo-caption-md-400 text-ms-gray-600">
+              {isNew ? '첫 방문 — 기본은 「상담」' : '재내원 — 기본은 보유 시술권'}
+            </span>
+          </div>
+          {rows.map((r) => {
+            const on = curSel.includes(r.key);
             return (
               <div
-                key={i}
-                onClick={out ? undefined : () => setSel(on ? curSel.filter((x) => x !== i) : [...curSel, i])}
-                className={
-                  out
-                    ? 'bg-ms-gray-100 border-ms-gray-200 text-ms-gray-500'
-                    : on
-                      ? 'bg-primary-100 border-primary text-ms-gray-800'
-                      : 'bg-ms-white border-ms-gray-300 text-ms-gray-800'
-                }
-                style={{ ...rowStyle, cursor: out ? 'not-allowed' : 'pointer' }}
+                key={r.key}
+                onClick={() => setSel(on ? curSel.filter((x) => x !== r.key) : [...curSel, r.key])}
+                className={pickCls(on)}
+                style={{
+                  borderWidth: 1,
+                  borderStyle: 'solid',
+                  borderRadius: 8,
+                  padding: '10px 12px',
+                  display: 'grid',
+                  gridTemplateColumns: '18px minmax(0,1fr)',
+                  gap: 10,
+                  alignItems: 'center',
+                  cursor: 'pointer',
+                }}
               >
-                <span className={out ? 'bg-ms-gray-100 border-ms-gray-300 text-ms-gray-100' : box(on)} style={checkBox}>
+                <span
+                  className={checkBox(on)}
+                  style={{
+                    width: 18,
+                    height: 18,
+                    borderRadius: 4,
+                    borderWidth: 1,
+                    borderStyle: 'solid',
+                    boxSizing: 'border-box',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: 12,
+                    fontWeight: 700,
+                  }}
+                >
                   ✓
                 </span>
                 <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-                  <span className="text-typo-body-500">{t.name}</span>
-                  <span className="text-typo-caption-md-400 text-ms-gray-600" style={{ fontVariantNumeric: 'tabular-nums' }}>
-                    {out ? '소진 · 0/' + t.total + '회' : '잔여 ' + t.left + '/' + t.total + '회' + (t.expires ? ' · ~' + t.expires : '')}
-                  </span>
+                  <span className="text-typo-body-500">{r.label}</span>
+                  <span className="text-typo-caption-md-400 text-ms-gray-600">{r.sub}</span>
                 </div>
               </div>
             );
           })}
-          {!has && <span className="text-typo-body-400 text-ms-gray-500">보유 시술권이 없어요</span>}
-          <div
-            onClick={() => setConsult(!curConsult)}
-            className={
-              curConsult ? 'bg-primary-100 border-primary text-ms-gray-800' : 'bg-ms-white border-ms-gray-300 text-ms-gray-800'
-            }
-            style={{ ...rowStyle, cursor: 'pointer' }}
-          >
-            <span className={box(curConsult)} style={checkBox}>
-              ✓
-            </span>
-            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-              <span className="text-typo-body-500">상담 필요</span>
-              <span className="text-typo-caption-md-400 text-ms-gray-600">신규 · 시술권 외 시술 · 추가 상담</span>
-            </div>
-          </div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <span className="text-typo-caption-md-600 text-ms-gray-700">오늘 진행 순서</span>
+          <span className="text-typo-caption-md-600 text-ms-gray-700">오늘 동선 (고른 순서)</span>
           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
-            {order.map((s, i) => (
-              <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            {picked.map((r, i) => (
+              <span key={r.key} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span
                   className="bg-ms-gray-100 text-ms-gray-800"
                   style={{ borderRadius: 999, padding: '4px 10px', display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}
                 >
-                  <span className="text-typo-caption-md-500">{s.label}</span>
-                  <span className="text-typo-caption-md-400 text-ms-gray-600">{RLABEL[s.role]}</span>
+                  <span className="text-typo-caption-md-500">{r.label}</span>
                 </span>
                 <span className="text-ms-gray-500" style={{ fontSize: 12 }}>
-                  {i < order.length - 1 ? '→' : ''}
+                  {i < picked.length - 1 ? '→' : ''}
                 </span>
               </span>
             ))}
           </div>
-          {!order.length && (
-            <span className="text-typo-caption-md-400 text-red">시술을 고르거나 상담 필요를 체크하세요</span>
-          )}
+          {!picked.length && <span className="text-typo-caption-md-400 text-red">단계를 하나 이상 고르세요</span>}
           <span className="text-typo-caption-md-400 text-ms-gray-500">
-            원장 진료 · 진정 관리는 시술 선택 시 자동으로 들어가요. 직원은 현황판에서 방을 눌러 배정해요.
+            시술은 방 패널의 [시술 추가]로 나중에 붙일 수 있어요. 직원은 방을 눌러 단계마다 배정해요.
           </span>
         </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, paddingTop: 4 }}>
@@ -171,12 +199,12 @@ export function CheckInModal({
           <Button
             variant="solid"
             color="blue"
-            disabled={!order.length}
+            disabled={!picked.length}
             onClick={() => {
-              if (order.length) onConfirm(order);
+              if (picked.length) onConfirm(picked.map((r) => r.step));
             }}
           >
-            접수 · 라운지 대기
+            접수 · 접수대기실
           </Button>
         </div>
       </div>

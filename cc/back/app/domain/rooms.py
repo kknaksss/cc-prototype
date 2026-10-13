@@ -1,7 +1,9 @@
-"""현황판 칸 — 시안 `LAYOUT` · `capOf` · `isSleep` · `roomName` 이식 + KOS 방 대응표(D-13)."""
+"""현황판 칸 — 시안 `LAYOUT` · `capOf` · `isSleep` · `roomName` 이식(SPEC-001 0.2.0: 라운지 → 접수대기실 `reception`,
+수면실 → 수면시술실) + KOS 방 대응표(D-13, 참고용 — 0.2.0 시드는 쓰지 않는다)."""
 
 import re
 
+RECEPTION = "reception"  # 접수대기실 — 고객 location 값과 같다
 TRACK = {1: 1, 2: 2, 3: 4, 4: 5, 5: 6, 6: 8}
 
 
@@ -16,9 +18,10 @@ def _care(n: int, col: int, row: int) -> dict:
 LAYOUT: list[dict] = [
     _rm("t02", "2인관리실 02", 3, 1, 2), _rm("t03", "2인관리실 03", 5, 1, 2),
     _care(11, 3, 2), _care(12, 4, 2), _care(13, 5, 2), _care(14, 6, 2), _care(15, 7, 2), _care(16, 8, 2),
-    _rm("desk", "데스크", 1, 3), _rm("lounge", "라운지", 2, 3, 2), _rm("info2", "인포 2", 7, 3), _rm("s02", "수면실 02", 8, 3),
-    _rm("consult", "상담실", 2, 4), _care(4, 6, 4), _rm("s03", "수면실 03", 8, 4),
-    _care(1, 1, 5), _care(2, 2, 5), _care(3, 3, 5), _rm("info1", "인포 1", 4, 5), _rm("s01", "수면실 01", 8, 5),
+    _rm("desk", "데스크", 1, 3), _rm(RECEPTION, "접수대기실", 2, 3, 2), _rm("info2", "인포 2", 7, 3),
+    _rm("s02", "수면시술실 02", 8, 3),
+    _rm("consult", "상담실", 2, 4), _care(4, 6, 4), _rm("s03", "수면시술실 03", 8, 4),
+    _care(1, 1, 5), _care(2, 2, 5), _care(3, 3, 5), _rm("info1", "인포 1", 4, 5), _rm("s01", "수면시술실 01", 8, 5),
     _care(5, 1, 6), _care(6, 2, 6), _care(7, 3, 6), _care(8, 4, 6), _care(9, 5, 6), _care(10, 6, 6),
     _rm("t01", "2인관리실 01", 7, 6, 2),
 ]
@@ -62,8 +65,10 @@ def is_sleep(rid: str | None) -> bool:
     return bool(re.match(r"^s\d", rid or ""))
 
 
+def is_treatment_room(rid: str | None) -> bool:
+    """접수대기실에서 고객을 넣을 수 있는 칸 — 관리실 · 2인관리실(시안 freeRooms)."""
+    return bool(re.match(r"^(c\d|t\d)", rid or ""))
+
+
 def rooms_payload() -> list[dict]:
-    kos_by_room: dict[str, list[str]] = {}
-    for kos, rid in KOS_ROOM_MAP.items():
-        kos_by_room.setdefault(rid, []).append(kos)
-    return [{**r, "cap": cap_of(r["id"]), "kosRooms": kos_by_room.get(r["id"], [])} for r in LAYOUT]
+    return [{**r, "cap": cap_of(r["id"])} for r in LAYOUT]

@@ -21,14 +21,17 @@ export function useDeskActions(reload: () => Promise<void>) {
   }, []);
 
   const run = useCallback(
-    async (fn: () => Promise<MutationResult>, text: string | null) => {
+    async (fn: () => Promise<MutationResult>, text: string | null): Promise<boolean> => {
+      let ok = true;
       try {
         const r = await fn();
         show(text ? { text, version: r.version } : null);
       } catch (e) {
+        ok = false;
         show({ text: e instanceof Error ? e.message : '처리하지 못했어요', version: null });
       }
       await reload();
+      return ok;
     },
     [reload, show],
   );

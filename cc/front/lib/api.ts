@@ -3,10 +3,11 @@ import type {
   Board,
   LoginResult,
   MutationResult,
-  OrderStep,
   PatientDetail,
+  ProcedureCandidate,
   StaffAccount,
   StaffHome,
+  StepInput,
 } from './types';
 
 export const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8600').replace(/\/$/, '');
@@ -47,28 +48,45 @@ const post = <T>(path: string, body: unknown) => request<T>(path, { method: 'POS
 export const getBoard = () => request<Board>('/api/board');
 export const getStaffList = () => request<StaffAccount[]>('/api/staff');
 export const getStaffHome = (staffId: string) => request<StaffHome>(`/api/staff/${encodeURIComponent(staffId)}/home`);
-export const getPatient = (scheduleId: string) => request<PatientDetail>(`/api/patients/${encodeURIComponent(scheduleId)}`);
+// staffId 를 주면 그 직원의 버튼(myActions)이 온다
+export const getPatient = (scheduleId: string, staffId?: string) =>
+  request<PatientDetail>(
+    `/api/patients/${encodeURIComponent(scheduleId)}` + (staffId ? `?staffId=${encodeURIComponent(staffId)}` : ''),
+  );
+export const getProcedureCandidates = (scheduleId: string) =>
+  request<ProcedureCandidate[]>(`/api/patients/${encodeURIComponent(scheduleId)}/procedure-candidates`);
 
-// §6 로그인
-export const login = (staffId: string) => post<LoginResult>('/api/login', { staffId });
+// §7 로그인 — 비밀번호는 받기만 한다
+export const login = (staffId: string, password: string) => post<LoginResult>('/api/login', { staffId, password });
 
-// §5.3 조작
-export const assign = (staffId: string, room: string) => post<MutationResult>('/api/board/assign', { staffId, room });
-export const complete = (staffId: string, room: string) => post<MutationResult>('/api/board/complete', { staffId, room });
-export const removeStaff = (staffId: string, room: string) =>
-  post<MutationResult>('/api/board/remove-staff', { staffId, room });
-export const place = (scheduleId: string, room: string) => post<MutationResult>('/api/board/place', { scheduleId, room });
-// 현장 접수는 일정이 없어 scheduleId 대신 이름을 보낸다
-export const checkIn = (scheduleId: string | null, order: OrderStep[], name?: string) =>
-  post<MutationResult>('/api/board/check-in', scheduleId ? { scheduleId, order } : { scheduleId: null, name, order });
-export const undo = (version: number) => post<MutationResult>('/api/board/undo', { version });
-export const startCare = (staffId: string, scheduleId: string) =>
-  post<MutationResult>(`/api/staff/${encodeURIComponent(staffId)}/start`, { scheduleId });
-export const finishCare = (staffId: string, scheduleId: string) =>
-  post<MutationResult>(`/api/staff/${encodeURIComponent(staffId)}/finish`, { scheduleId });
-
-// §5.4 초기화
+// §5.3 데스크 조작 — 응답 {version}
+export const checkIn = (scheduleId: string, steps: StepInput[]) =>
+  post<MutationResult>('/api/desk/check-in', { scheduleId, steps });
+export const place = (scheduleId: string, room: string) => post<MutationResult>('/api/desk/place', { scheduleId, room });
+export const moveSleep = (scheduleId: string, room: string) =>
+  post<MutationResult>('/api/desk/move-sleep', { scheduleId, room });
+export const returnRoom = (scheduleId: string) => post<MutationResult>('/api/desk/return-room', { scheduleId });
+export const assign = (stepId: string, staffId: string) => post<MutationResult>('/api/desk/assign', { stepId, staffId });
+export const unassign = (stepId: string) => post<MutationResult>('/api/desk/unassign', { stepId });
+export const addProcedures = (scheduleId: string, items: StepInput[]) =>
+  post<MutationResult>('/api/desk/add-procedures', { scheduleId, items });
+export const reorder = (scheduleId: string, stepIds: string[]) =>
+  post<MutationResult>('/api/desk/reorder', { scheduleId, stepIds });
+// [결제 완료] — 수납필요 해제 · 미결제 0 · 시술권 연결(결제 자체는 KOS 에서 한다)
+// ============kos api 연동 필요 ========================
+// 공식 getPurchaseSummariesByVisitor · getTicketBundlesQuery (KOS 결제 조회)
+// ======================================================
+export const paymentComplete = (scheduleId: string) =>
+  post<MutationResult>('/api/desk/payment-complete', { scheduleId });
+export const discharge = (scheduleId: string) => post<MutationResult>('/api/desk/discharge', { scheduleId });
+export const undo = (version: number) => post<MutationResult>('/api/desk/undo', { version });
 export const resetBoard = () => post<MutationResult>('/api/admin/reset', {});
+
+// 직원 본인 — 시작 · 종료
+export const startStep = (staffId: string, stepId: string) =>
+  post<MutationResult>(`/api/staff/${encodeURIComponent(staffId)}/start`, { stepId });
+export const finishStep = (staffId: string, stepId: string) =>
+  post<MutationResult>(`/api/staff/${encodeURIComponent(staffId)}/finish`, { stepId });
 
 // §5.2 SSE — `event: state` `data: {"version": n}`. 화면 안 구독자는 연결 하나를 같이 쓴다.
 // 끊기면 EventSource 가 알아서 다시 붙고, 붙을 때마다(open) 한 번 다시 읽는다(끊긴 사이 변경을 놓치지 않게)

@@ -17,7 +17,12 @@ export interface InterpCallbacks {
   onState: (s: InterpState) => void;
   onCaption: (c: Caption) => void;
   onError: (kind: InterpErrorKind, message: string) => void;
+  // 번역 음성 재생 중(반이중) — 이 동안 마이크 PCM 을 보내지 않는다
+  onPlayback: (playing: boolean) => void;
 }
+
+// 재생 큐가 빈 뒤 마이크를 다시 열기까지(스피커 잔향 · 끝 음절이 다시 들어가지 않게)
+const RESUME_AFTER_MS = 400;
 
 // 마이크 입력(컨텍스트 샘플레이트)을 16kHz mono s16le 로 바꿔 40ms(640샘플) 조각으로 보낸다
 const WORKLET = `
@@ -58,6 +63,11 @@ export class InterpretSession {
   private nextTime = 0;
   private carry: Uint8Array | null = null; // 조각 경계에 걸친 1바이트
   private encoded: ArrayBuffer[] = []; // pcm 이 아닌 형식이면 audio_end 에서 한 번에 디코드
+  // 반이중 — audio_start ~ 실제 재생 끝 + 400ms 동안 송신 중지(e2e batch-3 #1: 번역 음성 되먹임)
+  private speaking = false;
+  private audioOpen = false; // audio_start 받고 audio_end 아직
+  private sources = new Set<AudioBufferSourceNode>();
+  private resumeT: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly opts: { scheduleId: string; lang: string; traditional: boolean },
@@ -86,7 +96,7 @@ export class InterpretSession {
       const src = this.ctx.createMediaStreamSource(this.stream);
       this.node = new AudioWorkletNode(this.ctx, 'pcm16k-writer');
       this.node.port.onmessage = (e: MessageEvent<ArrayBuffer>) => {
-        if (this.state === 'listening' && this.ws?.readyState === WebSocket.OPEN) this.ws.send(e.data);
+        if (this.state === 'listening' && !this.speaking && this.ws?.readyState === WebSocket.OPEN) this.ws.send(e.data);
       };
       src.connect(this.node);
     } catch {
@@ -143,9 +153,13 @@ export class InterpretSession {
         this.outFormat = typeof m.format === 'string' ? m.format : 'pcm_s16le';
         this.carry = null;
         this.encoded = [];
+        this.audioOpen = true;
+        this.mute();
         break;
       case 'audio_end':
-        if (this.outFormat !== 'pcm_s16le' && this.encoded.length) void this.playEncoded(this.encoded);
+        this.audioOpen = false;
+        if (this.outFormat !== 'pcm_s16le' && this.encoded.length) void this.playEncoded(this.encoded).then(() => this.maybeUnmute());
+        else this.maybeUnmute();
         this.encoded = [];
         this.carry = null;
         break;
@@ -189,8 +203,58 @@ export class InterpretSession {
     src.buffer = audio;
     src.connect(ctx.destination);
     const at = Math.max(ctx.currentTime + 0.05, this.nextTime);
+    this.sources.add(src);
+    src.onended = () => {
+      this.sources.delete(src);
+      this.maybeUnmute();
+    };
     src.start(at);
     this.nextTime = at + audio.duration;
+  }
+
+  // 송신 막기 — 재개 대기 중이었으면 취소(조각이 이어지면 계속 막힘)
+  private mute() {
+    if (this.resumeT) {
+      clearTimeout(this.resumeT);
+      this.resumeT = null;
+    }
+    if (!this.speaking) {
+      this.speaking = true;
+      if (!this.closed) this.cb.onPlayback(true);
+    }
+  }
+
+  // 발화가 끝났고(audio_end) 재생 큐가 비면 400ms 뒤 송신 재개
+  private maybeUnmute() {
+    if (!this.speaking || this.audioOpen || this.sources.size || this.resumeT) return;
+    this.resumeT = setTimeout(() => {
+      this.resumeT = null;
+      if (this.audioOpen || this.sources.size) return;
+      this.speaking = false;
+      if (!this.closed) this.cb.onPlayback(false);
+    }, RESUME_AFTER_MS);
+  }
+
+  // 재생 큐 비우기 — [멈춤] · 닫기
+  private stopPlayback() {
+    this.sources.forEach((src) => {
+      src.onended = null;
+      try {
+        src.stop();
+      } catch {
+        // 이미 끝난 조각
+      }
+    });
+    this.sources.clear();
+    this.nextTime = 0;
+    this.audioOpen = false;
+    this.encoded = [];
+    if (this.resumeT) clearTimeout(this.resumeT);
+    this.resumeT = null;
+    if (this.speaking) {
+      this.speaking = false;
+      if (!this.closed) this.cb.onPlayback(false);
+    }
   }
 
   private async playEncoded(parts: ArrayBuffer[]) {
@@ -212,6 +276,8 @@ export class InterpretSession {
   // [멈춤]/[다시 듣기] — 연결은 두고 마이크만
   toggle() {
     if (this.state === 'listening') {
+      // 재생 중 [멈춤] 이면 재생도 멈춘다(큐 비우기)
+      this.stopPlayback();
       this.send({ type: 'pause' });
       this.stream?.getAudioTracks().forEach((t) => (t.enabled = false));
       this.set('paused');
@@ -225,8 +291,9 @@ export class InterpretSession {
   // [닫기] — stop 후 WS · 트랙 · AudioContext 모두 정리
   close() {
     if (this.closed) return;
-    this.closed = true;
     this.send({ type: 'stop' });
+    this.stopPlayback();
+    this.closed = true;
     this.release();
   }
 
@@ -259,6 +326,7 @@ export class InterpretSession {
     if (this.closed) return;
     this.set('error');
     this.cb.onError(kind, message);
+    this.stopPlayback();
     // 오류면 더 듣지 않는다 — [다시 시도] 가 새 세션을 연다
     this.closed = true;
     this.release();

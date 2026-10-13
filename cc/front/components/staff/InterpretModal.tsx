@@ -60,6 +60,8 @@ export function InterpretModal({
   const [state, setState] = useState<InterpState>('connecting');
   const [err, setErr] = useState<{ kind: InterpErrorKind; message: string } | null>(null);
   const [caps, setCaps] = useState<Caption[]>([]);
+  // 번역 음성 재생 중 — 이 동안 마이크는 보내지 않는다(반이중). 상태는 「듣는 중」 그대로, 아이콘만 「재생 중」
+  const [playing, setPlaying] = useState(false);
   const session = useRef<InterpretSession | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -69,6 +71,7 @@ export function InterpretModal({
       { scheduleId, lang, traditional: isTraditional(nationality, lang) },
       {
         onState: setState,
+        onPlayback: setPlaying,
         onError: (kind, message) => setErr({ kind, message }),
         onCaption: (c) =>
           setCaps((prev) => {
@@ -97,6 +100,7 @@ export function InterpretModal({
   const restart = () => {
     setErr(null);
     setState('connecting');
+    setPlaying(false);
     setAttempt((n) => n + 1);
   };
   const pick = (code: string) => {
@@ -104,6 +108,7 @@ export function InterpretModal({
     if (code === lang) return;
     setErr(null);
     setState('connecting');
+    setPlaying(false);
     setLang(code);
   };
 
@@ -323,7 +328,8 @@ export function InterpretModal({
         >
           <button
             type="button"
-            aria-label={state === 'listening' ? '멈춤' : state === 'paused' ? '다시 듣기' : st.text}
+            aria-label={state === 'listening' ? (playing ? '재생 중 · 멈춤' : '멈춤') : state === 'paused' ? '다시 듣기' : st.text}
+            data-playing={state === 'listening' && playing ? 'true' : 'false'}
             onClick={() => session.current?.toggle()}
             className={'cc-btn ' + st.mic}
             style={{
@@ -338,11 +344,20 @@ export function InterpretModal({
               boxSizing: 'border-box',
             }}
           >
-            {state === 'listening' && (
+            {state === 'listening' && !playing && (
               <svg width="26" height="26" viewBox="0 0 24 24" fill="#ffffff">
                 <rect x="6" y="5" width="4" height="14" rx="1.2" />
                 <rect x="14" y="5" width="4" height="14" rx="1.2" />
               </svg>
+            )}
+            {state === 'listening' && playing && (
+              <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, color: '#ffffff' }}>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M11 5L6 9H3v6h3l5 4V5z" />
+                  <path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13" />
+                </svg>
+                <span style={{ fontSize: 10, fontWeight: 600, lineHeight: 1 }}>재생 중</span>
+              </span>
             )}
             {state === 'paused' && (
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#2498bd" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

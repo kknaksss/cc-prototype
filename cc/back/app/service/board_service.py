@@ -12,7 +12,6 @@ from app.domain.rooms import CORRIDORS, rooms_payload
 from app.repository.state_repo import StateRepository
 from app.seed.capture import KST
 from app.service import bundles as BD
-from app.service import memos
 from app.service.events import EventBus
 from app.service.snapshot import snapshot_to_state, state_to_snapshot
 
@@ -52,10 +51,8 @@ def staff_work(d: dict, staff_id: str) -> list[dict]:
 
 
 class BoardService:
-    def __init__(self, repo: StateRepository, bus: EventBus, seed_path: Path, clock=now_ms,
-                 risk_words: list[str] | None = None):
+    def __init__(self, repo: StateRepository, bus: EventBus, seed_path: Path, clock=now_ms):
         self.repo = repo
-        self.risk_words = risk_words or []
         self.bus = bus
         self.seed_path = seed_path
         self.clock = clock
@@ -76,11 +73,9 @@ class BoardService:
             "rooms": [{**r, "unpaidAmount": sum((c.get("unpaidAmount") or 0) for c in d["customers"]
                                                 if B.is_here(c) and c["location"] == r["id"])} for r in rooms_payload()],
             "corridors": CORRIDORS,
-            "customers": [{**customer_view(d, c), "mentionedStaffIds": memos.customer_mentions(self.repo, d, c["scheduleId"])}
-                          for c in d["customers"]],
+            "customers": [customer_view(d, c) for c in d["customers"]],
             "staff": [{**s, "work": staff_work(d, s["staffId"])} for s in d["staff"]],
             "resv": [{k: v for k, v in r.items() if k not in ("procedure", "doctor")} for r in d["resv"]],
-            "riskWords": self.risk_words,
             "version": version,
             "now": self.clock(),
         }

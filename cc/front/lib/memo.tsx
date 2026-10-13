@@ -1,20 +1,13 @@
-// 메모 = 원문 그대로(§0-b). 자르기 · 줄 숨김 없음. 강조만:
-// `**` 는 만날 때마다 굵게 켜고 끔(기호 안 보임) · 위험 단어(back riskWords) = 빨강 바탕 굵게 · 오늘 근무 직원 이름 = 파랑 굵게
-import { RTITLE } from './board';
-import type { PatientDetail, Role } from './types';
+'use client';
 
-export interface Hl {
-  risk: string[];
-  staff: string[];
-}
+// 메모 = 원문 그대로(§0-b). 자르기 · 줄 숨김 · 강조 없음(WP12 — 위험 단어 · 직원 이름 강조 삭제). `**` 굵게만
+import { useState } from 'react';
+import type { PatientDetail } from './types';
 
-const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-export function Highlight({ text, hl }: { text: string; hl: Hl }) {
-  const words = [...hl.risk, ...hl.staff].filter(Boolean).sort((a, b) => b.length - a.length);
-  const re = words.length ? new RegExp('(' + words.map(esc).join('|') + ')') : null;
-  const out: React.ReactNode[] = [];
+// 원문 한 덩이 — `**` 굵게만(기호 안 보임)
+export function Raw({ text }: { text: string }) {
   let bold = false;
+  const out: React.ReactNode[] = [];
   String(text ?? '')
     .split(/(\*{2,})/)
     .forEach((part, i) => {
@@ -22,20 +15,7 @@ export function Highlight({ text, hl }: { text: string; hl: Hl }) {
         bold = !bold;
         return;
       }
-      (re ? part.split(re) : [part]).forEach((t, j) => {
-        if (!t) return;
-        const risk = hl.risk.includes(t);
-        const st = hl.staff.includes(t);
-        out.push(
-          <span
-            key={i + ':' + j}
-            className={risk ? 'bg-red-100 text-red' : st ? 'text-primary' : undefined}
-            style={{ fontWeight: bold || risk || st ? 700 : 400, borderRadius: 3 }}
-          >
-            {t}
-          </span>,
-        );
-      });
+      if (part) out.push(<span key={i} style={{ fontWeight: bold ? 700 : 400 }}>{part}</span>);
     });
   return <>{out}</>;
 }
@@ -48,13 +28,13 @@ export type MemoBlock =
 
 const mmdd = (date: string) => date.slice(5);
 
-// 오늘 칸 — 접수 메모 · 오늘 상담 내용 · 오늘 오더(상담사는 뺌) · 담당자 메모(완료된 시술의 것)
+// 오늘 칸 — 예약 메모 · 오늘 상담 내용 · 오늘 오더(상담사는 뺌) · 담당자 메모(완료된 시술의 것)
 export function todayBlocks(
   p: PatientDetail,
   opt: { resvTitle?: string; hideOrder?: boolean; consultAt?: string },
 ): MemoBlock[] {
   const out: MemoBlock[] = [];
-  if (p.reservationMemo) out.push({ type: 'sec', title: opt.resvTitle ?? '접수 메모', sub: '', text: p.reservationMemo });
+  if (p.reservationMemo) out.push({ type: 'sec', title: opt.resvTitle ?? '예약 메모', sub: '', text: p.reservationMemo });
   const v = p.visits.find((x) => x.today);
   if (v && !v.locked) {
     if (v.consultation)
@@ -96,7 +76,7 @@ export function historyBlocks(p: PatientDetail): MemoBlock[] {
   return out;
 }
 
-export function MemoList({ blocks, hl }: { blocks: MemoBlock[]; hl: Hl }) {
+export function MemoList({ blocks }: { blocks: MemoBlock[] }) {
   return (
     <>
       {blocks.map((m, i) =>
@@ -108,21 +88,7 @@ export function MemoList({ blocks, hl }: { blocks: MemoBlock[]; hl: Hl }) {
             <span className="text-typo-caption-md-400 text-ms-gray-600">{m.sub}</span>
           </div>
         ) : m.type === 'sec' ? (
-          <div
-            key={i}
-            className="bg-ms-white border-ms-gray-200"
-            style={{ borderWidth: 1, borderStyle: 'solid', borderRadius: 8, padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 4 }}
-          >
-            <span className="text-typo-caption-md-600 text-ms-gray-700">
-              {m.title} <span className="text-typo-caption-md-400 text-ms-gray-500">{m.sub}</span>
-            </span>
-            <span
-              className="text-typo-body-400 text-ms-gray-800"
-              style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', wordBreak: 'keep-all' }}
-            >
-              <Highlight text={m.text} hl={hl} />
-            </span>
-          </div>
+          <MemoCard key={i} title={m.title} sub={m.sub} text={m.text} />
         ) : (
           <span key={i} className="text-typo-body-400 text-ms-gray-500">
             {m.note}
@@ -130,35 +96,6 @@ export function MemoList({ blocks, hl }: { blocks: MemoBlock[]; hl: Hl }) {
         ),
       )}
     </>
-  );
-}
-
-// ⚠ 위험 단어 · 지정 직원 칩 — back riskHits · mentionedStaffIds(문자열 일치)
-export function FlagChips({
-  riskHits,
-  mentioned,
-}: {
-  riskHits: string[];
-  mentioned: { name: string; role?: string }[];
-}) {
-  if (!riskHits.length && !mentioned.length) return null;
-  return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-      {riskHits.map((w) => (
-        <span key={'r' + w} className="bg-red-100 text-red text-typo-caption-md-600" style={{ padding: '2px 8px', borderRadius: 999, whiteSpace: 'nowrap' }}>
-          ⚠ {w}
-        </span>
-      ))}
-      {mentioned.map((m) => (
-        <span
-          key={'s' + m.name}
-          className="bg-primary-100 text-primary text-typo-caption-md-600"
-          style={{ padding: '2px 8px', borderRadius: 999, whiteSpace: 'nowrap' }}
-        >
-          지정 · {(m.role && m.role in RTITLE ? RTITLE[m.role as Role] + ' ' : '') + m.name}
-        </span>
-      ))}
-    </div>
   );
 }
 
@@ -184,8 +121,42 @@ export function Bundles({ tickets }: { tickets: PatientDetail['tickets'] }) {
   );
 }
 
-// 오늘 근무 직원 이름 → 강조 재료
-export const hlOf = (riskWords: string[], staff: { name: string; role: string }[]): Hl => ({
-  risk: riskWords,
-  staff: staff.filter((s) => s.role !== '데스크').map((s) => s.name),
-});
+// 메모 카드(#30) — 기본 접힘(첫 3줄 미리보기) + [펼치기]. 짧으면 버튼 없이 다 보인다
+export function MemoCard({ title, sub, text }: { title: string; sub: string; text: string }) {
+  const [open, setOpen] = useState(false);
+  const long = text.split('\n').length > 3 || text.length > 120;
+  return (
+    <div
+      data-memo={title}
+      className="bg-ms-white border-ms-gray-200"
+      style={{ borderWidth: 1, borderStyle: 'solid', borderRadius: 8, padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 4 }}
+    >
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+        <span className="text-typo-caption-md-600 text-ms-gray-700">
+          {title} <span className="text-typo-caption-md-400 text-ms-gray-500">{sub}</span>
+        </span>
+        {long && (
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            className="cc-btn text-typo-caption-md-500 text-primary"
+            style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+          >
+            {open ? '접기' : '펼치기'}
+          </button>
+        )}
+      </div>
+      <span
+        className="text-typo-body-400 text-ms-gray-800"
+        style={{
+          whiteSpace: 'pre-wrap',
+          overflowWrap: 'anywhere',
+          wordBreak: 'keep-all',
+          ...(long && !open ? { display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' } : {}),
+        }}
+      >
+        <Raw text={text} />
+      </span>
+    </div>
+  );
+}

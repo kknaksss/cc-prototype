@@ -20,7 +20,7 @@ import {
   won,
 } from '@/lib/board';
 import { useLive } from '@/lib/hooks';
-import { Bundles, FlagChips, MemoList, historyBlocks, hlOf, todayBlocks } from '@/lib/memo';
+import { Bundles, MemoList, historyBlocks, todayBlocks } from '@/lib/memo';
 import { fmtElapsed } from '@/lib/time';
 import type { Board, BoardCustomer, MutationResult, PatientDetail, ProcedureCandidate, Step } from '@/lib/types';
 import { natName } from '@/components/staff/common';
@@ -69,14 +69,19 @@ export function RoomPanel({
   return (
     <Modal isOpen onBackdropClick={onClose}>
       <div
-        style={{
-          width: occ ? 'min(1100px, calc(100vw - 64px))' : 'min(560px, calc(100vw - 64px))',
-          maxHeight: 'min(880px, calc(100vh - 72px))',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 14,
-          overflow: 'auto',
-        }}
+        style={
+          occ
+            ? // #30 — 고객 패널은 크기 고정(화면 비율), 두 열이 각자 스크롤
+              { width: '84vw', height: '85vh', display: 'flex', flexDirection: 'column', gap: 14, overflow: 'hidden' }
+            : {
+                width: 'min(560px, calc(100vw - 64px))',
+                maxHeight: 'min(880px, calc(100vh - 72px))',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 14,
+                overflow: 'auto',
+              }
+        }
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -167,8 +172,6 @@ function CustomerPanel({
     .filter(Boolean)
     .join(' · ');
   const need = !!c.status?.need;
-  const hl = hlOf(board.riskWords, board.staff);
-  const mentioned = c.mentionedStaffIds.map((id) => board.staff.find((s) => s.staffId === id)).filter((s): s is Board['staff'][number] => !!s);
   const cstep = steps.find((s) => s.kind === 'consult' && s.state === 'done');
 
   const move = (i: number, dir: number) => {
@@ -220,10 +223,18 @@ function CustomerPanel({
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.1fr) minmax(0,1fr)', gap: 16, alignItems: 'start' }}>
-        {/* 왼쪽 — 동선 · 작업 */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 }}>
-          {p && <FlagChips riskHits={p.riskHits} mentioned={mentioned} />}
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          display: 'grid',
+          gridTemplateColumns: 'minmax(0,1.1fr) minmax(0,1fr)',
+          gridTemplateRows: 'minmax(0,1fr)',
+          gap: 16,
+        }}
+      >
+        {/* 왼쪽 — 동선 · 작업(따로 스크롤) */}
+        <div data-col="left" style={{ display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0, minHeight: 0, overflowY: 'auto', paddingRight: 4 }}>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, paddingBottom: 4 }}>
               <span className="text-typo-caption-md-600 text-ms-gray-700">고객 동선</span>
@@ -237,13 +248,10 @@ function CustomerPanel({
               const roles = KIND_ROLES[s.kind];
               const locked = !movable(s);
               const pool = board.staff.filter((x) => roles.includes(x.role));
-              const top = pool.filter((x) => c.mentionedStaffIds.includes(x.staffId));
-              const groups: { group: string; list: typeof pool }[] = [];
-              if (top.length) groups.push({ group: '지정', list: top });
-              roles.forEach((r) => {
-                const rest = pool.filter((x) => x.role === r && !top.includes(x));
-                if (rest.length) groups.push({ group: r, list: rest });
-              });
+              // 그 단계 직군 직원 목록 + 지금 일(WP12)
+              const groups = roles
+                .map((r) => ({ group: r as string, list: pool.filter((x) => x.role === r) }))
+                .filter((g) => g.list.length);
               return (
                 <div
                   key={s.stepId}
@@ -281,9 +289,6 @@ function CustomerPanel({
                     </span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <Badge variant={ss.variant} size="sm" dot={ss.dot}>
-                      {ss.name}
-                    </Badge>
                     {locked ? (
                       <span style={{ width: 132, boxSizing: 'border-box', padding: '0 8px', display: 'flex', alignItems: 'center', gap: 6 }}>
                         {s.assigneeName && (
@@ -329,8 +334,8 @@ function CustomerPanel({
                         </span>
                       </button>
                     )}
-                    {!running && movable(s) && (
-                      <>
+                    {!running && movable(s) ? (
+                      <span style={{ display: 'flex', gap: 6, width: 62 }}>
                         <button
                           type="button"
                           onClick={() => move(i, -1)}
@@ -347,8 +352,15 @@ function CustomerPanel({
                         >
                           ↓
                         </button>
-                      </>
+                      </span>
+                    ) : (
+                      <span style={{ width: 62 }} />
                     )}
+                    <span style={{ width: 72, display: 'flex', justifyContent: 'flex-end' }}>
+                      <Badge variant={ss.variant} size="sm" dot={ss.dot}>
+                        {ss.name}
+                      </Badge>
+                    </span>
                   </div>
                   {picking === s.stepId && !locked && (
                     <div
@@ -389,7 +401,6 @@ function CustomerPanel({
                                 staffId={x.staffId}
                                 name={x.name + (roles.length > 1 ? ' ' + RTITLE[x.role] : '')}
                                 color={ROLE_COLOR[x.role]}
-                                mention={c.mentionedStaffIds.includes(x.staffId)}
                                 work={work}
                                 busy={!!cur && !on}
                                 on={on}
@@ -525,15 +536,19 @@ function CustomerPanel({
           )}
         </div>
 
-        {/* 오른쪽 — 메모(오늘 · 히스토리). 원문 그대로 · 강조만 */}
-        <div className="bg-ms-gray-100" style={{ borderRadius: 10, padding: 12, display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}>
+        {/* 오른쪽 — 메모(오늘 · 히스토리). 원문 그대로(따로 스크롤) */}
+        <div
+          data-col="right"
+          className="bg-ms-gray-100"
+          style={{ borderRadius: 10, padding: 12, display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0, minHeight: 0, overflowY: 'auto' }}
+        >
           <span className="text-typo-heading-sm-500 text-ms-gray-800">메모</span>
           <span className="text-typo-caption-md-600 text-ms-gray-700">오늘</span>
-          {p && <MemoList blocks={todayBlocks(p, { consultAt: cstep ? hhmm(cstep.endedAt) : undefined })} hl={hl} />}
+          {p && <MemoList blocks={todayBlocks(p, { consultAt: cstep ? hhmm(cstep.endedAt) : undefined })} />}
           <span className="text-typo-caption-md-600 text-ms-gray-700" style={{ paddingTop: 8 }}>
             히스토리
           </span>
-          {p && <MemoList blocks={historyBlocks(p)} hl={hl} />}
+          {p && <MemoList blocks={historyBlocks(p)} />}
           {p && <Bundles tickets={p.tickets} />}
         </div>
       </div>
@@ -547,7 +562,6 @@ function PickOpt({
   onPick,
   staffId,
   color,
-  mention,
   work,
   busy,
 }: {
@@ -556,7 +570,6 @@ function PickOpt({
   onPick: () => void;
   staffId?: string;
   color?: string;
-  mention?: boolean;
   work?: string;
   busy?: boolean;
 }) {
@@ -586,11 +599,6 @@ function PickOpt({
           <span className="text-typo-body-500 text-ms-gray-800" style={{ whiteSpace: 'nowrap' }}>
             {name}
           </span>
-          {mention && (
-            <span className="bg-primary-100 text-primary text-typo-caption-md-600" style={{ padding: '0 5px', borderRadius: 4, whiteSpace: 'nowrap' }}>
-              지정
-            </span>
-          )}
         </span>
         {work && (
           <span className="text-typo-caption-md-400 text-ms-gray-600" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>

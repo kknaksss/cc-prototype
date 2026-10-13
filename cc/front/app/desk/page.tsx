@@ -311,7 +311,6 @@ export default function DeskPage() {
           {board && ci && (
             <CheckInModal
               key={ci.scheduleId}
-              board={board}
               resv={ci}
               onClose={() => setCi(null)}
               onConfirm={(steps) => {

@@ -1,7 +1,7 @@
 """환자 상세 · 예약 상세(SPEC-001 0.3.0 §0-b) · 시술 후보(묶음 n/m).
 
 - **동선이 메인 데이터** — 「오늘 오더」 = 동선(`route`). 메모는 참고용 **원문 그대로**(자르기 · 뽑기 없음)
-- 메모 공개 = 쓰인 시점(`app/service/memos.py`). 강조 재료: `riskWords`(설정 목록) · `riskHits` · `mentionedStaffIds`
+- 메모 공개 = 쓰인 시점(`app/service/memos.py`). 근거 없는 표시(지정 직원 추정 · 위험 단어)는 내지 않는다(WP12)
 - 구조화된 값은 KOS 구조 필드만: 아웃 = `desiredDischargeDateTimeUtc`, 예약 시술 = `requestedProcedures`(비면 빈 목록)
 """
 
@@ -25,9 +25,8 @@ def fmt_hm(ms: int | None) -> str | None:
 
 
 class PatientService:
-    def __init__(self, repo: StateRepository, risk_words: list[str]):
+    def __init__(self, repo: StateRepository):
         self.repo = repo
-        self.risk_words = risk_words
 
     def _load(self, schedule_id: str):
         d = self.repo.load_state()
@@ -55,7 +54,6 @@ class PatientService:
         revealed = bool(cust and cust.get("consultApplied"))
         v = doc.get("visitor") or {}
         r = doc.get("reservation") or {}
-        texts = memos.visible_texts(doc, derived, cust)
 
         def names(kinds: tuple[str, ...], role: str) -> list[str]:
             out = []
@@ -93,10 +91,6 @@ class PatientService:
             "customerMemo": v.get("memo") or None,
             "reservationMemo": r.get("reservationMemo") or None,
             "visits": memos.visits(doc, derived, cust, steps, self._today()),
-            # 강조 재료
-            "riskWords": self.risk_words,
-            "riskHits": memos.risk_hits(texts, self.risk_words),
-            "mentionedStaffIds": memos.mentioned_staff(texts, d["staff"]),
             "chart": self._chart(r, derived, cust, steps),
             "route": self._route(d, steps),
             "tickets": [{k: b[k] for k in ("bundleId", "name", "left", "total")}

@@ -59,7 +59,6 @@ export interface BoardCustomer {
   unpaidAmount: number;
   paid: boolean;
   status: CustomerStatus | null;
-  mentionedStaffIds: string[]; // 지금 보이는 메모 원문에 이름이 나오는 오늘 근무 직원(배정 셀렉터 맨 위)
   steps: Step[];
 }
 
@@ -110,7 +109,6 @@ export interface Board {
   customers: BoardCustomer[];
   staff: BoardStaff[];
   resv: Reservation[];
-  riskWords: string[]; // 강조할 위험 단어(설정 CC_RISK_WORDS)
   version: number;
   now: TimeValue;
 }
@@ -243,9 +241,6 @@ export interface PatientDetail {
   customerMemo: string | null;
   reservationMemo: string | null;
   visits: Visit[]; // 최근이 위
-  riskWords: string[];
-  riskHits: string[];
-  mentionedStaffIds: string[];
   chart: { label: string; value: string }[];
   route: RouteStep[];
   tickets: TicketBundle[];

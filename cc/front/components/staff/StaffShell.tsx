@@ -195,7 +195,6 @@ export function StaffShell() {
                 staffId={session.staffId}
                 frame={rounds ? 'rounds' : 'assigned'}
                 roleOf={roleOf}
-                accounts={accounts}
                 hideOrder={role === '상담사'}
                 now={now}
                 wide={wide}

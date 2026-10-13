@@ -4,7 +4,7 @@ import { useCallback } from 'react';
 import { Button, Modal } from '@medisolve-ai/medikit';
 import * as api from '@/lib/api';
 import { useLive } from '@/lib/hooks';
-import { Bundles, FlagChips, MemoList, historyBlocks, hlOf, todayBlocks } from '@/lib/memo';
+import { Bundles, MemoList, historyBlocks, todayBlocks } from '@/lib/memo';
 import type { Board, PatientDetail, Reservation } from '@/lib/types';
 import { natName } from '@/components/staff/common';
 import { VisitChip } from './Aside';
@@ -28,7 +28,6 @@ export function ResvDetail({
   const cust = board.customers.find((c) => c.scheduleId === resv.scheduleId);
   const booked = resv.st === 'booked';
   const stateText = resv.st === 'noshow' ? '노쇼' : cust?.flowStep === 'COMPLETED' ? '귀가' : '내원 중';
-  const hl = hlOf(board.riskWords, board.staff);
   const info = p
     ? (
         [
@@ -39,11 +38,6 @@ export function ResvDetail({
           ['유입', p.chart.find((r) => r.label === '유입' || r.label === '유입처')?.value ?? ''],
         ] as [string, string][]
       ).filter(([, v]) => v)
-    : [];
-  const mentioned = p
-    ? p.mentionedStaffIds
-        .map((id) => board.staff.find((s) => s.staffId === id))
-        .filter((s): s is Board['staff'][number] => !!s)
     : [];
   const memo = p ? todayBlocks({ ...p, visits: [] }, { resvTitle: '예약 메모' }) : [];
 
@@ -86,16 +80,15 @@ export function ResvDetail({
             </span>
           ))}
         </div>
-        {p && <FlagChips riskHits={p.riskHits} mentioned={mentioned} />}
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 16, alignItems: 'start' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <span className="text-typo-caption-md-600 text-ms-gray-700">예약</span>
-            <MemoList blocks={memo} hl={hl} />
+            <MemoList blocks={memo} />
             {p && !memo.length && <span className="text-typo-body-400 text-ms-gray-500">예약 메모 없음</span>}
           </div>
           <div className="bg-ms-gray-100" style={{ borderRadius: 10, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
             <span className="text-typo-caption-md-600 text-ms-gray-700">히스토리</span>
-            {p && <MemoList blocks={historyBlocks(p)} hl={hl} />}
+            {p && <MemoList blocks={historyBlocks(p)} />}
             {p && <Bundles tickets={p.tickets} />}
           </div>
         </div>

@@ -87,24 +87,23 @@ def test_consult_without_event_and_empty_event(client):
     assert not today["locked"] and today["consultation"] is None and today["orderMemo"] is None
 
 
-def test_memos_raw_risk_words_and_mentions(client):
+def test_memos_raw_no_unfounded_marks(client):
     raw = json.loads((FIX / "seed.json").read_text())["schedules"][0]["reservation"]["reservationMemo"]
     ev = json.loads((FIX / "events" / "sch-1.json").read_text())["consultationDone"]
     d = ok(client.get("/api/patients/sch-1"))
     assert d["reservationMemo"] == raw  # 원문 그대로
-    assert d["mentionedStaffIds"] == ["c1"]  # 「상담사A 지정 요청」 — 오늘 근무 직원 이름 일치
-    assert "지정" in d["riskHits"] and "아스피린" not in d["riskHits"]  # 오늘 상담 · 오더는 아직 안 보임
-    assert d["riskWords"] == ["임플란트", "아스피린", "수면", "알레르기", "켈로이드", "임신", "지정", "거부"]
     consult_done(client, "sch-1", "c05")
     d = ok(client.get("/api/patients/sch-1"))
     assert d["visits"][0]["consultation"] == ev["consultation"]["content"]["text"]
     assert d["visits"][0]["orderMemo"] == ev["orderMemo"]
-    assert {"임플란트", "아스피린", "지정"} <= set(d["riskHits"])
-    for gone in ("cautions", "order", "consult", "reception", "history", "pastSchedules"):
+    # WP12 — 근거 없는 표시(지정 직원 추정 · 위험 단어) 없음
+    for gone in ("cautions", "order", "consult", "reception", "history", "pastSchedules", "riskWords", "riskHits",
+                 "mentionedStaffIds"):
         assert gone not in d
     assert d["outTime"] is None  # 메모 속 아웃 시각은 뽑지 않는다(KOS desiredDischargeDateTimeUtc 만)
-    cust = next(c for c in board(client)["customers"] if c["scheduleId"] == "sch-1")
-    assert cust["mentionedStaffIds"] == ["c1"]
+    b = board(client)
+    cust = next(c for c in b["customers"] if c["scheduleId"] == "sch-1")
+    assert "mentionedStaffIds" not in cust and "riskWords" not in b
     row = next(r for r in board(client)["resv"] if r["scheduleId"] == "sch-1")
     assert "procedure" not in row and "doctor" not in row
 

@@ -15,7 +15,6 @@ uv sync
 
 | env | 뜻 | 기본 |
 |---|---|---|
-| `CC_RISK_WORDS` | 강조할 위험 단어(쉼표 구분, 지점마다) | `임플란트,아스피린,수면,알레르기,켈로이드,임신,지정,거부` |
 | `CC_SCENARIO_DIR` | 시나리오 파일(`seed.json` + `events/<scheduleId>.json`) — 시드 build 입력 | `data/scenario` |
 | `CC_KOS_STAFF_PATH` | KOS `getAccounts` 응답 저장본(직원 · 직군). 시드 build 에만 필요 | `data/kos-staff.json` |
 | `CC_CAPTURE_DIR` | (0.2.1 부터 안 씀 — 캡처는 시나리오 만들 때 researcher 가 읽는다) | — |
@@ -51,7 +50,6 @@ uv run python -m app.seed save                       # 「이걸 시드로」 �
 | `CC_KOS_STAFF_PATH` | `/secrets/kos-staff/kos-staff.json` | **Secret** 마운트(읽기) — 가짜 이름 · 이메일로 바꾼 직원 목록(D-04) |
 | `SONIOX_API_KEY` | (없음) | **Secret** env |
 | `CC_FRONT_ORIGIN` | `https://ccc.medisolveai.xyz` | 같은 출처라 CORS 는 사실상 안 쓰이고, 통역 WS 의 Origin 검사에 쓴다 |
-| `CC_RISK_WORDS` | 코드 기본값 | 선택 |
 | `CC_BACK_PORT` | `8600` | (uvicorn 은 8600 고정 — CMD) |
 
 - 시작 때 `docker-entrypoint.sh` → `python -m app.seed ensure`: DB 에 상태가 있으면 건너뛰고, 비었으면 `/data/seed.json`(있으면) 또는 시나리오로 시드. 실패해도 서버는 뜬다(빈 현황판 · 로그에 이유)
@@ -101,7 +99,6 @@ JSON camelCase. 시각은 전부 **epoch ms**(숫자). 조작 응답은 `{"versi
     "location": "c03", "prevRoom": null, "flowStep": "CONSULTATION_WAITING",
     "receptionAt": 1791875155135, "completedAt": null, "since": 1791875155147, "unpaidAmount": 0, "paid": false,
     "status": {"key": "wait", "label": "상담사A 대기", "need": null},
-    "mentionedStaffIds": [],
     "steps": [{"stepId": "st1", "order": 1, "kind": "consult", "label": "상담", "kosSequence": null, "ticketId": null,
                "assigneeId": "6a91…", "assigneeName": "상담사A", "state": "assigned",
                "assignedAt": 1791875155147, "startedAt": null, "endedAt": null, "paymentRequired": false}]
@@ -111,7 +108,6 @@ JSON camelCase. 시각은 전부 **epoch ms**(숫자). 조작 응답은 `{"versi
                        "kind": "consult", "label": "상담", "state": "assigned"}]}],
   "resv": [{"scheduleId": "4eea…", "time": "10:00", "name": "XIAO SI", "isNew": true, "nationality": "TW",
             "st": "checked"}],
-  "riskWords": ["임플란트", "아스피린", "수면", "알레르기", "켈로이드", "임신", "지정", "거부"],
   "version": 4,
   "now": 1791875160000
 }
@@ -120,8 +116,6 @@ JSON camelCase. 시각은 전부 **epoch ms**(숫자). 조작 응답은 `{"versi
 - `customers` 에는 귀가한 고객도 남는다(`location: null` · `flowStep: COMPLETED` · `status: null`)
 - 예약 행 = `{scheduleId, time, name, isNew, nationality, st}` — `st` 는 `booked` · `checked` · `canceled` · `noshow` 그대로(목록 거르기는 front:
   접수 전 · 귀가 · 노쇼). 예약한 시술은 환자 상세 `requestedProcedures`(KOS 구조 필드, 비면 빈 목록)
-- `customers[].mentionedStaffIds` — 그 고객에게 지금 보이는 메모 원문에 이름이 그대로 나오는 오늘 근무 직원(배정 셀렉터 맨 위 · 「지정 요청」)
-- `riskWords` — 강조할 위험 단어 목록(설정 `CC_RISK_WORDS`)
 
 `GET /api/staff` → `[{"staffId": "desk", "name": "데스크", "role": "데스크", "frame": "desk"}, {"staffId": "6a85…", "name": "의사A", "role": "의사", "frame": "assigned"}, …]`
 
@@ -167,9 +161,6 @@ JSON camelCase. 시각은 전부 **epoch ms**(숫자). 조작 응답은 `{"versi
     "assigneeMemos": [{"label": "울쎄라피 프라임 300shot", "memo": "어시 간호A / 시트증정"}]},
    {"date": "2026-09-20", "today": false, "locked": false, "counselors": ["상담사A"], "consultation": "…", "orderMemo": "…",
     "procedures": ["리쥬란 힐러 2cc"], "assigneeMemos": [], "synthetic": true}],
- "riskWords": ["임플란트", "아스피린", "수면", "알레르기", "켈로이드", "임신", "지정", "거부"],
- "riskHits": ["임플란트", "아스피린", "지정"],
- "mentionedStaffIds": ["c1"],
  "chart": [{"label": "유입", "value": "본사"}, {"label": "보유 시술권", "value": "포텐자 펌핑팁 7/10회"}],
  "route": [{"stepId": "st1", "order": 1, "kind": "consult", "label": "상담", "assigneeId": "c2", "assigneeName": "상담사B",
             "state": "done", "assignedAt": 0, "startedAt": 0, "endedAt": 0, "paymentRequired": false, "ticketId": null, "kosSequence": null}],
@@ -182,7 +173,6 @@ JSON camelCase. 시각은 전부 **epoch ms**(숫자). 조작 응답은 `{"versi
   오늘 카드(`visits[0].today`)는 **접수 뒤에만** 있고 `consultation` · `orderMemo` 는 **오늘 상담 종료(상담 완료 이벤트) 뒤**(`locked: false`) /
   담당자 메모는 **방문 카드 `assigneeMemos` 에만**(그 시술 종료 뒤) — 동선 `route` 에는 없다
 - `visits` 는 최근이 위. 「오늘 오더」 = 동선 `route`(시술 · 순서 · 담당 · 상태)
-- 강조 재료: `riskWords`(설정 목록) · `riskHits`(지금 보이는 원문에 있는 것) · `mentionedStaffIds`(이름 일치 직원)
 - `outTime` = KOS `desiredDischargeDateTimeUtc` 만(없으면 null). 차트 = KOS 구조 필드(유입 · 예약 그룹 · 보유 시술권 n/m · [결제 완료] 뒤 오늘 결제)
 
 `GET /api/patients/{scheduleId}/procedure-candidates` — **시술 후보 = 묶음 단위 n/m**(접수 모달 · [시술 추가] 같은 모양)

@@ -5,7 +5,7 @@ import { Badge, Button } from '@medisolve-ai/medikit';
 import * as api from '@/lib/api';
 import { RTITLE, SSTATE, STATUS, boxKey, hhmm, roomName } from '@/lib/board';
 import { useLive } from '@/lib/hooks';
-import { Bundles, FlagChips, MemoList, historyBlocks, hlOf, todayBlocks } from '@/lib/memo';
+import { Bundles, MemoList, historyBlocks, todayBlocks } from '@/lib/memo';
 import { fmtMinSec } from '@/lib/time';
 import type { PatientDetail, Role, StaffAccount } from '@/lib/types';
 import { PayChip } from '@/components/desk/RoomPanel';
@@ -36,7 +36,6 @@ export function PatientView({
   staffId,
   frame,
   roleOf,
-  accounts,
   hideOrder,
   now,
   wide,
@@ -48,7 +47,6 @@ export function PatientView({
   staffId: string;
   frame: 'assigned' | 'rounds';
   roleOf: (staffId: string | null) => StaffAccount['role'] | undefined;
-  accounts: StaffAccount[];
   hideOrder: boolean; // 상담사 화면엔 오늘 오더 없음(§0-b 11)
   now: number;
   wide: boolean;
@@ -107,10 +105,6 @@ export function PatientView({
   const staffLine = [p.counselor ? '상담사 ' + p.counselor : '', p.doctors.length ? '원장 ' + p.doctors.join(' · ') : '']
     .filter(Boolean)
     .join(' · ');
-  const hl = hlOf(p.riskWords, accounts);
-  const mentioned = p.mentionedStaffIds
-    .map((id) => accounts.find((a) => a.staffId === id))
-    .filter((a): a is StaffAccount => !!a);
   const consultStep = p.route.find((s) => s.kind === 'consult' && s.state === 'done');
   const today = p.visits.find((v) => v.today);
   const todayMemo = todayBlocks(p, { hideOrder, consultAt: consultStep ? hhmm(consultStep.endedAt) : undefined });
@@ -287,7 +281,7 @@ export function PatientView({
         })}
       </div>
 
-      {/* 오늘 — 접수 메모 · 오늘 상담 내용 · 오늘 오더(상담 종료 뒤) · 담당자 메모 */}
+      {/* 오늘 — 예약 메모 · 오늘 상담 내용 · 오늘 오더(상담 종료 뒤) · 담당자 메모 */}
       <div
         className="bg-ms-white"
         style={{ width: '100%', boxSizing: 'border-box', borderRadius: 12, padding: 16, display: 'flex', flexDirection: 'column', gap: 10, ...card }}
@@ -296,8 +290,7 @@ export function PatientView({
           <span className="text-typo-heading-sm-500 text-ms-gray-800">오늘</span>
           <span className="text-typo-caption-md-400 text-ms-gray-600">{today ? today.date.slice(5) : ''}</span>
         </div>
-        <FlagChips riskHits={p.riskHits} mentioned={mentioned} />
-        <MemoList blocks={todayMemo} hl={hl} />
+        <MemoList blocks={todayMemo} />
       </div>
 
       {/* 지난 방문 — 고객 메모 · 방문 카드 · 보유 시술권 */}
@@ -306,7 +299,7 @@ export function PatientView({
         style={{ width: '100%', boxSizing: 'border-box', borderRadius: 12, padding: 16, display: 'flex', flexDirection: 'column', gap: 10, ...card }}
       >
         <span className="text-typo-heading-sm-500 text-ms-gray-800">지난 방문</span>
-        <MemoList blocks={historyBlocks(p)} hl={hl} />
+        <MemoList blocks={historyBlocks(p)} />
         <Bundles tickets={p.tickets} />
       </div>
 

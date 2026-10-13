@@ -4,8 +4,7 @@ import { useEffect, useState } from 'react';
 import { Button, Modal } from '@medisolve-ai/medikit';
 import * as api from '@/lib/api';
 import { checkBox, pickCls } from '@/lib/board';
-import { FlagChips } from '@/lib/memo';
-import type { Board, PatientDetail, ProcedureCandidate, Reservation, StepInput } from '@/lib/types';
+import type { PatientDetail, ProcedureCandidate, Reservation, StepInput } from '@/lib/types';
 import { natName } from '@/components/staff/common';
 import { VisitChip } from './Aside';
 
@@ -19,12 +18,10 @@ interface Row {
 
 // 접수 모달(§3.1 · §0-b 12) — 오늘 동선 단계를 데스크가 고른다. 시술 후보 = 묶음 n/m, 고르면 1회
 export function CheckInModal({
-  board,
   resv,
   onClose,
   onConfirm,
 }: {
-  board: Board;
   resv: Reservation;
   onClose: () => void;
   onConfirm: (steps: StepInput[]) => void;
@@ -66,9 +63,6 @@ export function CheckInModal({
   const curSel = sel ?? (isNew ? ['consult'] : rows.filter((r) => r.bundle).map((r) => r.key));
   const picked = rows.filter((r) => curSel.includes(r.key));
   const meta = [p?.sex, p && p.age !== null ? p.age + '세' : '', natName(resv.nationality)].filter(Boolean).join(' · ');
-  const mentioned = p
-    ? p.mentionedStaffIds.map((id) => board.staff.find((s) => s.staffId === id)).filter((s): s is Board['staff'][number] => !!s)
-    : [];
 
   return (
     <Modal isOpen onBackdropClick={onClose}>
@@ -93,7 +87,6 @@ export function CheckInModal({
             {resv.time} 예약{p && p.requestedProcedures.length ? ' · ' + p.requestedProcedures.join(' · ') : ''}
           </span>
         </div>
-        {p && <FlagChips riskHits={p.riskHits} mentioned={mentioned} />}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <span className="text-typo-caption-md-600 text-ms-gray-700">오늘 동선 단계</span>
           {rows.map((r) => {

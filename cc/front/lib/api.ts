@@ -68,8 +68,9 @@ export const moveSleep = (scheduleId: string, room: string) =>
 export const returnRoom = (scheduleId: string) => post<MutationResult>('/api/desk/return-room', { scheduleId });
 export const assign = (stepId: string, staffId: string) => post<MutationResult>('/api/desk/assign', { stepId, staffId });
 export const unassign = (stepId: string) => post<MutationResult>('/api/desk/unassign', { stepId });
-export const addProcedures = (scheduleId: string, items: StepInput[]) =>
-  post<MutationResult>('/api/desk/add-procedures', { scheduleId, items });
+// 묶음마다 다음 1장(같은 id 두 번 = 2장)
+export const addProcedures = (scheduleId: string, bundleIds: string[]) =>
+  post<MutationResult>('/api/desk/add-procedures', { scheduleId, bundleIds });
 export const reorder = (scheduleId: string, stepIds: string[]) =>
   post<MutationResult>('/api/desk/reorder', { scheduleId, stepIds });
 // [결제 완료] — 수납필요 해제 · 미결제 0 · 시술권 연결(결제 자체는 KOS 에서 한다)
@@ -78,6 +79,11 @@ export const reorder = (scheduleId: string, stepIds: string[]) =>
 // ======================================================
 export const paymentComplete = (scheduleId: string) =>
   post<MutationResult>('/api/desk/payment-complete', { scheduleId });
+// 노쇼 — 예약 st → noshow
+// ============kos api 연동 필요 ========================
+// 공개 없음 — KOS 요청(예약 상태 노쇼)
+// ======================================================
+export const noShow = (scheduleId: string) => post<MutationResult>('/api/desk/no-show', { scheduleId });
 export const discharge = (scheduleId: string) => post<MutationResult>('/api/desk/discharge', { scheduleId });
 export const undo = (version: number) => post<MutationResult>('/api/desk/undo', { version });
 export const resetBoard = () => post<MutationResult>('/api/admin/reset', {});

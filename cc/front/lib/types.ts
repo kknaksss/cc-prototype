@@ -1,4 +1,4 @@
-// SPEC-001 0.2.1 계약 — `cc/back/README.md` 의 요청 · 응답 예시 그대로(JSON camelCase).
+// SPEC-001 0.3.0 계약 — `cc/back/README.md` 의 요청 · 응답 예시 그대로(JSON camelCase).
 // 시각은 전부 epoch ms(숫자). 화면용 시각 문자열(예약 시각 등)은 HH:MM.
 
 export type Role = '의사' | '상담사' | '피부관리사' | '간호사' | '코디';
@@ -59,6 +59,7 @@ export interface BoardCustomer {
   unpaidAmount: number;
   paid: boolean;
   status: CustomerStatus | null;
+  mentionedStaffIds: string[]; // 지금 보이는 메모 원문에 이름이 나오는 오늘 근무 직원(배정 셀렉터 맨 위)
   steps: Step[];
 }
 
@@ -81,7 +82,7 @@ export interface BoardStaff {
   work: StaffWork[];
 }
 
-export type ResvState = 'booked' | 'checked' | 'canceled';
+export type ResvState = 'booked' | 'checked' | 'canceled' | 'noshow';
 
 export interface Reservation {
   scheduleId: string;
@@ -89,8 +90,6 @@ export interface Reservation {
   name: string;
   isNew: boolean;
   nationality: string;
-  procedure: string; // KOS 예약 칸 그대로 — 비면 「-」
-  doctor: string;
   st: ResvState;
 }
 
@@ -111,6 +110,7 @@ export interface Board {
   customers: BoardCustomer[];
   staff: BoardStaff[];
   resv: Reservation[];
+  riskWords: string[]; // 강조할 위험 단어(설정 CC_RISK_WORDS)
   version: number;
   now: TimeValue;
 }
@@ -187,28 +187,21 @@ export interface RoundsHome {
 
 export type StaffHome = AssignedHome | RoundsHome;
 
-// GET /api/patients/{scheduleId}?staffId=
-export interface Caution {
-  text: string;
-  source: string;
-}
+// GET /api/patients/{scheduleId}?staffId= — 환자 상세 · 예약 상세 공통. 메모는 원문 그대로
+// 0.3.0 — 담당자 메모는 방문 카드에만(동선에는 없다)
+export type RouteStep = Step;
 
-export interface MemoSection {
-  lines: string[];
-  source: string;
-}
-
-export interface RouteStep extends Omit<Step, 'assigneeName'> {
-  assigneeName: string | null;
-  memo: string; // 그 시술 단계 done 일 때만 — 담당자 메모
-}
-
-export interface PastSchedule {
-  date: string;
-  consult: MemoSection | null;
-  order: MemoSection | null;
+// 방문 카드 — 방문(일정) 하나당. 오늘 카드는 접수 뒤에만, 상담 · 오더는 오늘 상담 종료 뒤(locked false)
+export interface Visit {
+  date: string; // YYYY-MM-DD
+  today: boolean;
+  locked: boolean;
+  counselors: string[];
+  consultation: string | null;
+  orderMemo: string | null;
   procedures: string[];
-  synthetic: boolean;
+  assigneeMemos: { label: string; memo: string }[];
+  synthetic?: boolean;
 }
 
 export interface MyAction {
@@ -216,6 +209,13 @@ export interface MyAction {
   kind: StepKind;
   action: 'start' | 'finish';
   label: string; // 상담 시작 · 상담 종료 · 시술 시작 · 시술 종료
+}
+
+export interface TicketBundle {
+  bundleId: string;
+  name: string;
+  left: number;
+  total: number;
 }
 
 export interface PatientDetail {
@@ -226,43 +226,42 @@ export interface PatientDetail {
   age: number | null;
   isNew: boolean;
   reservationTime: string;
+  reservationStatus: ResvState;
+  requestedProcedures: string[];
   flowStep: FlowStep;
   location: string | null;
   prevRoom: string | null;
   status: CustomerStatus | null;
   since: TimeValue | null;
   leaveTime: string | number | null;
-  outTime: string | null;
+  outTime: string | number | null; // KOS desiredDischargeDateTimeUtc 만
   counselor: string | null;
   doctors: string[];
-  memoRevealed: boolean;
   unpaidAmount: number;
   paid: boolean;
-  cautions: Caution[];
-  order: (MemoSection & { anesthesia: string | null }) | null;
-  consult: MemoSection | null;
-  reception: MemoSection | null;
+  memoRevealed: boolean;
+  customerMemo: string | null;
+  reservationMemo: string | null;
+  visits: Visit[]; // 최근이 위
+  riskWords: string[];
+  riskHits: string[];
+  mentionedStaffIds: string[];
   chart: { label: string; value: string }[];
-  history: { label: string; value: string; source: string }[];
-  pastSchedules: PastSchedule[];
   route: RouteStep[];
-  tickets: { name: string; left: number; total: number }[];
+  tickets: TicketBundle[];
   myActions: MyAction[];
 }
 
-// GET /api/patients/{id}/procedure-candidates — 시술 후보(§5.4)
+// GET /api/patients/{id}/procedure-candidates — 시술 후보 = 묶음 n/m, 고르면 1회
 export interface ProcedureCandidate {
+  bundleId: string;
   kind: StepKind;
-  label: string;
-  ticketId: string | null;
-  kosSequence: number | null;
-  source: 'ticket' | 'task';
+  name: string;
+  left: number;
+  total: number;
+  source: 'today' | 'ticket';
+  paymentRequired?: boolean;
 }
 
-// 접수 · 시술 추가 요청의 단계 한 줄
-export interface StepInput {
-  kind: StepKind;
-  label?: string;
-  ticketId?: string | null;
-  kosSequence?: number | null;
-}
+// 접수 단계 한 줄 — kind(상담 · 원장 상담 직접) 또는 bundleId(묶음의 다음 1장)
+export type StepInput = { kind: 'consult' | 'doctor_consult' } | { bundleId: string };

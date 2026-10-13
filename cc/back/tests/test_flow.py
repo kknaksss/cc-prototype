@@ -29,7 +29,8 @@ def test_1_seed_is_before_opening(client):
 
 def test_2_first_visit_consult_flow_reveals_memos(client):
     before = ok(client.get("/api/patients/sch-1"))
-    assert before["flowStep"] == "RESERVED" and before["order"] is None and before["consult"] is None
+    assert before["flowStep"] == "RESERVED" and before["visits"] == []  # 접수 전 — 오늘 카드 없음(지난 방문도 없음)
+    assert before["reservationMemo"].startswith("**1시 전 아웃 희망**")  # 예약 메모는 예약 때부터 · 원문 그대로
 
     check_in(client, "sch-1", [{"kind": "consult"}])
     c = customer(client, "sch-1")
@@ -44,26 +45,33 @@ def test_2_first_visit_consult_flow_reveals_memos(client):
     ok(assign(client, st["stepId"], "c2"))
     assert customer(client, "sch-1")["status"]["label"] == "상담사B 대기"
     home = ok(client.get("/api/staff/c2/home"))
-    assert home["frame"] == "assigned" and [n["stepId"] for n in home["next"]] == [st["stepId"]]  # 상담사 화면 「다음」
+    assert home["frame"] == "assigned" and [n["stepId"] for n in home["next"]] == [st["stepId"]]
     mid = ok(client.get("/api/patients/sch-1", params={"staffId": "c2"}))
     assert mid["myActions"] == [{"stepId": st["stepId"], "kind": "consult", "action": "start", "label": "상담 시작"}]
-    assert mid["order"] is None and not mid["memoRevealed"]
+    today = mid["visits"][0]
+    assert today["today"] and today["locked"] and today["consultation"] is None and today["orderMemo"] is None
 
     ok(client.post("/api/staff/c2/start", json={"stepId": st["stepId"]}))
-    c = customer(client, "sch-1")
-    assert c["flowStep"] == "CONSULTATION" and c["status"]["key"] == "consult"
+    assert customer(client, "sch-1")["flowStep"] == "CONSULTATION"
     ok(finish(client, "c2", st["stepId"]))
-    after = ok(client.get("/api/patients/sch-1"))
-    assert after["memoRevealed"] and after["order"] and after["consult"]  # 상담 · 오더 메모가 이때 열림
-    assert after["counselor"] == "상담사B"
+    today = ok(client.get("/api/patients/sch-1"))["visits"][0]
+    assert not today["locked"] and today["consultation"].startswith("[상담내용]") and today["orderMemo"].startswith("OUT TIME")
+    assert today["counselors"] == ["상담사B"]
     assert ok(client.get("/api/staff/c2/home"))["done"][0]["stepId"] == st["stepId"]
 
 
 def test_3_procedures_reorder_assign_start_finish(client):
     consult_done(client, "sch-1", "c05")
+    assert [s["kind"] for s in customer(client, "sch-1")["steps"]] == ["consult"]  # 이벤트 시술은 동선에 안 붙음
+    cands = ok(client.get("/api/patients/sch-1/procedure-candidates"))
+    ids = [b["bundleId"] for b in cands if b["source"] == "today"]
+    assert ids == ["today:doctor_consult", "today:울쎄라피 프라임 300shot", "today:리쥬란 힐러 2cc", "today:시트팩"]
+    ok(client.post("/api/desk/add-procedures", json={"scheduleId": "sch-1", "bundleIds": ids}))
     ss = customer(client, "sch-1")["steps"]
     assert [s["kind"] for s in ss] == ["consult", "doctor_consult", "procedure", "procedure", "procedure"]
-    # 순서 바꾸기 — 남은 단계만 보내도 된다(시트팩을 시술 맨 앞으로)
+    assert [s["kosSequence"] for s in ss] == [None, 1, 2, 3, 4]
+    assert [b for b in ok(client.get("/api/patients/sch-1/procedure-candidates")) if b["source"] == "today" and b["left"]] == []
+    # 순서 바꾸기 — 남은 단계만(시트팩을 시술 맨 앞으로)
     pending = [s["stepId"] for s in ss if s["state"] == "planned"]
     new = [pending[0], pending[3], pending[1], pending[2]]
     ok(client.post("/api/desk/reorder", json={"scheduleId": "sch-1", "stepIds": new}))
@@ -78,7 +86,7 @@ def test_3_procedures_reorder_assign_start_finish(client):
     assert c["flowStep"] == "PROCEDURE_WAITING" and c["status"]["label"] == "원장 대기 · 세팅 준비"
 
     p1 = step(client, "sch-1", "procedure", 0)
-    err(start(client, "d2", p1["stepId"]), "not_my_step")  # 배정 안 된 직원은 시작 못 함
+    err(start(client, "d2", p1["stepId"]), "not_my_step")
     ok(assign(client, p1["stepId"], "d1"))
     ok(start(client, "d1", p1["stepId"]))
     assert customer(client, "sch-1")["flowStep"] == "PROCEDURE"
@@ -89,15 +97,9 @@ def test_3_procedures_reorder_assign_start_finish(client):
     rounds = ok(client.get("/api/staff/n1/home"))
     row = next(p for p in rounds["patients"] if p["scheduleId"] == "sch-1")
     assert rounds["frame"] == "rounds" and row["need"] == "next" and len(row["procedures"]) == 3
-
-    p2 = step(client, "sch-1", "procedure", 1)
-    ok(assign(client, p2["stepId"], "s1"))
-    ok(start(client, "s1", p2["stepId"]))
-    ok(finish(client, "s1", p2["stepId"]))
-    assert [s["state"] for s in customer(client, "sch-1")["steps"]] == ["done", "done", "done", "done", "planned"]
-    ids = [s["stepId"] for s in customer(client, "sch-1")["steps"]]
-    swapped = [ids[1], ids[0]] + ids[2:]
-    err(client.post("/api/desk/reorder", json={"scheduleId": "sch-1", "stepIds": swapped}), "done_step_moved")
+    ids2 = [s["stepId"] for s in customer(client, "sch-1")["steps"]]
+    err(client.post("/api/desk/reorder", json={"scheduleId": "sch-1", "stepIds": [ids2[1], ids2[0]] + ids2[2:]}),
+        "done_step_moved")
 
 
 def test_4_sleep_room_holds_original(client):
@@ -135,22 +137,40 @@ def test_5_discharge_midway_skips_rest(client, container):
     assert log[-1]["action"] == "discharge"
 
 
-def test_6_revisit_default_tickets(client):
-    r = next(x for x in board(client)["resv"] if x["scheduleId"] == "sch-2")
-    assert r["isNew"] is False
+def test_6_revisit_bundles_and_visits(client):
+    """재내원 — 후보 = 시술권 묶음 n/m, 고르면 1회 차감 · 지난 방문 카드는 언제나, 오늘 카드는 잠금."""
     cands = ok(client.get("/api/patients/sch-2/procedure-candidates"))
-    assert [(c["label"], c["ticketId"], c["source"]) for c in cands] == [
-        ("리쥬란 힐러 2cc", "t-a", "ticket"), ("주름보톡스(국산)", "t-c", "ticket")]  # USED 장은 빠짐
-    check_in(client, "sch-2", [{"kind": "procedure", "label": c["label"], "ticketId": c["ticketId"]} for c in cands])
-    assert [s["ticketId"] for s in customer(client, "sch-2")["steps"]] == ["t-a", "t-c"]
-    assert ok(client.get("/api/patients/sch-2/procedure-candidates")) == []
-    d = ok(client.get("/api/patients/sch-2"))
-    assert d["isNew"] is False and d["tickets"] == [{"name": "리쥬란 힐러 2cc", "left": 1, "total": 2},
-                                                   {"name": "주름보톡스(국산)", "left": 1, "total": 1}]
-    past = d["pastSchedules"][0]
-    assert past["date"] == "2026-09-20" and past["procedures"] == ["리쥬란 힐러 2cc"] and past["synthetic"]
-    assert past["order"]["lines"] == ["1. 리쥬란 힐러 2cc(얼전)"]  # 빈 번호 줄 「2.」 숨김
-    assert {"label": "이 병원", "value": "2026-09-20 · 리쥬란 힐러 2cc", "source": "지난 방문"} in d["history"]
+    assert [(c["bundleId"], c["name"], c["left"], c["total"], c["source"]) for c in cands] == [
+        ("ticket:p0-0", "리쥬란 힐러 2cc", 1, 2, "ticket"), ("ticket:p0-1", "주름보톡스(국산)", 1, 1, "ticket"),
+        ("ticket:grp-potenza", "포텐자 펌핑팁", 7, 10, "ticket")]
+    before = ok(client.get("/api/patients/sch-2"))
+    assert [v["today"] for v in before["visits"]] == [False]  # 접수 전: 지난 카드만
+    past = before["visits"][0]
+    assert past["date"] == "2026-09-20" and not past["locked"] and past["counselors"] == ["상담사A"]
+    assert past["consultation"].startswith("[상담내용]\n고민:\nH)")  # 원문 그대로(빈 양식 줄 포함)
+    assert past["orderMemo"] == "OUT TIME : x\n1. 리쥬란 힐러 2cc(얼전)\n2." and past["procedures"] == ["리쥬란 힐러 2cc"]
+    assert before["tickets"] == [{k: c[k] for k in ("bundleId", "name", "left", "total")} for c in cands]
+
+    check_in(client, "sch-2", [{"bundleId": "ticket:grp-potenza"}])
+    assert [s["ticketId"] for s in customer(client, "sch-2")["steps"]] == ["pz-3"]
+    pz = next(c for c in ok(client.get("/api/patients/sch-2/procedure-candidates")) if c["bundleId"] == "ticket:grp-potenza")
+    assert (pz["left"], pz["total"]) == (6, 10)  # 1회 차감
+    ok(client.post("/api/desk/add-procedures", json={"scheduleId": "sch-2", "bundleIds": ["ticket:grp-potenza", "ticket:p0-1"]}))
+    assert [s["ticketId"] for s in customer(client, "sch-2")["steps"]] == ["pz-3", "pz-4", "t-c"]
+    err(client.post("/api/desk/add-procedures", json={"scheduleId": "sch-2", "bundleIds": ["ticket:p0-1"]}), "bundle_empty")
+    err(client.post("/api/desk/add-procedures", json={"scheduleId": "sch-2", "bundleIds": ["nope"]}), "unknown_bundle")
+    after = ok(client.get("/api/patients/sch-2"))
+    assert [v["today"] for v in after["visits"]] == [True, False] and after["visits"][0]["locked"]  # 최근이 위
+
+
+def test_no_show(client):
+    ok(client.post("/api/desk/no-show", json={"scheduleId": "sch-5"}))
+    row = next(r for r in board(client)["resv"] if r["scheduleId"] == "sch-5")
+    assert row["st"] == "noshow"
+    err(client.post("/api/desk/no-show", json={"scheduleId": "sch-5"}), "not_booked")
+    err(client.post("/api/desk/check-in", json={"scheduleId": "sch-5", "steps": []}), "reservation_noshow")
+    check_in(client, "sch-4", [])
+    err(client.post("/api/desk/no-show", json={"scheduleId": "sch-4"}), "not_booked")
 
 
 def test_7_login_five_roles_frames(client):
@@ -189,8 +209,8 @@ def test_blocks_and_undo(client):
     err(finish(client, "c1", st["stepId"]), "not_in_progress")
     r = client.post("/api/desk/assign", json={"stepId": "nope", "staffId": "c1"})
     assert r.status_code == 404 and r.json()["error"]["code"] == "step_not_found"
-    err(client.post("/api/desk/add-procedures", json={"scheduleId": "sch-1", "items": [
-        {"label": "A", "ticketId": "x"}, {"label": "B", "ticketId": "x"}]}), "duplicate_ticket")
+    ok(client.post("/api/desk/add-procedures", json={"scheduleId": "sch-1", "items": [{"label": "직접 추가"}]}))
+    assert step(client, "sch-1", "procedure")["label"] == "직접 추가"
     assert staff_of(client, "의사")
 
 

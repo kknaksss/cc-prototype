@@ -11,6 +11,8 @@ from app.domain.errors import BadRequest, NotFound
 from app.domain.rooms import CORRIDORS, rooms_payload
 from app.repository.state_repo import StateRepository
 from app.seed.capture import KST
+from app.service import bundles as BD
+from app.service import memos
 from app.service.events import EventBus
 from app.service.snapshot import snapshot_to_state, state_to_snapshot
 
@@ -50,8 +52,10 @@ def staff_work(d: dict, staff_id: str) -> list[dict]:
 
 
 class BoardService:
-    def __init__(self, repo: StateRepository, bus: EventBus, seed_path: Path, clock=now_ms):
+    def __init__(self, repo: StateRepository, bus: EventBus, seed_path: Path, clock=now_ms,
+                 risk_words: list[str] | None = None):
         self.repo = repo
+        self.risk_words = risk_words or []
         self.bus = bus
         self.seed_path = seed_path
         self.clock = clock
@@ -72,9 +76,11 @@ class BoardService:
             "rooms": [{**r, "unpaidAmount": sum((c.get("unpaidAmount") or 0) for c in d["customers"]
                                                 if B.is_here(c) and c["location"] == r["id"])} for r in rooms_payload()],
             "corridors": CORRIDORS,
-            "customers": [customer_view(d, c) for c in d["customers"]],
+            "customers": [{**customer_view(d, c), "mentionedStaffIds": memos.customer_mentions(self.repo, d, c["scheduleId"])}
+                          for c in d["customers"]],
             "staff": [{**s, "work": staff_work(d, s["staffId"])} for s in d["staff"]],
-            "resv": d["resv"],
+            "resv": [{k: v for k, v in r.items() if k not in ("procedure", "doctor")} for r in d["resv"]],
+            "riskWords": self.risk_words,
             "version": version,
             "now": self.clock(),
         }
@@ -90,8 +96,20 @@ class BoardService:
         self.bus.publish(version)
         return {"version": version}
 
+    def _resolve(self, schedule_id: str, requests: list[dict]) -> list[dict]:
+        """`bundleId` 가 있는 요청 → 그 묶음의 다음 1장(1회 차감). 없으면 그대로."""
+        if not any(r.get("bundleId") for r in requests):
+            return requests
+        d = self.repo.load_state()
+        derived = self.repo.get_reference("derived", schedule_id) or {}
+        events = self.repo.get_reference("events", schedule_id) or {}
+        cust = next((c for c in d["customers"] if c["scheduleId"] == schedule_id), None)
+        return BD.resolve(requests, BD.build(derived, events, cust, B.steps_of(d, schedule_id)))
+
     def check_in(self, schedule_id: str, steps: list[dict]) -> dict:
-        return self._run(lambda ctx: B.check_in(ctx, schedule_id, steps))
+        with self._lock:
+            items = self._resolve(schedule_id, steps)
+            return self._run(lambda ctx: B.check_in(ctx, schedule_id, items))
 
     def place(self, schedule_id: str, room: str) -> dict:
         return self._run(lambda ctx: B.place(ctx, schedule_id, room))
@@ -109,7 +127,12 @@ class BoardService:
         return self._run(lambda ctx: B.unassign(ctx, step_id))
 
     def add_procedures(self, schedule_id: str, items: list[dict]) -> dict:
-        return self._run(lambda ctx: B.add_procedures(ctx, schedule_id, items))
+        with self._lock:
+            resolved = self._resolve(schedule_id, items)
+            return self._run(lambda ctx: B.add_procedures(ctx, schedule_id, resolved))
+
+    def no_show(self, schedule_id: str) -> dict:
+        return self._run(lambda ctx: B.no_show(ctx, schedule_id))
 
     def reorder(self, schedule_id: str, step_ids: list[str]) -> dict:
         return self._run(lambda ctx: B.reorder(ctx, schedule_id, step_ids))
@@ -131,8 +154,8 @@ class BoardService:
         return self._run(lambda ctx: B.finish(ctx, staff_id, step_id, events), actor=staff_id)
 
     def payment_complete(self, schedule_id: str) -> dict:
-        event = self._events(schedule_id).get("paymentDone")
-        return self._run(lambda ctx: B.payment_complete(ctx, schedule_id, event))
+        events = self._events(schedule_id)
+        return self._run(lambda ctx: B.payment_complete(ctx, schedule_id, events))
 
     def undo(self, version: int) -> dict:
         with self._lock:

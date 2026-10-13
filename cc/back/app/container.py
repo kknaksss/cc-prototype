@@ -33,7 +33,7 @@ def build_container(settings: Settings, bus: EventBus | None = None) -> Containe
         settings=settings,
         bus=bus,
         repo=repo,
-        board=BoardService(repo, bus, settings.seed_path),
+        board=BoardService(repo, bus, settings.seed_path, risk_words=settings.risk_words),
         staff=StaffService(repo),
-        patients=PatientService(repo),
+        patients=PatientService(repo, settings.risk_words),
     )

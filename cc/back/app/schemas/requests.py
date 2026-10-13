@@ -2,22 +2,26 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 StepKind = Literal["consult", "doctor_consult", "procedure"]
 
 
 class StepItem(BaseModel):
-    kind: StepKind
+    """접수 단계 — 후보 묶음(`bundleId`, 다음 1장 연결) 또는 직접(`kind` — 상담 · 원장 상담)."""
+    bundleId: str | None = None
+    kind: StepKind | None = None
     label: str | None = None  # 상담 · 원장 상담은 비우면 기본 이름
-    ticketId: str | None = None
-    kosSequence: int | None = None
+
+    @model_validator(mode="after")
+    def _one(self):
+        if not self.bundleId and not self.kind:
+            raise ValueError("bundleId 또는 kind 가 필요해요")
+        return self
 
 
 class ProcedureItem(BaseModel):
     label: str = Field(min_length=1)
-    ticketId: str | None = None
-    kosSequence: int | None = None
 
 
 class CheckInBody(BaseModel):
@@ -44,8 +48,10 @@ class StepBody(BaseModel):
 
 
 class AddProceduresBody(BaseModel):
+    """시술 추가 — 후보 묶음 id 목록(같은 묶음을 두 번 주면 2장). `items` 는 이름만 있는 직접 추가."""
     scheduleId: str
-    items: list[ProcedureItem]
+    bundleIds: list[str] = []
+    items: list[ProcedureItem] = []
 
 
 class ReorderBody(BaseModel):

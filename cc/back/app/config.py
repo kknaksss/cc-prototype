@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     cc_front_origin: str = "http://localhost:3600"
     cc_kos_staff_path: str = "data/kos-staff.json"
     cc_scenario_dir: str = "data/scenario"
+    # 위험 단어(강조만 — SPEC 0.3.0 §0-b). 쉼표로 구분, 지점마다 바꾼다
+    cc_risk_words: str = "임플란트,아스피린,수면,알레르기,켈로이드,임신,지정,거부"
+
+    @property
+    def risk_words(self) -> list[str]:
+        return [w.strip() for w in self.cc_risk_words.split(",") if w.strip()]
 
     @property
     def db_path(self) -> Path:

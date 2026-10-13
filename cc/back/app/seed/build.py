@@ -35,7 +35,15 @@ def load_scenario(root: Path) -> tuple[dict, dict[str, dict]]:
     if not seed_file.exists():
         raise FileNotFoundError(f"시나리오 seed.json 이 없어요: {seed_file}")
     seed = json.loads(seed_file.read_text())
-    events = {f.stem: json.loads(f.read_text()) for f in sorted((root / "events").glob("*.json"))}
+    # 이벤트 — `events/<scheduleId>.json`(폴더) 또는 평평한 꼴(쿠버네티스 Secret 마운트는 하위 폴더를 못 만든다):
+    # `events.json`({scheduleId: 이벤트}) · `event-<scheduleId>.json`
+    events: dict[str, dict] = {}
+    if (root / "events.json").exists():
+        events.update(json.loads((root / "events.json").read_text()))
+    for f in sorted(root.glob("event-*.json")):
+        events[f.stem.removeprefix("event-")] = json.loads(f.read_text())
+    for f in sorted((root / "events").glob("*.json")):
+        events[f.stem] = json.loads(f.read_text())
     return seed, events
 
 
@@ -108,10 +116,12 @@ def _age(dob: str | None, day: date) -> int | None:
 def _tickets(bundles) -> list[dict]:
     """보유 시술권(getTicketBundlesQuery) — 시술권 묶음별 이름 · AVAILABLE 장 id · 전체 장 수(KOS 값만)."""
     out = []
-    for b in bundles or []:
-        for ts in b.get("ticketSets") or []:
+    for bi, b in enumerate(bundles or []):
+        for si, ts in enumerate(b.get("ticketSets") or []):
             tks = ts.get("tickets") or []
             out.append({
+                # 묶음 id — KOS ticketGroupId(있으면) · 없으면 결제 id + 순서
+                "bundleId": ts.get("ticketGroupId") or f"{b.get('purchaseItemId') or b.get('purchaseId') or bi}-{si}",
                 "name": ts.get("title") or (ts.get("procedure") or {}).get("name") or "",
                 "available": [x["id"] for x in tks if x.get("status") == "AVAILABLE" and x.get("id")],
                 "total": len(tks),
@@ -153,9 +163,6 @@ def build_seed(seed: dict, events: dict[str, dict], accounts: list[dict]) -> tup
             "name": v.get("name", ""),
             "isNew": bool(v.get("isNew")),
             "nationality": v.get("nationality", ""),
-            # KOS 예약 칸 그대로 — 비어 있으면 빈 값
-            "procedure": ", ".join(p.get("name") or p.get("title") or "" for p in r.get("requestedProcedures") or []),
-            "doctor": (r.get("doctor") or {}).get("name") or "",
             "st": "canceled" if r.get("status") == "CANCELED" else "booked",
         })
     missing = sorted(set(events) - set(ref_schedule))

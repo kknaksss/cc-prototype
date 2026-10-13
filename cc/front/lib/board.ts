@@ -32,7 +32,7 @@ export const SSTATE: Record<StepState, { name: string; variant: Variant; dot: bo
   skipped: { name: '진행 안 함', variant: 'neutral', dot: false },
 };
 
-// 방 상태 4종(시안 BOX · STATUS) — 손 필요 = 빨강
+// 방 상태 4종(시안 BOX · STATUS) — 확인 필요 = 빨강(0.3.0 §0-b 10)
 export type BoxKey = 'wait' | 'consult' | 'treat' | 'need';
 export const BOX: Record<BoxKey, string> = {
   wait: 'bg-yellow-100 border-ms-gray-400 text-ms-gray-800',
@@ -44,12 +44,12 @@ export const STATUS: Record<BoxKey, { name: string; variant: Variant }> = {
   wait: { name: '대기', variant: 'warning' },
   consult: { name: '상담', variant: 'purple' },
   treat: { name: '시술', variant: 'primary' },
-  need: { name: '손 필요', variant: 'danger' },
+  need: { name: '확인 필요', variant: 'danger' },
 };
 export const KEYS: BoxKey[] = ['wait', 'consult', 'treat', 'need'];
 export const EMPTY = 'bg-ms-white border-ms-gray-300 text-ms-gray-500';
 
-// back 상태 → 화면 칸 색. 손 필요(need)가 먼저, 접수 후 대기는 대기
+// back 상태 → 화면 칸 색. 확인 필요(need)가 먼저, 접수 후 대기는 대기
 export const boxKey = (s: CustomerStatus | null): BoxKey =>
   !s ? 'wait' : s.need ? 'need' : s.key === 'consult' || s.key === 'treat' ? s.key : 'wait';
 

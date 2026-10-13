@@ -7,11 +7,12 @@ import * as api from '@/lib/api';
 import { BOX, KEYS, ROLES, ROLE_COLOR, STATUS, hereCustomers } from '@/lib/board';
 import { useLive, useNow, useSession } from '@/lib/hooks';
 import { clearSession } from '@/lib/session';
-import type { Board, Reservation } from '@/lib/types';
+import type { Board, BoardCustomer, Reservation } from '@/lib/types';
 import { Aside, type TabId } from '@/components/desk/Aside';
 import { CheckInModal } from '@/components/desk/CheckInModal';
 import { FloorGrid, type Route } from '@/components/desk/FloorGrid';
-import { RoomPanel } from '@/components/desk/RoomPanel';
+import { DischargeModal, RoomPanel } from '@/components/desk/RoomPanel';
+import { ResvDetail } from '@/components/desk/ResvDetail';
 import { useDeskActions } from '@/components/desk/useDeskActions';
 
 const PATH = '/board/live';
@@ -64,6 +65,8 @@ export default function DeskPage() {
   const [rp, setRp] = useState<string | null>(null);
   const [ci, setCi] = useState<Reservation | null>(null);
   const [resetAsk, setResetAsk] = useState(false);
+  const [rd, setRd] = useState<Reservation | null>(null);
+  const [dc, setDc] = useState<BoardCustomer | null>(null);
 
   useEffect(() => {
     const on = () => setVw(document.documentElement.clientWidth);
@@ -103,6 +106,8 @@ export default function DeskPage() {
     setResetAsk(false);
     setRp(null);
     setCi(null);
+    setRd(null);
+    setDc(null);
     await run(() => api.resetBoard(), '시드 상태로 초기화');
   };
 
@@ -146,7 +151,7 @@ export default function DeskPage() {
                 실시간 현황판
               </h1>
               <span className="text-typo-body-400 text-ms-gray-600" style={{ whiteSpace: 'nowrap' }}>
-                명동점 · 1층 · 방을 눌러 고객 동선 배정
+                명동점 · 1층
               </span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px 20px', flexWrap: 'wrap' }}>
@@ -229,7 +234,8 @@ export default function DeskPage() {
                 }}
                 onOpenRoom={(id) => setRp(id)}
                 onCheckIn={(r) => setCi(r)}
-                onWalkIn={() => undefined}
+                onOpenResv={(r) => setRd(r)}
+                resvSel={rd?.scheduleId ?? null}
                 narrow={narrow}
                 open={open}
                 onClose={() => setDrawer(false)}
@@ -256,7 +262,7 @@ export default function DeskPage() {
             >
               <span className="text-typo-body-600 text-ms-gray-800">시드 상태로 초기화할까요?</span>
               <span className="text-typo-caption-md-400 text-ms-gray-700" style={{ wordBreak: 'keep-all' }}>
-                지금까지의 접수 · 배정 · 시작/종료 기록을 지우고 시드 상태로 돌아가요. 직원 화면도 같이 바뀌어요.
+                접수 · 배정 · 시작/종료 기록이 지워져요.
               </span>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
                 <Button variant="text" color="gray" size="sm" onClick={() => setResetAsk(false)}>
@@ -305,6 +311,7 @@ export default function DeskPage() {
           {board && ci && (
             <CheckInModal
               key={ci.scheduleId}
+              board={board}
               resv={ci}
               onClose={() => setCi(null)}
               onConfirm={(steps) => {
@@ -315,8 +322,50 @@ export default function DeskPage() {
             />
           )}
 
-          {board && rp && (
-            <RoomPanel key={rp} board={board} now={now} id={rp} onClose={() => setRp(null)} onSwitch={(id) => setRp(id)} run={run} />
+          {board && rd && !ci && (
+            <ResvDetail
+              key={rd.scheduleId}
+              board={board}
+              resv={board.resv.find((r) => r.scheduleId === rd.scheduleId) ?? rd}
+              onClose={() => setRd(null)}
+              onCheckIn={() => {
+                setCi(rd);
+                setRd(null);
+              }}
+              onNoShow={() => {
+                const t = rd;
+                setRd(null);
+                void run(() => api.noShow(t.scheduleId), t.name + ' 노쇼');
+              }}
+            />
+          )}
+
+          {board && dc && (
+            <DischargeModal
+              board={board}
+              c={board.customers.find((c) => c.scheduleId === dc.scheduleId) ?? dc}
+              onCancel={() => setDc(null)}
+              onConfirm={() => {
+                const t = dc;
+                setDc(null);
+                setRp(null);
+                void run(() => api.discharge(t.scheduleId), t.name + ' 귀가');
+              }}
+            />
+          )}
+
+          {/* 귀가 모달이 떠 있는 동안 방 패널은 숨긴다 — [취소] 하면 다시 보인다(시안) */}
+          {board && rp && !dc && (
+            <RoomPanel
+              key={rp}
+              board={board}
+              now={now}
+              id={rp}
+              onClose={() => setRp(null)}
+              onSwitch={(id) => setRp(id)}
+              onDischarge={(c) => setDc(c)}
+              run={run}
+            />
           )}
         </main>
       </div>

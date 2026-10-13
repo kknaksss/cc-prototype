@@ -12,7 +12,7 @@ APP = Path(__file__).resolve().parent.parent / "app"
 
 def test_every_operation_has_kos_comment():
     with_mark = [f.__name__ for f in B.OPERATIONS if MARK in inspect.getsource(f)]
-    assert len(B.OPERATIONS) == 12
+    assert len(B.OPERATIONS) == 13
     assert with_mark == [f.__name__ for f in B.OPERATIONS]
     # 조작 함수 = board.py 에서 Op 을 돌려주는 공개 함수 전부
     ops = [n for n, f in inspect.getmembers(B, inspect.isfunction)

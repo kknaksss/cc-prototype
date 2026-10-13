@@ -33,3 +33,17 @@ npm run dev                  # http://localhost:3600
 - 스타일: `@medisolve-ai/medikit@1.4.0`(Tailwind preset) · `pretendard` · `app/styles/ceramique-theme.css` · `medikit-patches.css`(`cc/design` 사본) · 루트 `data-product="ceramique"`
 - `lib/interpret.ts` — 통역 세션(SPEC §7 · WS 계약): 마이크 → AudioWorklet 16kHz mono s16le → `WS /api/interpret`, 자막 `caption` 갱신, 번역 음성 PCM 이어 재생. 화면은 `components/staff/InterpretModal.tsx`
 - 통역은 마이크가 필요해서 `http://localhost:3600` 처럼 **localhost** 로 열어야 한다(다른 주소의 http 는 브라우저가 마이크를 막는다)
+
+## 배포 (DEC-003)
+
+`k8s_infra_mac` 클러스터 · `https://ccc.medisolveai.xyz` — ingress 가 `/api` → back, 나머지 → front(같은 출처라 CORS · SSE · WS 가 단순).
+
+- **이미지**: `Dockerfile` — Next.js standalone(`next.config.ts` `output: 'standalone'`) · node 20 alpine · 비루트(`node`, uid 1000) · 포트 3600 · `node server.js`
+- **API 주소는 빌드 때 박힌다**: 빌드 인자 `NEXT_PUBLIC_API_BASE_URL`(기본 `https://ccc.medisolveai.xyz`). 통역 WS 는 이 값의 `http→ws`(https 면 `wss`) + `/api/interpret` → `wss://ccc.medisolveai.xyz/api/interpret`. 주소가 바뀌면 이미지를 다시 빌드한다
+- **CI**: 레포 루트 `.github/workflows/cc-front-image.yml` — `cc/front/**` 변경 push 또는 수동 실행 → GitHub 호스트 arm64 러너(`ubuntu-24.04-arm`)에서 빌드 → `ghcr.io/kknaksss/cc-prototype-front:<커밋 sha>`(`latest` 태그 없음). 클러스터는 그 sha 태그를 쓴다(ArgoCD 첫 착지는 수동 sync)
+- 로컬 확인:
+
+```bash
+docker build --platform linux/arm64 --build-arg NEXT_PUBLIC_API_BASE_URL=https://ccc.medisolveai.xyz -t cc-front .
+docker run --rm -p 13600:3600 cc-front   # http://localhost:13600
+```

@@ -4,7 +4,6 @@ import { Badge, Button, Tabs } from '@medisolve-ai/medikit';
 import { BOX, KEYS, ROLES, ROLE_COLOR, SSTATE, STATUS, boxKey, hereCustomers, roomName, stepNum } from '@/lib/board';
 import { elapsedSec, fmtElapsed } from '@/lib/time';
 import type { Board, Reservation, StaffWork } from '@/lib/types';
-import { natName } from '@/components/staff/common';
 
 export type TabId = 'resv' | 'status' | 'staff' | 'customer';
 const TABS = [
@@ -68,7 +67,8 @@ export function Aside({
   onSelCustomer,
   onOpenRoom,
   onCheckIn,
-  onWalkIn,
+  onOpenResv,
+  resvSel,
   narrow,
   open,
   onClose,
@@ -83,7 +83,8 @@ export function Aside({
   onSelCustomer: (id: string) => void;
   onOpenRoom: (id: string) => void;
   onCheckIn: (r: Reservation) => void;
-  onWalkIn: () => void;
+  onOpenResv: (r: Reservation) => void;
+  resvSel: string | null;
   narrow: boolean;
   open: boolean;
   onClose: () => void;
@@ -122,7 +123,7 @@ export function Aside({
       <div style={{ padding: '8px 16px 0' }}>
         <Tabs tabs={TABS} selectedTab={tab} onSelectTab={(t: string) => onTab(t as TabId)} />
       </div>
-      {tab === 'resv' && <ResvTab board={board} now={now} onCheckIn={onCheckIn} onWalkIn={onWalkIn} />}
+      {tab === 'resv' && <ResvTab board={board} sel={resvSel} onOpen={onOpenResv} onCheckIn={onCheckIn} />}
       {tab === 'staff' && (
         <div style={list}>
           {ROLES.flatMap((role) => board.staff.filter((s) => s.role === role)).map((s) => {
@@ -263,7 +264,7 @@ function StatusTab({ board, now, onOpenRoom }: { board: Board; now: number; onOp
       open: () => onOpenRoom(c.location as string),
     };
   });
-  // 손 필요 먼저, 그다음 경과 긴 순
+  // 확인 필요 먼저, 그다음 경과 긴 순
   items.sort((a, b) => b.need - a.need || b.sec - a.sec);
   return (
     <>
@@ -301,67 +302,64 @@ function StatusTab({ board, now, onOpenRoom }: { board: Board; now: number; onOp
   );
 }
 
-// 예약 줄 상태 — 접수 뒤 지금 위치 · 귀가 · 취소(시안 resvVals)
-type RState = 'booked' | 'checked' | 'gone' | 'canceled';
-const RESV_ORDER: Record<RState, number> = { booked: 0, checked: 1, gone: 2, canceled: 3 };
+// 예약 탭(§0-b 9) — 카드 한 줄 · 접수 전 · 귀가 · 노쇼만(내원 중 고객은 현황 탭) · 지연 표시 없음
+type RState = 'booked' | 'gone' | 'noshow';
+const RESV_ORDER: Record<RState, number> = { booked: 0, gone: 1, noshow: 2 };
 
 function ResvTab({
   board,
-  now,
+  sel,
+  onOpen,
   onCheckIn,
-  onWalkIn,
 }: {
   board: Board;
-  now: number;
+  sel: string | null;
+  onOpen: (r: Reservation) => void;
   onCheckIn: (r: Reservation) => void;
-  onWalkIn: () => void;
 }) {
-  const d = new Date(now);
-  const nowMin = d.getHours() * 60 + d.getMinutes(); // 지연/임박 기준 = 지금 시각(시안 DEMO_NOW 자리)
-  const rows = board.resv.map((r) => {
-    const c = board.customers.find((x) => x.scheduleId === r.scheduleId);
-    const st: RState = r.st === 'canceled' ? 'canceled' : r.st === 'booked' ? 'booked' : c && c.location ? 'checked' : 'gone';
-    return { r, c, st };
-  });
+  const rows = board.resv
+    .map((r) => {
+      const c = board.customers.find((x) => x.scheduleId === r.scheduleId);
+      const st: RState | null =
+        r.st === 'booked' ? 'booked' : r.st === 'noshow' ? 'noshow' : r.st === 'checked' && c?.flowStep === 'COMPLETED' ? 'gone' : null;
+      return { r, st };
+    })
+    .filter((x): x is { r: Reservation; st: RState } => x.st !== null);
   rows.sort((a, b) => RESV_ORDER[a.st] - RESV_ORDER[b.st] || a.r.time.localeCompare(b.r.time));
-  const n = { booked: 0, checked: 0, gone: 0, canceled: 0 };
+  const n = { booked: 0, gone: 0, noshow: 0 };
   rows.forEach((x) => n[x.st]++);
   return (
     <>
       <SummaryCards
         cols={3}
         items={[
-          { name: '예정', count: n.booked, cls: 'bg-ms-white border-primary text-ms-gray-800' },
-          { name: '접수', count: n.checked, cls: 'bg-primary-100 border-primary text-ms-gray-800' },
+          { name: '접수 전', count: n.booked, cls: 'bg-ms-white border-primary text-ms-gray-800' },
           { name: '귀가', count: n.gone, cls: 'bg-ms-gray-100 border-ms-gray-300 text-ms-gray-600' },
+          { name: '노쇼', count: n.noshow, cls: 'bg-ms-gray-100 border-ms-gray-300 text-ms-gray-600' },
         ]}
       />
-      <div
-        className="border-ms-gray-200"
-        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 16px 10px', ...rowBorder }}
-      >
+      <div className="border-ms-gray-200" style={{ display: 'flex', alignItems: 'center', padding: '0 16px 10px', ...rowBorder }}>
         <span className="text-typo-caption-md-400 text-ms-gray-600">오늘 예약 {board.resv.length}건</span>
-        {/* 0.2.x 계약에 현장 접수(예약 없는 고객)가 없다 — 시안처럼 버튼만 두고 막아 둔다 */}
-        <Button variant="outlined" color="gray" size="sm" disabled onClick={onWalkIn}>
-          현장 접수
-        </Button>
       </div>
       <div style={list}>
-        {rows.map(({ r, c, st }) => {
-          const [h, m] = r.time.split(':').map(Number);
-          const diff = h * 60 + m - nowMin;
+        {rows.map(({ r, st }) => {
           const booked = st === 'booked';
           return (
             <div
               key={r.scheduleId}
-              className="border-ms-gray-200"
+              data-resv={r.scheduleId}
+              onClick={() => onOpen(r)}
+              className={sel === r.scheduleId ? 'bg-primary-100 border-ms-gray-200' : 'bg-ms-white border-ms-gray-200'}
               style={{
                 display: 'grid',
                 gridTemplateColumns: '40px minmax(0,1fr) auto',
                 gap: 10,
                 alignItems: 'center',
-                padding: '12px 16px',
+                minHeight: 52,
+                boxSizing: 'border-box',
+                padding: '8px 16px',
                 ...rowBorder,
+                cursor: 'pointer',
               }}
             >
               <span
@@ -370,54 +368,48 @@ function ResvTab({
               >
                 {r.time}
               </span>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-                  <span
-                    className={booked ? 'text-typo-body-600 text-ms-gray-800' : 'text-typo-body-500 text-ms-gray-600'}
-                    style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-                  >
-                    {r.name}
-                  </span>
-                  {r.isNew && (
-                    <span
-                      className="bg-primary-100 text-primary text-typo-caption-md-600"
-                      style={{ padding: '1px 6px', borderRadius: 4, whiteSpace: 'nowrap' }}
-                    >
-                      첫 방문
-                    </span>
-                  )}
-                  <span
-                    className={diff < 0 ? 'text-typo-caption-md-600 text-red' : 'text-typo-caption-md-600 text-primary'}
-                    style={{ whiteSpace: 'nowrap' }}
-                  >
-                    {booked ? (diff < 0 ? -diff + '분 지연' : diff <= 15 ? '곧 도착' : '') : ''}
-                  </span>
-                </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
                 <span
-                  className="text-typo-caption-md-400 text-ms-gray-600"
+                  className={booked ? 'text-typo-body-600 text-ms-gray-800' : 'text-typo-body-500 text-ms-gray-600'}
                   style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
                 >
-                  시술 {r.procedure || '-'} · 원장 {r.doctor || '-'} · {natName(r.nationality)}
+                  {r.name}
                 </span>
+                <VisitChip isNew={r.isNew} />
               </div>
               {booked ? (
-                <Button variant="solid" color="blue" size="sm" onClick={() => onCheckIn(r)}>
-                  접수
-                </Button>
+                <span onClick={(e) => e.stopPropagation()}>
+                  <Button variant="solid" color="blue" size="sm" onClick={() => onCheckIn(r)}>
+                    접수
+                  </Button>
+                </span>
               ) : (
-                <span
-                  className={
-                    st === 'checked' ? 'text-typo-caption-md-500 text-primary' : 'text-typo-caption-md-500 text-ms-gray-500'
-                  }
-                  style={{ whiteSpace: 'nowrap' }}
-                >
-                  {st === 'canceled' ? '취소' : st === 'gone' ? '귀가' : roomName(c?.location, board.rooms)}
+                <span className="text-typo-caption-md-500 text-ms-gray-500" style={{ whiteSpace: 'nowrap' }}>
+                  {st === 'noshow' ? '노쇼' : '귀가'}
                 </span>
               )}
             </div>
           );
         })}
+        {!rows.length && (
+          <span className="text-typo-body-400 text-ms-gray-500" style={{ padding: 16 }}>
+            예약 없음
+          </span>
+        )}
       </div>
     </>
+  );
+}
+
+export function VisitChip({ isNew }: { isNew: boolean }) {
+  return (
+    <span
+      className={
+        isNew ? 'bg-primary-100 text-primary text-typo-caption-md-600' : 'bg-ms-gray-200 text-ms-gray-700 text-typo-caption-md-600'
+      }
+      style={{ padding: '1px 6px', borderRadius: 4, whiteSpace: 'nowrap' }}
+    >
+      {isNew ? '첫 방문' : '재내원'}
+    </span>
   );
 }

@@ -1,0 +1,11 @@
+# 데이터 · 비밀 · 개발 산출물은 이미지에 넣지 않는다(DEC-003 D-05)
+data/
+.env
+.env.*
+!.env.example
+.venv/
+.pytest_cache/
+.ruff_cache/
+**/__pycache__/
+tests/
+README.md

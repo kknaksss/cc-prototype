@@ -4,27 +4,27 @@ import { useEffect, useState } from 'react';
 import { Button, Modal } from '@medisolve-ai/medikit';
 import * as api from '@/lib/api';
 import { checkBox, pickCls } from '@/lib/board';
-import { Bold } from '@/lib/memo';
-import type { PatientDetail, ProcedureCandidate, Reservation, StepInput } from '@/lib/types';
+import { FlagChips } from '@/lib/memo';
+import type { Board, PatientDetail, ProcedureCandidate, Reservation, StepInput } from '@/lib/types';
 import { natName } from '@/components/staff/common';
+import { VisitChip } from './Aside';
 
 interface Row {
   key: string;
   label: string;
   sub: string;
   step: StepInput;
-  ticket: boolean;
+  bundle: boolean;
 }
 
-const candSub = (c: ProcedureCandidate) =>
-  (c.source === 'ticket' ? '보유 시술권' : '오늘 결제 시술권') + (c.kosSequence ? ' · 순번 ' + c.kosSequence : '');
-
-// 접수 모달(§3.1) — 오늘 동선 단계를 데스크가 고른다. 자동으로 끼우는 단계 없음
+// 접수 모달(§3.1 · §0-b 12) — 오늘 동선 단계를 데스크가 고른다. 시술 후보 = 묶음 n/m, 고르면 1회
 export function CheckInModal({
+  board,
   resv,
   onClose,
   onConfirm,
 }: {
+  board: Board;
   resv: Reservation;
   onClose: () => void;
   onConfirm: (steps: StepInput[]) => void;
@@ -48,31 +48,27 @@ export function CheckInModal({
     };
   }, [resv.scheduleId]);
 
-  const dc = cands.find((c) => c.kind === 'doctor_consult');
   const rows: Row[] = [
-    { key: 'consult', label: '상담', sub: '상담사', step: { kind: 'consult', label: '상담' }, ticket: false },
-    {
-      key: 'doctor_consult',
-      label: '원장 상담',
-      sub: '의사',
-      step: { kind: 'doctor_consult', label: '원장 상담', kosSequence: dc?.kosSequence ?? null },
-      ticket: false,
-    },
+    { key: 'consult', label: '상담', sub: '상담사', step: { kind: 'consult' }, bundle: false },
+    { key: 'doctor_consult', label: '원장 상담', sub: '의사', step: { kind: 'doctor_consult' }, bundle: false },
     ...cands
       .filter((c) => c.kind === 'procedure')
-      .map((c, i) => ({
-        key: 'c' + i,
-        label: c.label,
-        sub: candSub(c),
-        step: { kind: c.kind, label: c.label, ticketId: c.ticketId, kosSequence: c.kosSequence },
-        ticket: c.source === 'ticket',
+      .map((c) => ({
+        key: c.bundleId,
+        label: c.name,
+        sub: (c.source === 'ticket' ? '보유 시술권' : '오늘 결제') + ' · ' + c.left + '/' + c.total,
+        step: { bundleId: c.bundleId },
+        bundle: true,
       })),
   ];
-  // 첫 방문 기본 = 「상담」 · 재내원 기본 = 보유 시술권 전부
+  // 첫 방문 기본 = 「상담」 · 재내원 기본 = 보유 시술권 묶음마다 1회
   const isNew = p ? p.isNew : resv.isNew;
-  const curSel = sel ?? (isNew ? ['consult'] : rows.filter((r) => r.ticket).map((r) => r.key));
+  const curSel = sel ?? (isNew ? ['consult'] : rows.filter((r) => r.bundle).map((r) => r.key));
   const picked = rows.filter((r) => curSel.includes(r.key));
   const meta = [p?.sex, p && p.age !== null ? p.age + '세' : '', natName(resv.nationality)].filter(Boolean).join(' · ');
+  const mentioned = p
+    ? p.mentionedStaffIds.map((id) => board.staff.find((s) => s.staffId === id)).filter((s): s is Board['staff'][number] => !!s)
+    : [];
 
   return (
     <Modal isOpen onBackdropClick={onClose}>
@@ -90,41 +86,16 @@ export function CheckInModal({
           <span className="text-typo-title-sm-600 text-ms-gray-800">접수</span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <span className="text-typo-body-600 text-ms-gray-800">{resv.name}</span>
-            {isNew ? (
-              <span className="bg-primary-100 text-primary text-typo-caption-md-600" style={{ padding: '1px 6px', borderRadius: 4 }}>
-                첫 방문
-              </span>
-            ) : (
-              <span className="bg-ms-gray-200 text-ms-gray-700 text-typo-caption-md-600" style={{ padding: '1px 6px', borderRadius: 4 }}>
-                재내원
-              </span>
-            )}
+            <VisitChip isNew={isNew} />
             <span className="text-typo-body-400 text-ms-gray-600">{meta}</span>
           </div>
           <span className="text-typo-caption-md-400 text-ms-gray-600">
-            {resv.time} 예약 · 시술 {resv.procedure || '-'} · 원장 {resv.doctor || '-'}
+            {resv.time} 예약{p && p.requestedProcedures.length ? ' · ' + p.requestedProcedures.join(' · ') : ''}
           </span>
         </div>
-        {p && p.cautions.length > 0 && (
-          <div className="bg-red-100" style={{ borderRadius: 8, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <span className="text-typo-caption-md-600 text-red">⚠ 주의</span>
-            {p.cautions.map((cu, i) => (
-              <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                <span className="text-typo-body-400 text-ms-gray-800" style={{ overflowWrap: 'anywhere' }}>
-                  <Bold text={cu.text} />
-                </span>
-                <span className="text-typo-caption-md-400 text-ms-gray-600">{cu.source}</span>
-              </div>
-            ))}
-          </div>
-        )}
+        {p && <FlagChips riskHits={p.riskHits} mentioned={mentioned} />}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
-            <span className="text-typo-caption-md-600 text-ms-gray-700">오늘 동선 단계 고르기</span>
-            <span className="text-typo-caption-md-400 text-ms-gray-600">
-              {isNew ? '첫 방문 — 기본은 「상담」' : '재내원 — 기본은 보유 시술권'}
-            </span>
-          </div>
+          <span className="text-typo-caption-md-600 text-ms-gray-700">오늘 동선 단계</span>
           {rows.map((r) => {
             const on = curSel.includes(r.key);
             return (
@@ -138,7 +109,7 @@ export function CheckInModal({
                   borderRadius: 8,
                   padding: '10px 12px',
                   display: 'grid',
-                  gridTemplateColumns: '18px minmax(0,1fr)',
+                  gridTemplateColumns: '18px minmax(0,1fr) auto',
                   gap: 10,
                   alignItems: 'center',
                   cursor: 'pointer',
@@ -164,14 +135,19 @@ export function CheckInModal({
                 </span>
                 <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
                   <span className="text-typo-body-500">{r.label}</span>
-                  <span className="text-typo-caption-md-400 text-ms-gray-600">{r.sub}</span>
+                  <span className="text-typo-caption-md-400 text-ms-gray-600" style={{ fontVariantNumeric: 'tabular-nums' }}>
+                    {r.sub}
+                  </span>
                 </div>
+                <span className="text-typo-caption-md-600 text-primary" style={{ whiteSpace: 'nowrap' }}>
+                  {on && r.bundle ? '1회' : ''}
+                </span>
               </div>
             );
           })}
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <span className="text-typo-caption-md-600 text-ms-gray-700">오늘 동선 (고른 순서)</span>
+          <span className="text-typo-caption-md-600 text-ms-gray-700">오늘 동선</span>
           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
             {picked.map((r, i) => (
               <span key={r.key} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -187,10 +163,6 @@ export function CheckInModal({
               </span>
             ))}
           </div>
-          {!picked.length && <span className="text-typo-caption-md-400 text-red">단계를 하나 이상 고르세요</span>}
-          <span className="text-typo-caption-md-400 text-ms-gray-500">
-            시술은 방 패널의 [시술 추가]로 나중에 붙일 수 있어요. 직원은 방을 눌러 단계마다 배정해요.
-          </span>
         </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, paddingTop: 4 }}>
           <Button variant="outlined" color="gray" onClick={onClose}>

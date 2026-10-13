@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { Badge } from '@medisolve-ai/medikit';
 import * as api from '@/lib/api';
 import { ROLE_COLOR, RTITLE, SSTATE, STATUS, boxKey, hhmm, roomName } from '@/lib/board';
+import { Badge, Button } from '@medisolve-ai/medikit';
 import { useLive, useNow, useSession } from '@/lib/hooks';
+import { clearSession } from '@/lib/session';
 import { fmtMinSec, pad } from '@/lib/time';
 import type { AssignedHome, AssignedItem, Role, RoundsHome, StaffAccount, StaffHome } from '@/lib/types';
 import { card, isForeign, natName } from './common';
@@ -67,7 +68,7 @@ export function StaffShell() {
   };
 
   if (h && isRounds(h)) {
-    // 손 필요 먼저, 그다음 경과 긴 순(시안)
+    // 확인 필요 먼저, 그다음 경과 긴 순(시안)
     const rows = [...h.patients].sort((a, b) => Number(!!b.need) - Number(!!a.need) || (a.since ?? 0) - (b.since ?? 0));
     defaultSel = rows[0]?.scheduleId ?? null;
     list = <RoundsList home={h} rows={rows} now={now} selId={wide ? routeSel ?? defaultSel : null} onSelect={select} />;
@@ -130,6 +131,17 @@ export function StaffShell() {
             <span className="text-typo-caption-md-400 text-ms-gray-600" style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
               {pad(d.getHours()) + ':' + pad(d.getMinutes())}
             </span>
+            <Button
+              variant="text"
+              color="gray"
+              size="sm"
+              onClick={() => {
+                clearSession();
+                router.replace('/login');
+              }}
+            >
+              로그아웃
+            </Button>
           </div>
         </header>
 
@@ -183,6 +195,8 @@ export function StaffShell() {
                 staffId={session.staffId}
                 frame={rounds ? 'rounds' : 'assigned'}
                 roleOf={roleOf}
+                accounts={accounts}
+                hideOrder={role === '상담사'}
                 now={now}
                 wide={wide}
                 width={w}
@@ -228,12 +242,12 @@ function AssignedList({
   const groups: { title: string; count: string; rows: AssignedItem[]; done: boolean; emptyText: string }[] = [
     {
       title: '다음',
-      count: home.next.length + '건 · 배정 순',
+      count: home.next.length + '건',
       rows: home.next,
       done: false,
-      emptyText: '배정된 일이 없어요 — 데스크가 배정하면 여기에 떠요',
+      emptyText: '배정된 일 없음',
     },
-    { title: '완료', count: home.done.length + '건', rows: home.done, done: true, emptyText: '오늘 끝낸 일이 없어요' },
+    { title: '완료', count: home.done.length + '건', rows: home.done, done: true, emptyText: '끝낸 일 없음' },
   ];
   return (
     <>
@@ -318,7 +332,7 @@ function AssignedList({
   );
 }
 
-// 순회형 — 지금 내원 고객 · 손 필요 · 오늘 시술
+// 순회형 — 지금 내원 고객 · 확인 필요 · 오늘 시술
 function RoundsList({
   home,
   rows,
@@ -342,7 +356,7 @@ function RoundsList({
           </span>
         </div>
         <span className="text-typo-caption-md-400 text-ms-gray-600">
-          손 필요 {home.summary.needNext + home.summary.needDischarge} · 손 필요 먼저, 그다음 경과 긴 순
+          확인 필요 {home.summary.needNext + home.summary.needDischarge}
         </span>
       </div>
       {rows.map((p) => {
@@ -386,7 +400,7 @@ function RoundsList({
                     className="bg-red-100 text-red text-typo-caption-md-600"
                     style={{ padding: '1px 6px', borderRadius: 4, whiteSpace: 'nowrap' }}
                   >
-                    손 필요 · {p.status?.label}
+                    확인 필요 · {p.status?.label}
                   </span>
                 )}
               </div>

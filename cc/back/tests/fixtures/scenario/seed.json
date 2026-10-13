@@ -18,7 +18,7 @@
    "reservation": {
     "startDateTime": "2026-10-09T01:00Z",
     "status": "RESERVED",
-    "reservationMemo": "**1시 전 아웃 희망**\n26.10.9/본사/리프팅/동행2명/데스크",
+    "reservationMemo": "**1시 전 아웃 희망**\n26.10.9/본사/리프팅/동행2명/데스크\n상담사A 지정 요청",
     "reservationGroupId": "g1",
     "funnel": {
      "funnel": {
@@ -173,6 +173,55 @@
       "tickets": [
        {
         "id": "t-c",
+        "status": "AVAILABLE"
+       }
+      ]
+     },
+     {
+      "title": "포텐자 펌핑팁",
+      "ticketGroupId": "grp-potenza",
+      "procedure": {
+       "name": "포텐자"
+      },
+      "tickets": [
+       {
+        "id": "pz-0",
+        "status": "USED"
+       },
+       {
+        "id": "pz-1",
+        "status": "USED"
+       },
+       {
+        "id": "pz-2",
+        "status": "USED"
+       },
+       {
+        "id": "pz-3",
+        "status": "AVAILABLE"
+       },
+       {
+        "id": "pz-4",
+        "status": "AVAILABLE"
+       },
+       {
+        "id": "pz-5",
+        "status": "AVAILABLE"
+       },
+       {
+        "id": "pz-6",
+        "status": "AVAILABLE"
+       },
+       {
+        "id": "pz-7",
+        "status": "AVAILABLE"
+       },
+       {
+        "id": "pz-8",
+        "status": "AVAILABLE"
+       },
+       {
+        "id": "pz-9",
         "status": "AVAILABLE"
        }
       ]

@@ -19,7 +19,7 @@ router = APIRouter(prefix="/api/desk", tags=["desk"])
 
 @router.post("/check-in")
 def check_in(body: CheckInBody, c: Ctr) -> dict:
-    return c.board.check_in(body.scheduleId, [s.model_dump() for s in body.steps])
+    return c.board.check_in(body.scheduleId, [s.model_dump(exclude_none=True) for s in body.steps])
 
 
 @router.post("/place")
@@ -49,7 +49,8 @@ def unassign(body: StepBody, c: Ctr) -> dict:
 
 @router.post("/add-procedures")
 def add_procedures(body: AddProceduresBody, c: Ctr) -> dict:
-    return c.board.add_procedures(body.scheduleId, [i.model_dump() for i in body.items])
+    items = [{"bundleId": b} for b in body.bundleIds] + [{"kind": "procedure", **i.model_dump()} for i in body.items]
+    return c.board.add_procedures(body.scheduleId, items)
 
 
 @router.post("/reorder")
@@ -60,6 +61,11 @@ def reorder(body: ReorderBody, c: Ctr) -> dict:
 @router.post("/payment-complete")
 def payment_complete(body: ScheduleBody, c: Ctr) -> dict:
     return c.board.payment_complete(body.scheduleId)
+
+
+@router.post("/no-show")
+def no_show(body: ScheduleBody, c: Ctr) -> dict:
+    return c.board.no_show(body.scheduleId)
 
 
 @router.post("/discharge")

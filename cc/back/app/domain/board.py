@@ -92,6 +92,11 @@ def status_of(d: State, c: dict) -> dict | None:
         return {"key": "consult" if prog["kind"] in CONSULT_KINDS else "treat", "label": prog["label"], "need": None}
     pending = [s for s in ss if s["state"] in PENDING]
     if not pending:
+        # 동선에 안 넣은 오늘 시술 후보(결제분)나 미결제가 남았으면 아직 데스크가 볼 차례(fix1). 보유 시술권만 남으면 귀가 대기
+        in_route = {s["kosSequence"] for s in ss if s.get("kosSequence") is not None}
+        today_left = [q for q in c.get("todayTaskSeqs") or [] if q not in in_route]
+        if today_left or (c.get("unpaidAmount") or 0) > 0:
+            return {"key": "wait", "label": "다음 단계 대기", "need": "next"}
         return {"key": "wait", "label": "귀가 대기", "need": "discharge"}
     nxt = pending[0]
     if nxt["state"] == "assigned":
@@ -166,6 +171,8 @@ def check_in(ctx: Ctx, schedule_id: str, items: list[dict]) -> Op:
             raise BadRequest("already_checked_in", "이미 접수한 고객이에요")
         if row["st"] == "canceled":
             raise BadRequest("reservation_canceled", "취소된 예약이에요")
+        if row["st"] == "noshow":
+            raise BadRequest("reservation_noshow", "노쇼 처리된 예약이에요")
         _check_items(d, schedule_id, items)
         d["customers"].append({
             "scheduleId": schedule_id, "name": row["name"], "isNew": row.get("isNew"),
@@ -302,7 +309,7 @@ def add_procedures(ctx: Ctx, schedule_id: str, items: list[dict]) -> Op:
     def op(d: State) -> None:
         c = find_customer(d, schedule_id)
         _require_here(c)
-        items_ = [{**it, "kind": "procedure"} for it in items]
+        items_ = [{**it, "kind": it.get("kind") or "procedure"} for it in items]
         if not items_:
             raise BadRequest("empty_items", "추가할 시술이 없어요")
         _check_items(d, schedule_id, items_)
@@ -374,22 +381,9 @@ def start(ctx: Ctx, staff_id: str, step_id: str) -> Op:
     return op
 
 
-def _tasks_to_items(tasks: list[dict]) -> list[dict]:
-    """상담사가 넣은 시술(KOS tasks[] 모양) → 동선 단계. 시술권 전이면 ticketId 없음 · 수납필요."""
-    items = []
-    for t in sorted(tasks or [], key=lambda t: t.get("sequence") or 0):
-        if t.get("type") == "ETCETERA":
-            items.append({"kind": "doctor_consult", "kosSequence": t.get("sequence"),
-                          "paymentRequired": bool(t.get("paymentRequired"))})
-        else:
-            ticket = ((t.get("procedureConfiguration") or {}).get("ticketConfiguration") or {}).get("ticketId") or None
-            items.append({"kind": "procedure", "label": t.get("title") or "", "kosSequence": t.get("sequence"),
-                          "ticketId": ticket, "paymentRequired": bool(t.get("paymentRequired"))})
-    return items
-
-
 def _apply_consultation_done(d: State, ctx: Ctx, c: dict, event: dict) -> None:
-    """상담 완료 이벤트 — 상담 기록 · 오더 메모 공개 · 상담사가 넣은 시술(수납필요)을 뒤에 붙임 · 미결제 금액."""
+    """상담 완료 이벤트(0.3.0 §0-b 2) — 오늘 상담 · 오더 메모 공개 · 미결제 금액. 결제 시술은 **동선에 붙이지 않는다**
+    (오늘 시술 후보로 — 데스크가 오더 메모를 보고 [시술 추가])."""
     c["consultApplied"] = True
     if not event:
         return
@@ -397,19 +391,10 @@ def _apply_consultation_done(d: State, ctx: Ctx, c: dict, event: dict) -> None:
     c["orderMemo"] = event.get("orderMemo")
     c["payment"] = event.get("payment")
     c["unpaidAmount"] = int(((event.get("payment") or {}).get("totalAmount")) or 0)
-    have = {s["kosSequence"] for s in steps_of(d, c["scheduleId"]) if s.get("kosSequence") is not None}
-    used = {s["ticketId"] for s in steps_of(d, c["scheduleId"]) if s.get("ticketId")}
-    last = max((s["order"] for s in steps_of(d, c["scheduleId"])), default=0)
-    added = []
-    for it in _tasks_to_items(event.get("tasks")):
-        if it["kosSequence"] in have or (it.get("ticketId") and it["ticketId"] in used):
-            continue
-        last += 1
-        step = _new_step(d, c["scheduleId"], last, it)
-        d["steps"].append(step)
-        added.append(step["label"])
-    detail = f"시술 {len(added)}개 추가(수납필요) · 미결제 {c['unpaidAmount']:,}원"
-    _log(d, ctx, "consultation-done", c["scheduleId"], detail=detail + (f" · {', '.join(added)}" if added else ""))
+    # 오늘 시술 후보(결제분) — 동선에 다 넣었는지 방 상태가 본다
+    c["todayTaskSeqs"] = [t.get("sequence") for t in event.get("tasks") or [] if t.get("type") != "ETCETERA"]
+    n = len(event.get("tasks") or [])
+    _log(d, ctx, "consultation-done", c["scheduleId"], detail=f"오늘 시술 후보 {n}개 · 미결제 {c['unpaidAmount']:,}원")
 
 
 def finish(ctx: Ctx, staff_id: str, step_id: str, events: dict | None = None) -> Op:
@@ -450,16 +435,17 @@ def finish(ctx: Ctx, staff_id: str, step_id: str, events: dict | None = None) ->
     return op
 
 
-def payment_complete(ctx: Ctx, schedule_id: str, event: dict | None) -> Op:
+def payment_complete(ctx: Ctx, schedule_id: str, events: dict | None) -> Op:
     """[결제 완료] — 수납필요 해제 · 미결제 0 · 시술권(ticketId) 연결 · 차트 「오늘 결제」 공개(SPEC 0.2.1 §0-a)."""
 
     def op(d: State) -> None:
         c = find_customer(d, schedule_id)
         _require_here(c)
         ss = steps_of(d, schedule_id)
-        if c.get("paid") or not (c.get("unpaidAmount") or any(s.get("paymentRequired") for s in ss)):
+        tasks = ((events or {}).get("consultationDone") or {}).get("tasks") or []
+        if c.get("paid") or not c.get("consultApplied") or not (c.get("unpaidAmount") or tasks):
             raise BadRequest("nothing_to_pay", "수납할 것이 없어요(상담 완료 전이거나 이미 결제 완료)")
-        by_seq = {str(k): v for k, v in ((event or {}).get("ticketIdsBySequence") or {}).items()}
+        by_seq = {str(k): v for k, v in (((events or {}).get("paymentDone") or {}).get("ticketIdsBySequence") or {}).items()}
         used = {s["ticketId"] for s in ss if s.get("ticketId")}
         linked = 0
         for s in ss:
@@ -474,6 +460,24 @@ def payment_complete(ctx: Ctx, schedule_id: str, event: dict | None) -> Op:
         ## ============kos api 연동 필요 ========================
         ## KOS 결제 조회 — 공식: getPurchaseSummariesByVisitor · getTicketBundlesQuery
         ## (결제는 KOS 에서 한다. 이 버튼 = 결제 결과 · 생긴 시술권 불러오기)
+        ## ======================================================
+
+    return op
+
+
+def no_show(ctx: Ctx, schedule_id: str) -> Op:
+    """노쇼(0.3.0 §0-b 4) — 접수 전 예약을 noshow 로."""
+
+    def op(d: State) -> None:
+        row = next((r for r in d["resv"] if r["scheduleId"] == schedule_id), None)
+        if row is None:
+            raise NotFound("reservation_not_found", f"예약 {schedule_id} 이 없어요")
+        if row["st"] != "booked":
+            raise BadRequest("not_booked", "접수 전 예약만 노쇼로 바꿀 수 있어요")
+        row["st"] = "noshow"
+        _log(d, ctx, "no-show", schedule_id)
+        ## ============kos api 연동 필요 ========================
+        ## 공개 없음 — KOS 요청(예약 상태 노쇼)
         ## ======================================================
 
     return op
@@ -503,4 +507,4 @@ def discharge(ctx: Ctx, schedule_id: str) -> Op:
 
 # 조작 함수 목록 — 시험이 「주석 수 = 조작 함수 수」를 센다
 OPERATIONS = (check_in, place, move_sleep, return_room, assign, unassign, add_procedures, reorder, start, finish,
-              payment_complete, discharge)
+              payment_complete, no_show, discharge)

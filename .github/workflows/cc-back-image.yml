@@ -3,6 +3,7 @@ name: cc-back-image
 
 on:
   push:
+    branches: [main]          # 배포는 main 에서만(DEC-003 D-06 보강, 2026-10-14)
     paths:
       - "cc/back/**"
       - ".github/workflows/cc-back-image.yml"

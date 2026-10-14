@@ -3,9 +3,6 @@
 고객 데모용 기능별 실험 모음. 기능 폴더 하나 = `front/`(Next.js) + `back/`(FastAPI) 한 쌍.
 
 ```text
-sts/
-├── front/
-└── back/
 cc/
 ├── front/
 └── back/

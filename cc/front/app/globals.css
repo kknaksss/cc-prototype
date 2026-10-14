@@ -1,0 +1,61 @@
+/* 시안 helmet 의 공통 스타일 */
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+a {
+  color: #2498bd;
+}
+a:hover {
+  color: #1d7f9e;
+}
+:where(.cc-btn) {
+  background: none;
+  border-width: 0;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.cc-input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 48px;
+  border-radius: 8px;
+  border: 1px solid #e3e3e3;
+  padding: 0 14px;
+  font: inherit;
+  font-size: 15px;
+  color: #3e3e3e;
+  background: #fff;
+  outline: none;
+}
+.cc-input:focus {
+  border-color: #2498bd;
+}
+.cc-room:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+.cc-free-room:hover {
+  border-color: var(--ms-primary);
+}
+.ip-pulse {
+  animation: ipPulse 1.6s ease-out infinite;
+}
+@keyframes ipPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(36, 152, 189, 0.45);
+  }
+  100% {
+    box-shadow: 0 0 0 18px rgba(36, 152, 189, 0);
+  }
+}
+.ip-spin {
+  animation: ipSpin 0.9s linear infinite;
+}
+@keyframes ipSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}

@@ -1,0 +1,21 @@
+{
+ "consultationDone": {
+  "consultation": {
+   "counselors": [
+    {
+     "id": "c1",
+     "name": "상담사A"
+    }
+   ],
+   "content": {
+    "text": "[상담내용]\n상담만 하심\n------\n"
+   }
+  },
+  "orderMemo": "",
+  "tasks": [],
+  "payment": {
+   "totalAmount": 0,
+   "items": []
+  }
+ }
+}

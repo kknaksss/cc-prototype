@@ -1,0 +1,38 @@
+# cc/back 이미지 — arm64 빌드 → GHCR (DEC-003 D-06). 태그 = 커밋 sha 만(latest · main 없음)
+name: cc-back-image
+
+on:
+  push:
+    branches: [main]          # 배포는 main 에서만(DEC-003 D-06 보강, 2026-10-14)
+    paths:
+      - "cc/back/**"
+      - ".github/workflows/cc-back-image.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: cc/back
+          file: cc/back/Dockerfile
+          platforms: linux/arm64
+          push: true
+          tags: ghcr.io/kknaksss/cc-prototype-back:${{ github.sha }}
+          cache-from: type=gha,scope=cc-back
+          cache-to: type=gha,mode=max,scope=cc-back

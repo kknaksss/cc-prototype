@@ -1,0 +1,115 @@
+{
+ "data": [
+  {
+   "id": "d1",
+   "name": "의사A",
+   "email": "d1@example.test",
+   "activate": true,
+   "roleTags": [
+    "DOCTOR"
+   ]
+  },
+  {
+   "id": "d2",
+   "name": "의사B",
+   "email": "d2@example.test",
+   "activate": true,
+   "roleTags": [
+    "ADMIN",
+    "DOCTOR"
+   ]
+  },
+  {
+   "id": "c1",
+   "name": "상담사A",
+   "email": "c1@example.test",
+   "activate": true,
+   "roleTags": [
+    "COUNSELOR"
+   ]
+  },
+  {
+   "id": "c2",
+   "name": "상담사B",
+   "email": "c2@example.test",
+   "activate": true,
+   "roleTags": [
+    "COUNSELOR"
+   ]
+  },
+  {
+   "id": "s1",
+   "name": "피부A",
+   "email": "s1@example.test",
+   "activate": true,
+   "roleTags": [
+    "SKINCARE"
+   ]
+  },
+  {
+   "id": "s2",
+   "name": "피부B",
+   "email": "s2@example.test",
+   "activate": true,
+   "roleTags": [
+    "SKINCARE"
+   ]
+  },
+  {
+   "id": "n1",
+   "name": "간호A",
+   "email": "n1@example.test",
+   "activate": true,
+   "roleTags": [
+    "NURSE"
+   ]
+  },
+  {
+   "id": "n2",
+   "name": "간호B",
+   "email": "n2@example.test",
+   "activate": true,
+   "roleTags": [
+    "NURSE"
+   ]
+  },
+  {
+   "id": "k1",
+   "name": "코디A",
+   "email": "k1@example.test",
+   "activate": true,
+   "roleTags": [
+    "CALL_COUNSELOR",
+    "COUNSELOR",
+    "COORDINATOR"
+   ]
+  },
+  {
+   "id": "k2",
+   "name": "코디B",
+   "email": "k2@example.test",
+   "activate": true,
+   "roleTags": [
+    "COORDINATOR"
+   ]
+  },
+  {
+   "id": "x1",
+   "name": "마취용",
+   "email": "x1@example.test",
+   "activate": true,
+   "roleTags": [
+    "DOCTOR"
+   ]
+  },
+  {
+   "id": "z1",
+   "name": "콜상담A",
+   "email": "z1@example.test",
+   "activate": true,
+   "roleTags": [
+    "CALL_COUNSELOR"
+   ]
+  }
+ ]
+}

@@ -1,0 +1,10 @@
+/* medikit 제품 오버라이드 추가 — Céramique (출처: THEDAYLABS-HOMEPAGE-FE/apps/ceramique/src/styles/theme.ts)
+   DS 원본 반영 요청: _ds_bundle.css 의 [data-product] 블록에 아래 항목 추가 */
+[data-product="ceramique"] {
+  --ms-primary: #2498bd;
+  --ms-primary-50: #e9f5f8;
+  --ms-primary-100: #e9f5f8;
+  --ms-primary-300: #d3f4fe;
+  --ms-primary-500: #b2e3f2;
+  --ms-primary-shadow: rgba(36, 152, 189, 0.1);
+}

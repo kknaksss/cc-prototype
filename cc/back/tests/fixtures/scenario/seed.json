@@ -1,0 +1,260 @@
+{
+ "date": "2026-10-09",
+ "staffIds": [
+  "d1",
+  "d2",
+  "c1",
+  "s1",
+  "s2",
+  "n1",
+  "n2",
+  "k1",
+  "k2",
+  "x1"
+ ],
+ "schedules": [
+  {
+   "id": "sch-1",
+   "reservation": {
+    "startDateTime": "2026-10-09T01:00Z",
+    "status": "RESERVED",
+    "reservationMemo": "**1시 전 아웃 희망**\n26.10.9/본사/리프팅/동행2명/데스크\n상담사A 지정 요청",
+    "reservationGroupId": "g1",
+    "funnel": {
+     "funnel": {
+      "name": "본사"
+     },
+     "funnelDetail": ""
+    }
+   },
+   "visitor": {
+    "id": "v1",
+    "name": "LIN MEI",
+    "isNew": true,
+    "nationality": "TW",
+    "gender": "FEMALE",
+    "dateOfBirth": "1990-05-01",
+    "memo": ""
+   },
+   "scenario": "S1",
+   "scriptFrom": "script-sch-1"
+  },
+  {
+   "id": "sch-2",
+   "reservation": {
+    "startDateTime": "2026-10-09T02:00Z",
+    "status": "RESERVED",
+    "reservationMemo": "재내원 · 리쥬란 이어서",
+    "reservationGroupId": "g1",
+    "funnel": {
+     "funnel": {
+      "name": "본사"
+     },
+     "funnelDetail": ""
+    }
+   },
+   "visitor": {
+    "id": "v2",
+    "name": "김서연",
+    "isNew": false,
+    "nationality": "KR",
+    "gender": "FEMALE",
+    "dateOfBirth": "1990-05-01",
+    "memo": "*영주권*"
+   },
+   "scenario": "S2",
+   "scriptFrom": "script-sch-2"
+  },
+  {
+   "id": "sch-3",
+   "reservation": {
+    "startDateTime": "2026-10-09T03:00Z",
+    "status": "CANCELED",
+    "reservationMemo": "",
+    "reservationGroupId": "g1",
+    "funnel": {
+     "funnel": {
+      "name": "본사"
+     },
+     "funnelDetail": ""
+    }
+   },
+   "visitor": {
+    "id": "v3",
+    "name": "WANG TING",
+    "isNew": true,
+    "nationality": "CN",
+    "gender": "FEMALE",
+    "dateOfBirth": "1990-05-01",
+    "memo": ""
+   },
+   "scenario": "S3",
+   "scriptFrom": "script-sch-3"
+  },
+  {
+   "id": "sch-4",
+   "reservation": {
+    "startDateTime": "2026-10-09T04:00Z",
+    "status": "RESERVED",
+    "reservationMemo": "26.10.9/본사/상담",
+    "reservationGroupId": "g1",
+    "funnel": {
+     "funnel": {
+      "name": "본사"
+     },
+     "funnelDetail": ""
+    }
+   },
+   "visitor": {
+    "id": "v4",
+    "name": "[TW] CHEN YU",
+    "isNew": true,
+    "nationality": "TW",
+    "gender": "FEMALE",
+    "dateOfBirth": "1990-05-01",
+    "memo": ""
+   },
+   "scenario": "S4",
+   "scriptFrom": "script-sch-4"
+  },
+  {
+   "id": "sch-5",
+   "reservation": {
+    "startDateTime": "2026-10-09T05:00Z",
+    "status": "RESERVED",
+    "reservationMemo": "",
+    "reservationGroupId": "g1",
+    "funnel": {
+     "funnel": {
+      "name": "본사"
+     },
+     "funnelDetail": ""
+    }
+   },
+   "visitor": {
+    "id": "v5",
+    "name": "[JP]SATO AOI",
+    "isNew": true,
+    "nationality": "JP",
+    "gender": "FEMALE",
+    "dateOfBirth": "1990-05-01",
+    "memo": ""
+   },
+   "scenario": "S5",
+   "scriptFrom": "script-sch-5"
+  }
+ ],
+ "ticketBundles": {
+  "v2": [
+   {
+    "purchaseId": "p0",
+    "ticketSets": [
+     {
+      "title": "리쥬란 힐러 2cc",
+      "procedure": {
+       "name": "리쥬란"
+      },
+      "tickets": [
+       {
+        "id": "t-a",
+        "status": "AVAILABLE"
+       },
+       {
+        "id": "t-b",
+        "status": "USED"
+       }
+      ]
+     },
+     {
+      "title": "주름보톡스(국산)",
+      "procedure": {
+       "name": "보톡스"
+      },
+      "tickets": [
+       {
+        "id": "t-c",
+        "status": "AVAILABLE"
+       }
+      ]
+     },
+     {
+      "title": "포텐자 펌핑팁",
+      "ticketGroupId": "grp-potenza",
+      "procedure": {
+       "name": "포텐자"
+      },
+      "tickets": [
+       {
+        "id": "pz-0",
+        "status": "USED"
+       },
+       {
+        "id": "pz-1",
+        "status": "USED"
+       },
+       {
+        "id": "pz-2",
+        "status": "USED"
+       },
+       {
+        "id": "pz-3",
+        "status": "AVAILABLE"
+       },
+       {
+        "id": "pz-4",
+        "status": "AVAILABLE"
+       },
+       {
+        "id": "pz-5",
+        "status": "AVAILABLE"
+       },
+       {
+        "id": "pz-6",
+        "status": "AVAILABLE"
+       },
+       {
+        "id": "pz-7",
+        "status": "AVAILABLE"
+       },
+       {
+        "id": "pz-8",
+        "status": "AVAILABLE"
+       },
+       {
+        "id": "pz-9",
+        "status": "AVAILABLE"
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ },
+ "pastSchedules": {
+  "v2": [
+   {
+    "date": "2026-09-20",
+    "consultations": [
+     {
+      "counselors": [
+       {
+        "id": "c1",
+        "name": "상담사A"
+       }
+      ],
+      "content": {
+       "text": "[상담내용]\n고민:\nH) 3월 울쎄라 하심\n----------\nOUT TIME : x\n1. 리쥬란 2cc"
+      }
+     }
+    ],
+    "orderMemo": "OUT TIME : x\n1. 리쥬란 힐러 2cc(얼전)\n2.",
+    "procedures": [
+     {
+      "title": "리쥬란 힐러 2cc"
+     }
+    ],
+    "synthetic": true
+   }
+  ]
+ }
+}

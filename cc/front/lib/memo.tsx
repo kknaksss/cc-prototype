@@ -36,18 +36,17 @@ export function todayBlocks(
   const out: MemoBlock[] = [];
   if (p.reservationMemo) out.push({ type: 'sec', title: opt.resvTitle ?? '예약 메모', sub: '', text: p.reservationMemo });
   const v = p.visits.find((x) => x.today);
-  if (v && !v.locked) {
-    if (v.consultation)
-      out.push({
-        type: 'sec',
-        title: '상담 내용',
-        sub: [v.counselors.length ? '· 상담사 ' + v.counselors.join(' · ') : '', opt.consultAt ? '· ' + opt.consultAt : '']
-          .filter(Boolean)
-          .join(' '),
-        text: v.consultation,
-      });
-    if (v.orderMemo && !opt.hideOrder) out.push({ type: 'sec', title: '오늘 오더', sub: '· 오더 메모', text: v.orderMemo });
-  }
+  // 상담 내용 — 잠금 중이어도 값이 있으면 그린다(잠금 중엔 데스크가 덧붙인 줄만 들어 있다 · SPEC-002 §5.1 D-33)
+  if (v && v.consultation)
+    out.push({
+      type: 'sec',
+      title: '상담 내용',
+      sub: [v.counselors.length ? '· 상담사 ' + v.counselors.join(' · ') : '', opt.consultAt ? '· ' + opt.consultAt : '']
+        .filter(Boolean)
+        .join(' '),
+      text: v.consultation,
+    });
+  if (v && !v.locked && v.orderMemo && !opt.hideOrder) out.push({ type: 'sec', title: '오늘 오더', sub: '· 오더 메모', text: v.orderMemo });
   if (v && v.assigneeMemos.length)
     out.push({ type: 'sec', title: '담당자 메모', sub: '', text: v.assigneeMemos.map((m) => m.label + ' — ' + m.memo).join('\n') });
   return out;
@@ -72,7 +71,7 @@ export function historyBlocks(p: PatientDetail): MemoBlock[] {
       if (v.assigneeMemos.length)
         out.push({ type: 'sec', title: '담당자 메모', sub: '', text: v.assigneeMemos.map((m) => m.label + ' — ' + m.memo).join('\n') });
     });
-  if (!out.length) out.push({ type: 'note', note: p.isNew ? '첫 방문' : '지난 방문 기록 없음' });
+  if (!out.length) out.push({ type: 'note', note: p.isNew ? '첫내원' : '지난 방문 기록 없음' });
   return out;
 }
 

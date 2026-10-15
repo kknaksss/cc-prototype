@@ -1,8 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { BOX, EMPTY, ROLE_COLOR, boxKey, capOf, custIn, roomName, staffRole } from '@/lib/board';
-import { fmtElapsed } from '@/lib/time';
+import { BOX, EMPTY, ROLE_COLOR, boxKey, capOf, custIn, elapsedCls, roomName, staffRole, stateLines } from '@/lib/board';
 import type { Board } from '@/lib/types';
 
 export interface Route {
@@ -21,6 +20,8 @@ interface Person {
   key: string;
   name: string;
   sub: string;
+  // 접수대기실 고객마다 현황 두 줄(SPEC-002 §5.5)
+  lines?: { t: string; cls: string }[];
   color: string;
   op: number;
   textCls: string;
@@ -50,11 +51,14 @@ export function FloorGrid({
   now,
   route,
   onOpen,
+  onOpenCustomer,
 }: {
   board: Board;
   now: number;
   route: Route | null;
   onOpen: (id: string) => void;
+  // 접수대기실 이름 → 그 고객의 고객 패널(SPEC-002 §5.2 D-27)
+  onOpenCustomer: (scheduleId: string) => void;
 }) {
   const gridRef = useRef<HTMLDivElement>(null);
   const [arrows, setArrows] = useState<Arrow[]>([]);
@@ -163,6 +167,7 @@ export function FloorGrid({
         const clickable = capOf(d.id) > 0 || d.id === 'reception';
         let cls = EMPTY;
         let timer = '';
+        let timerCls = 'text-typo-caption-md-500 text-ms-gray-700';
         let label = '';
         let labelCls = 'text-typo-caption-md-400 text-ms-gray-700';
         let people: Person[] = [];
@@ -170,13 +175,22 @@ export function FloorGrid({
           cls = cs.length ? BOX.wait : EMPTY;
           timer = '대기 ' + cs.length + '명';
           label = '접수한 고객';
-          people = cs.map((c) => customer(c.scheduleId, c.name, fmtElapsed(c.receptionAt ?? c.since, now)));
+          people = cs.map((c) => {
+            const sl = stateLines(c.status, c.since, now);
+            const p = customer(c.scheduleId, c.name);
+            return sl
+              ? { ...p, lines: [{ t: sl.state, cls: 'text-typo-caption-md-400 text-ms-gray-700' }, { t: sl.elapsed, cls: elapsedCls(sl.long, 'text-typo-caption-md-400 text-ms-gray-600') }] }
+              : p;
+          });
         } else if (cs.length) {
           const c = cs[0];
           cls = BOX[boxKey(c.status)];
-          timer = fmtElapsed(c.since, now);
-          label = c.status?.label ?? '';
-          if (c.status?.need) labelCls = 'text-typo-caption-md-600 text-red';
+          // 현황 두 줄(SPEC-002 §5.5) — 1줄 현재 상태(확인 필요면 빨강 그대로) · 2줄 경과 시간(오래 기다림 빨강)
+          const sl = stateLines(c.status, c.since, now);
+          timer = sl?.state ?? '';
+          if (c.status?.need) timerCls = 'text-typo-caption-md-600 text-red';
+          label = sl?.elapsed ?? '';
+          labelCls = elapsedCls(!!sl?.long, 'text-typo-caption-md-400 text-ms-gray-700');
           const color = (id: string | null) => ROLE_COLOR[staffRole(board, id) ?? ''] ?? ROLE_COLOR.고객;
           people = [
             ...cs.map((x) => customer(x.scheduleId, x.name)),
@@ -226,10 +240,7 @@ export function FloorGrid({
               <span className="text-typo-caption-md-600" style={{ display: 'block', whiteSpace: 'nowrap' }}>
                 {d.name}
               </span>
-              <span
-                className="text-typo-caption-md-500 text-ms-gray-700"
-                style={{ display: 'block', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}
-              >
+              <span className={timerCls} style={{ display: 'block', wordBreak: 'keep-all', fontVariantNumeric: 'tabular-nums' }}>
                 {timer}
               </span>
             </div>
@@ -240,6 +251,14 @@ export function FloorGrid({
               {people.map((p) => (
                 <span
                   key={p.key}
+                  onClick={
+                    d.id === 'reception'
+                      ? (e) => {
+                          e.stopPropagation();
+                          onOpenCustomer(p.key);
+                        }
+                      : undefined
+                  }
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -266,6 +285,11 @@ export function FloorGrid({
                   >
                     {p.sub}
                   </span>
+                  {p.lines?.map((l, i) => (
+                    <span key={i} className={l.cls} style={{ flexBasis: '100%', paddingLeft: 11, whiteSpace: 'normal', wordBreak: 'keep-all' }}>
+                      {l.t}
+                    </span>
+                  ))}
                 </span>
               ))}
             </div>

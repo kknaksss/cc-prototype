@@ -5,8 +5,12 @@
 - 오늘 결제분(상담 종료 이벤트의 시술): **동선에 붙이지 않고 후보로.** 같은 이름의 작업을 한 줄로 묶는다.
   [결제 완료] 전엔 수납필요, 뒤엔 결제 완료 이벤트의 시술권을 연결
 - 원장 상담(ETCETERA): 동선에 원장 상담이 이미 있으면 후보에서 뺀다
+- SPEC-002 §4(D-22): 보유 시술권 후보는 접수 전(접수 모달) · 상담 종료 뒤에만. 접수 뒤 상담 종료 전엔 없다.
+  묶음의 회차가 하나라도 동선에 있으면 그 묶음 통째로 뺀다
+- 보유 `n/m` 의 n 은 **완료된** 시술 단계가 쓴 회차만 빠진다(D-32 — 차감 = 시술 완료)
 """
 
+from app.domain import board as B
 from app.domain.errors import BadRequest
 
 DOCTOR_CONSULT = "doctor_consult"
@@ -48,11 +52,23 @@ def build(derived: dict, events: dict, cust: dict | None, steps: list[dict]) -> 
                                 "paymentRequired": bool(t.get("paymentRequired")) and not paid})
             out.append(_bundle(f"today:{title}", "procedure", title, members, len(ts), "today",
                                paymentRequired=bool(members) and any(m["paymentRequired"] for m in members)))
+    if cust and not cust.get("consultApplied"):
+        return out  # 접수 뒤 상담 종료 전 — 보유 시술권은 접수 모달에서 이미 골랐다
     for ts in derived.get("tickets") or []:
+        if used_tickets & set(ts["available"]):
+            continue  # 같은 묶음 회차가 동선에 있다 — 하루에 같은 시술권 두 번 안 씀
         members = [{"kind": "procedure", "label": ts["name"], "kosSequence": None, "ticketId": t, "paymentRequired": False}
-                   for t in ts["available"] if t not in used_tickets]
+                   for t in ts["available"]]
         out.append(_bundle(f"ticket:{ts['bundleId']}", "procedure", ts["name"], members, ts["total"], "ticket"))
     return out
+
+
+def holdings(derived: dict, steps: list[dict]) -> list[dict]:
+    """보유 시술권 `n/m` — 동선에 넣은 것과 상관없이 묶음 전부. n = AVAILABLE − 완료된 단계가 쓴 회차."""
+    done = B.ticket_used(steps)
+    return [{"bundleId": f"ticket:{ts['bundleId']}", "name": ts["name"],
+             "left": len([t for t in ts["available"] if t not in done]), "total": ts["total"]}
+            for ts in derived.get("tickets") or []]
 
 
 def public(bundles: list[dict]) -> list[dict]:

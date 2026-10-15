@@ -1,7 +1,7 @@
 // 현황판 v4 시안의 화면 계산(도면 · 직군 색 · 상태 색 · 단계 표시).
 // 상태를 바꾸는 계산(배정 · 시작 · 종료 · 귀가 …)과 고객 상태 문구는 back 이 한다 — 여기에는 읽기 계산만 둔다.
 import type { Board, BoardCustomer, CustomerStatus, Role, StepKind, StepState } from './types';
-import { pad } from './time';
+import { fmtElapsed, pad, toMs } from './time';
 
 export const ROLES: Role[] = ['의사', '상담사', '피부관리사', '간호사', '코디'];
 // 직군 점 색 — 의사 · 상담사 · 코디는 v3 그대로, 피부관리사 · 간호사 추가(시안 v4)
@@ -110,3 +110,30 @@ export function stepNum(state: StepState) {
 
 export const customerById = (board: Board, id: string | null): BoardCustomer | undefined =>
   board.customers.find((c) => c.scheduleId === id);
+
+// 현황 두 줄(SPEC-002 §5.5) — 1줄 현재 상태 · 2줄 경과 시간. 현황에 보이는 곳은 전부 이 함수를 쓴다.
+// 1줄: 대기 계열(reception · wait — 진행 중인 단계 없음) = back 상태 라벨 + 「 중」, 진행 계열 = 진행 중인 단계 이름(back 라벨)
+// 2줄: `<종류> N분 경과` — 종류 = back 상태 key(wait · reception → 대기 · consult → 상담 · treat → 시술).
+//      시간 = 지금 상태가 시작된 뒤(back `since` — 상태가 바뀌면 since = now), 형식 D-28
+// long: 대기 계열이고 30분 이상 → 2줄 빨강
+export const LONG_WAIT_MIN = 30;
+export function stateLines(
+  status: CustomerStatus | null,
+  since: number | null | undefined,
+  now: number,
+): { state: string; elapsed: string; long: boolean } | null {
+  if (!status) return null;
+  const waiting = status.key === 'wait' || status.key === 'reception';
+  const kind = status.key === 'consult' ? '상담' : status.key === 'treat' ? '시술' : '대기';
+  const t = fmtElapsed(since, now);
+  const at = toMs(since);
+  return {
+    state: waiting ? status.label + ' 중' : status.label,
+    // 1분 미만(fmtElapsed 「방금」)은 「<종류> 1분 미만」
+    elapsed: !t ? '' : t === '방금' ? kind + ' 1분 미만' : kind + ' ' + t + ' 경과',
+    long: waiting && at !== null && now - at >= LONG_WAIT_MIN * 60000,
+  };
+}
+// 2줄 글자 — 오래 기다림은 빨강
+export const elapsedCls = (long: boolean, base = 'text-typo-caption-md-500 text-ms-gray-700') =>
+  long ? 'text-typo-caption-md-600 text-red' : base;

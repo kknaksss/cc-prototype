@@ -11,10 +11,10 @@ import type { StaffAccount } from '@/lib/types';
 // 시연 카드 5장 — 데스크 · 의사 · 상담사 · 피부관리사 · 간호사(§7, 시안 r4). 시안 이름이 그날 근무에 없으면 그 직군 첫 사람
 const DEMO: { role: string; prefer: string; dest: string; suffix: string }[] = [
   { role: '데스크', prefer: '', dest: '현황판', suffix: '' },
-  { role: '의사', prefer: '우동진', dest: '내 일(배정형)', suffix: ' 원장' },
-  { role: '상담사', prefer: '황유진', dest: '내 일(배정형)', suffix: ' 상담사' },
-  { role: '피부관리사', prefer: '김태연', dest: '내 일(배정형)', suffix: ' 피부관리사' },
-  { role: '간호사', prefer: '양지은', dest: '지금 내원 고객(순회형)', suffix: ' 간호사' },
+  { role: '의사', prefer: '권태윤', dest: '내 일(배정형)', suffix: ' 원장' },
+  { role: '상담사', prefer: '류하린', dest: '내 일(배정형)', suffix: ' 상담사' },
+  { role: '피부관리사', prefer: '안건우', dest: '내 일(배정형)', suffix: ' 피부관리사' },
+  { role: '간호사', prefer: '유채원', dest: '지금 내원 고객(순회형)', suffix: ' 간호사' },
 ];
 
 export default function LoginPage() {

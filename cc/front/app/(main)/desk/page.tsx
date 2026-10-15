@@ -1,13 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { Button, Header, Menu } from '@medisolve-ai/medikit';
+import { Button, Menu } from '@medisolve-ai/medikit';
 import * as api from '@/lib/api';
 import { BOX, KEYS, ROLES, ROLE_COLOR, STATUS, hereCustomers } from '@/lib/board';
-import { useLive, useNow, useSession } from '@/lib/hooks';
-import { clearSession } from '@/lib/session';
+import { useLive, useNow, useSession, useWide } from '@/lib/hooks';
 import type { Board, BoardCustomer, Reservation } from '@/lib/types';
+import { HEADER_H } from '@/components/common/AppHeader';
 import { Aside, type TabId } from '@/components/desk/Aside';
 import { CheckInModal } from '@/components/desk/CheckInModal';
 import { FloorGrid, type Route } from '@/components/desk/FloorGrid';
@@ -51,18 +50,33 @@ function activeRoute(board: Board, tab: TabId, sel: string | null, selC: string 
 
 export default function DeskPage() {
   const session = useSession();
-  const router = useRouter();
   const live = useLive<Board>(session ? api.getBoard : null);
   const board = live.data;
   const now = useNow();
   const { toast, run, undo } = useDeskActions(live.reload);
 
+  // 폰(< 760px) = 도면 · 메뉴 사이드바 없이 Aside 만 폭 전체(SPEC-002 §2). 탭 · 데스크톱은 1차 그대로
+  const phone = !useWide();
   const [vw, setVw] = useState(1440);
   const [drawer, setDrawer] = useState(false);
   const [tab, setTab] = useState<TabId>('status');
   const [sel, setSel] = useState<string | null>(null);
   const [selC, setSelC] = useState<string | null>(null);
   const [rp, setRp] = useState<string | null>(null);
+  // 고객 패널(SPEC-002 §5.2 D-27 · D-29 · D-30) — 방이 아니라 고객으로 연다(접수대기실 고객 · 검색 · 현황 카드)
+  const [cp, setCp] = useState<string | null>(null);
+  const openRoom = (id: string) => {
+    setCp(null);
+    setRp(id);
+  };
+  const openCustomer = (scheduleId: string) => {
+    setRp(null);
+    setCp(scheduleId);
+  };
+  const closePanel = () => {
+    setRp(null);
+    setCp(null);
+  };
   const [ci, setCi] = useState<Reservation | null>(null);
   const [resetAsk, setResetAsk] = useState(false);
   const [rd, setRd] = useState<Reservation | null>(null);
@@ -74,10 +88,6 @@ export default function DeskPage() {
     window.addEventListener('resize', on);
     return () => window.removeEventListener('resize', on);
   }, []);
-
-  useEffect(() => {
-    if (session && session.frame !== 'desk') router.replace('/staff');
-  }, [session, router]);
 
   const selectTab = useCallback(
     (id: TabId) => {
@@ -98,13 +108,14 @@ export default function DeskPage() {
 
   if (!session) return null;
 
-  const narrow = vw < 1280;
+  const panelCust = cp && board ? (board.customers.find((c) => c.scheduleId === cp && c.location) ?? null) : null;
+  const narrow = !phone && vw < 1280;
   const open = narrow && drawer;
   const itemCount = board ? hereCustomers(board).length : 0;
 
   const doReset = async () => {
     setResetAsk(false);
-    setRp(null);
+    closePanel();
     setCi(null);
     setRd(null);
     setDc(null);
@@ -114,31 +125,16 @@ export default function DeskPage() {
   return (
     <div
       data-screen-label="실시간 현황판 v4"
-      style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--ms-gray-100, #f5f6f8)' }}
+      style={{ display: 'flex', flexDirection: 'column', height: `calc(100vh - ${HEADER_H}px)`, background: 'var(--ms-gray-100, #f5f6f8)' }}
     >
-      <Header
-        logo={
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src="/ceramique-logo-color.svg" alt="CÉRAMIQUE" style={{ height: 22, display: 'block' }} />
-        }
-        menus={MENUS}
-        currentPath={PATH}
-        onMenuClick={(_href: string, e: React.MouseEvent) => e?.preventDefault()}
-        branchName="세라미크 명동점"
-        userName="데스크"
-        onLogout={() => {
-          clearSession();
-          router.replace('/login');
-        }}
-      />
       <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
-        <Menu menus={MENUS} currentPath={PATH} onMenuClick={(_href: string, e: React.MouseEvent) => e?.preventDefault()} />
+        {!phone && <Menu menus={MENUS} currentPath={PATH} onMenuClick={(_href: string, e: React.MouseEvent) => e?.preventDefault()} />}
         <main
           style={{
             flex: 1,
             minWidth: 0,
             minHeight: 0,
-            padding: '20px 28px',
+            padding: phone ? '16px' : '20px 28px',
             display: 'flex',
             flexDirection: 'column',
             gap: 12,
@@ -193,26 +189,33 @@ export default function DeskPage() {
             </div>
           </div>
           <div style={{ display: 'flex', gap: 12, flex: 1, minHeight: 0 }}>
-            <div
-              className="bg-ms-white"
-              style={{
-                flex: 1,
-                minWidth: 0,
-                borderRadius: 12,
-                padding: 12,
-                display: 'flex',
-                overflow: 'auto',
-                boxShadow: '0px 2px 10px 0px rgba(0,0,0,0.04)',
-              }}
-            >
-              {board ? (
-                <FloorGrid board={board} now={now} route={activeRoute(board, tab, sel, selC)} onOpen={(id) => setRp(id)} />
-              ) : (
-                <span className="text-typo-body-400 text-ms-gray-500" style={{ padding: 12 }}>
-                  {live.error ?? '불러오는 중…'}
-                </span>
-              )}
-            </div>
+            {phone && !board && (
+              <span className="text-typo-body-400 text-ms-gray-500" style={{ padding: 12 }}>
+                {live.error ?? '불러오는 중…'}
+              </span>
+            )}
+            {!phone && (
+              <div
+                className="bg-ms-white"
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  borderRadius: 12,
+                  padding: 12,
+                  display: 'flex',
+                  overflow: 'auto',
+                  boxShadow: '0px 2px 10px 0px rgba(0,0,0,0.04)',
+                }}
+              >
+                {board ? (
+                  <FloorGrid board={board} now={now} route={activeRoute(board, tab, sel, selC)} onOpen={openRoom} onOpenCustomer={openCustomer} />
+                ) : (
+                  <span className="text-typo-body-400 text-ms-gray-500" style={{ padding: 12 }}>
+                    {live.error ?? '불러오는 중…'}
+                  </span>
+                )}
+              </div>
+            )}
             {open && (
               <div onClick={() => setDrawer(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.24)', zIndex: 40 }} />
             )}
@@ -232,11 +235,12 @@ export default function DeskPage() {
                   setSelC(id);
                   setDrawer(false);
                 }}
-                onOpenRoom={(id) => setRp(id)}
+                onOpenCustomer={openCustomer}
                 onCheckIn={(r) => setCi(r)}
                 onOpenResv={(r) => setRd(r)}
                 resvSel={rd?.scheduleId ?? null}
                 narrow={narrow}
+                full={phone}
                 open={open}
                 onClose={() => setDrawer(false)}
               />
@@ -258,6 +262,7 @@ export default function DeskPage() {
                 flexDirection: 'column',
                 gap: 10,
                 boxShadow: '0 6px 20px rgba(0,0,0,0.18)',
+                ...(phone && { right: 16, maxWidth: 'calc(100vw - 32px)', boxSizing: 'border-box' }),
               }}
             >
               <span className="text-typo-body-600 text-ms-gray-800">시드 상태로 초기화할까요?</span>
@@ -313,10 +318,10 @@ export default function DeskPage() {
               key={ci.scheduleId}
               resv={ci}
               onClose={() => setCi(null)}
-              onConfirm={(steps) => {
+              onConfirm={(steps, memo) => {
                 const t = ci;
                 setCi(null);
-                void run(() => api.checkIn(t.scheduleId, steps), t.name + ' 접수 · 접수대기실');
+                void run(() => api.checkIn(t.scheduleId, steps, memo), t.name + ' 접수 · 접수대기실');
               }}
             />
           )}
@@ -347,21 +352,23 @@ export default function DeskPage() {
               onConfirm={() => {
                 const t = dc;
                 setDc(null);
-                setRp(null);
+                closePanel();
                 void run(() => api.discharge(t.scheduleId), t.name + ' 귀가');
               }}
             />
           )}
 
           {/* 귀가 모달이 떠 있는 동안 방 패널은 숨긴다 — [취소] 하면 다시 보인다(시안) */}
-          {board && rp && !dc && (
+          {board && (rp || panelCust) && !dc && (
             <RoomPanel
-              key={rp}
+              key={panelCust ? 'c:' + panelCust.scheduleId : rp}
               board={board}
               now={now}
-              id={rp}
-              onClose={() => setRp(null)}
-              onSwitch={(id) => setRp(id)}
+              id={panelCust ? (panelCust.location as string) : (rp as string)}
+              focus={panelCust?.scheduleId}
+              onFocus={openCustomer}
+              onClose={closePanel}
+              onSwitch={openRoom}
               onDischarge={(c) => setDc(c)}
               run={run}
             />

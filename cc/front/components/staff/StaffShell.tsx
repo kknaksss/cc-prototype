@@ -3,18 +3,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import * as api from '@/lib/api';
-import { ROLE_COLOR, RTITLE, SSTATE, STATUS, boxKey, hhmm, roomName } from '@/lib/board';
-import { Badge, Button } from '@medisolve-ai/medikit';
+import { SSTATE, STATUS, boxKey, elapsedCls, hhmm, roomName, stateLines } from '@/lib/board';
+import { Badge } from '@medisolve-ai/medikit';
+import { HEADER_H } from '@/components/common/AppHeader';
 import { useLive, useNow, useSession } from '@/lib/hooks';
-import { clearSession } from '@/lib/session';
-import { fmtMinSec, pad } from '@/lib/time';
 import type { AssignedHome, AssignedItem, Role, RoundsHome, StaffAccount, StaffHome } from '@/lib/types';
-import { card, isForeign, natName } from './common';
+import { READING_CLS, card, isForeign, natName, readingOf } from './common';
 import { PatientView } from './PatientView';
 
 const isRounds = (h: StaffHome): h is RoundsHome => h.frame === 'rounds';
 
-// 직원 화면 틀 — 배정형(의사 · 상담사 · 피부관리사) / 순회형(코디 · 간호사).
+// 직원 화면 틀(머리는 공통 헤더 AppHeader) — 배정형(의사 · 상담사 · 피부관리사) / 순회형(코디 · 간호사).
 // 넓으면(≥760) 목록 + 상세 두 칸, 좁으면 /staff = 목록 · /staff/patient/[id] = 상세(시안 baseVals)
 export function StaffShell() {
   const session = useSession();
@@ -46,6 +45,7 @@ export function StaffShell() {
       .catch(() => undefined);
   }, []);
 
+  // 데스크 계정은 직원 홈이 없다 — /staff 를 직접 열면 /desk 로(SPEC-002 §1, 남기는 가드)
   useEffect(() => {
     if (session && session.frame === 'desk') router.replace('/desk');
   }, [session, router]);
@@ -81,70 +81,24 @@ export function StaffShell() {
   const selId = routeSel ?? (wide ? defaultSel : null);
   const showList = wide || !routeSel;
   const showDetail = wide || !!routeSel;
-  const d = new Date(now);
 
   return (
     <div
       data-screen-label={rounds ? '직원 · 순회형' : '직원 · 배정형'}
-      style={{ minHeight: '100vh', display: 'flex', justifyContent: 'center', background: '#e9ecef' }}
+      style={{ minHeight: `calc(100vh - ${HEADER_H}px)`, display: 'flex', justifyContent: 'center', background: '#e9ecef' }}
     >
       <div
         ref={wrapRef}
         className="bg-ms-gray-100"
         style={{
           width: '100%',
-          minHeight: '100vh',
+          minHeight: `calc(100vh - ${HEADER_H}px)`,
           display: 'flex',
           flexDirection: 'column',
           boxShadow: '0 0 0 1px rgba(0,0,0,0.04)',
           position: 'relative',
         }}
       >
-        <header
-          className="bg-ms-white border-ms-gray-200"
-          style={{
-            position: 'sticky',
-            top: 0,
-            zIndex: 10,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 12,
-            padding: '12px 16px',
-            borderBottomWidth: 1,
-            borderBottomStyle: 'solid',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/ceramique-logo-color.svg" alt="CÉRAMIQUE" style={{ height: 16, display: 'block' }} />
-            <span className="bg-ms-gray-300" style={{ width: 1, height: 14 }} />
-            <span className="text-typo-caption-md-400 text-ms-gray-600" style={{ whiteSpace: 'nowrap' }}>
-              명동점
-            </span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ width: 8, height: 8, borderRadius: '50%', background: ROLE_COLOR[role] }} />
-            <span className="text-typo-body-600 text-ms-gray-800" style={{ whiteSpace: 'nowrap' }}>
-              {session.name} {RTITLE[role] ?? role}
-            </span>
-            <span className="text-typo-caption-md-400 text-ms-gray-600" style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
-              {pad(d.getHours()) + ':' + pad(d.getMinutes())}
-            </span>
-            <Button
-              variant="text"
-              color="gray"
-              size="sm"
-              onClick={() => {
-                clearSession();
-                router.replace('/login');
-              }}
-            >
-              로그아웃
-            </Button>
-          </div>
-        </header>
-
         <div style={{ flex: 1, display: 'flex', flexDirection: wide ? 'row' : 'column', gap: 16, padding: 16, alignItems: 'flex-start' }}>
           <section
             style={{
@@ -238,6 +192,7 @@ function AssignedList({
   onSelect: (id: string) => void;
 }) {
   const cur = home.current;
+  const curLines = cur ? stateLines(cur.status, cur.startedAt, now) : null;
   const groups: { title: string; count: string; rows: AssignedItem[]; done: boolean; emptyText: string }[] = [
     {
       title: '다음',
@@ -260,16 +215,20 @@ function AssignedList({
             <span className="text-typo-caption-md-500" style={{ opacity: 0.9 }}>
               지금 진행 중
             </span>
-            <span className="text-typo-body-600" style={{ fontVariantNumeric: 'tabular-nums' }}>
-              {fmtMinSec(cur.startedAt, now)}
-            </span>
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
             <span className="text-typo-title-sm-600">{roomName(cur.location)}</span>
-            <span className="text-typo-body-500">
-              {cur.name} · {cur.label}
-            </span>
+            <span className="text-typo-body-500">{cur.name}</span>
           </div>
+          {/* 현황 두 줄(SPEC-002 §5.5) — 현재 상태 / 경과 시간. 배정형 줄에는 since 가 없어 진행 시작(startedAt)이 상태 시작이다 */}
+          {curLines && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <span className="text-typo-body-600">{curLines.state}</span>
+              <span className="text-typo-caption-md-500" style={{ opacity: 0.9, fontVariantNumeric: 'tabular-nums' }}>
+                {curLines.elapsed}
+              </span>
+            </div>
+          )}
         </div>
       ) : (
         <div className="bg-ms-white border-ms-gray-300" style={{ borderRadius: 12, padding: '14px 16px', borderWidth: 1, borderStyle: 'dashed' }}>
@@ -302,7 +261,9 @@ function AssignedList({
                     className={g.done ? 'text-typo-body-500 text-ms-gray-500' : 'text-typo-body-600 text-ms-gray-800'}
                     style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
                   >
-                    {x.name} <span className="text-typo-caption-md-400 text-ms-gray-600">{roomName(x.location)}</span>
+                    {x.name}
+                    {readingOf(x.nationality, x.phoneticName) && <span className={READING_CLS}> {readingOf(x.nationality, x.phoneticName)}</span>}{' '}
+                    <span className="text-typo-caption-md-400 text-ms-gray-600">{roomName(x.location)}</span>
                   </span>
                   <span
                     className="text-typo-caption-md-400 text-ms-gray-600"
@@ -360,6 +321,7 @@ function RoundsList({
       </div>
       {rows.map((p) => {
         const k = boxKey(p.status);
+        const sl = stateLines(p.status, p.since, now);
         const procs = p.procedures;
         return (
           <div
@@ -386,6 +348,11 @@ function RoundsList({
                 >
                   {p.name}
                 </span>
+                {readingOf(p.nationality, p.phoneticName) && (
+                  <span className={READING_CLS} style={{ whiteSpace: 'nowrap' }}>
+                    {readingOf(p.nationality, p.phoneticName)}
+                  </span>
+                )}
                 {isForeign(p.nationality) && (
                   <span
                     className="bg-ms-gray-200 text-typo-caption-md-500 text-ms-gray-700"
@@ -403,12 +370,18 @@ function RoundsList({
                   </span>
                 )}
               </div>
+              {/* 현황 두 줄(SPEC-002 §5.5) — 방 · 현재 상태 / 경과 시간(오래 기다림 빨강) */}
               <span className="text-typo-caption-md-400 text-ms-gray-600" style={{ overflowWrap: 'anywhere' }}>
                 <b className="text-primary" style={{ fontWeight: 600 }}>
                   {roomName(p.location)}
                 </b>{' '}
-                · {p.status?.label}
+                · {sl?.state}
               </span>
+              {sl && (
+                <span className={elapsedCls(sl.long, 'text-typo-caption-md-500 text-ms-gray-700')} style={{ fontVariantNumeric: 'tabular-nums' }}>
+                  {sl.elapsed}
+                </span>
+              )}
               <span className="text-typo-caption-md-400 text-ms-gray-700" style={{ overflowWrap: 'anywhere' }}>
                 오늘 시술 ·{' '}
                 {procs.length
@@ -422,9 +395,6 @@ function RoundsList({
               <Badge variant={STATUS[k].variant} size="sm" dot>
                 {STATUS[k].name}
               </Badge>
-              <span className="text-typo-caption-md-500 text-ms-gray-700" style={{ fontVariantNumeric: 'tabular-nums' }}>
-                {fmtMinSec(p.since, now)}
-              </span>
             </div>
           </div>
         );

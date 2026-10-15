@@ -39,8 +39,8 @@ class StaffService:
         return {
             "stepId": s["stepId"], "scheduleId": s["scheduleId"], "kind": s["kind"], "label": s["label"],
             "state": s["state"], "assignedAt": s["assignedAt"], "startedAt": s["startedAt"], "endedAt": s["endedAt"],
-            "name": c.get("name"), "nationality": c.get("nationality", ""), "isNew": c.get("isNew"),
-            "location": c.get("location"), "time": self._resv(d, s["scheduleId"]).get("time", ""),
+            "name": c.get("name"), **B.person_of(d, s["scheduleId"]), "nationality": c.get("nationality", ""),
+            "isNew": c.get("isNew"), "location": c.get("location"), "time": self._resv(d, s["scheduleId"]).get("time", ""),
             "status": B.status_of(d, c) if c else None, "unpaidAmount": c.get("unpaidAmount") or 0,
         }
 
@@ -59,7 +59,8 @@ class StaffService:
                 continue
             st = B.status_of(d, c)
             rows.append({
-                "scheduleId": c["scheduleId"], "name": c["name"], "nationality": c.get("nationality", ""),
+                "scheduleId": c["scheduleId"], "name": c["name"], **B.person_of(d, c["scheduleId"]),
+                "nationality": c.get("nationality", ""),
                 "isNew": c.get("isNew"), "location": c["location"], "prevRoom": c.get("prevRoom"),
                 "time": self._resv(d, c["scheduleId"]).get("time", ""), "status": st, "need": st["need"] if st else None,
                 "since": c["since"], "unpaidAmount": c.get("unpaidAmount") or 0,

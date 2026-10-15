@@ -6,23 +6,13 @@ export function toMs(v: TimeValue | null | undefined): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
 }
 
-// 현황판 시안 fmt — 시간이 넘으면 h:mm:ss
+// 경과 시간 — 모든 화면 한 형식(SPEC-002 §5.2 D-28): `N시간 M분` · 1시간 미만 `M분` · 1분 미만 `방금`
 export function fmtElapsed(since: TimeValue | null | undefined, now: number): string {
   const t = toMs(since);
   if (t === null) return '';
-  const s = Math.max(0, Math.floor((now - t) / 1000));
-  const hh = Math.floor(s / 3600);
-  const mm = Math.floor((s % 3600) / 60);
-  const ss = s % 60;
-  return hh ? hh + ':' + pad(mm) + ':' + pad(ss) : pad(mm) + ':' + pad(ss);
-}
-
-// 직원 시안 fmt — 분:초(분이 60을 넘어도 그대로)
-export function fmtMinSec(since: TimeValue | null | undefined, now: number): string {
-  const t = toMs(since);
-  if (t === null) return '';
-  const s = Math.max(0, Math.floor((now - t) / 1000));
-  return pad(Math.floor(s / 60)) + ':' + pad(s % 60);
+  const m = Math.floor(Math.max(0, now - t) / 60000);
+  if (m < 1) return '방금';
+  return m < 60 ? m + '분' : Math.floor(m / 60) + '시간 ' + (m % 60) + '분';
 }
 
 export function elapsedSec(since: TimeValue | null | undefined, now: number): number {

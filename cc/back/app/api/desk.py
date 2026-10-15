@@ -7,6 +7,7 @@ from app.schemas.requests import (
     AddProceduresBody,
     AssignBody,
     CheckInBody,
+    MemoBody,
     PlaceBody,
     ReorderBody,
     ScheduleBody,
@@ -19,7 +20,13 @@ router = APIRouter(prefix="/api/desk", tags=["desk"])
 
 @router.post("/check-in")
 def check_in(body: CheckInBody, c: Ctr) -> dict:
-    return c.board.check_in(body.scheduleId, [s.model_dump(exclude_none=True) for s in body.steps])
+    memo = body.memo.model_dump() if body.memo else None
+    return c.board.check_in(body.scheduleId, [s.model_dump(exclude_none=True) for s in body.steps], memo)
+
+
+@router.post("/memo")
+def memo(body: MemoBody, c: Ctr) -> dict:
+    return c.board.add_memo(body.scheduleId, body.category, body.text)
 
 
 @router.post("/place")

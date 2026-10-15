@@ -65,9 +65,11 @@ class PatientService:
             return out
 
         counselors = names(("consult",), "상담사")
+        adds = B.memo_adds(d, schedule_id)
         return {
             "scheduleId": schedule_id,
             "name": resv["name"],
+            **B.person_fields(resv),
             "nationality": v.get("nationality", ""),
             "sex": SEX.get(v.get("gender"), ""),
             "age": derived.get("age"),
@@ -89,12 +91,11 @@ class PatientService:
             "memoRevealed": revealed,
             # 메모 — 원문 그대로
             "customerMemo": v.get("memo") or None,
-            "reservationMemo": r.get("reservationMemo") or None,
-            "visits": memos.visits(doc, derived, cust, steps, self._today()),
+            "reservationMemo": memos.append(r.get("reservationMemo"), adds["reservation"]),
+            "visits": memos.visits(doc, derived, cust, steps, self._today(), adds["consultation"]),
             "chart": self._chart(r, derived, cust, steps),
             "route": self._route(d, steps),
-            "tickets": [{k: b[k] for k in ("bundleId", "name", "left", "total")}
-                        for b in self.candidates(schedule_id) if b["source"] == "ticket"],
+            "tickets": BD.holdings(derived, steps),
             "myActions": self._actions(steps, viewer),
         }
 
@@ -121,9 +122,7 @@ class PatientService:
             rows.append({"label": "유입", "value": funnel + (f" · {detail}" if detail else "")})
         if r.get("reservationGroupTitle"):
             rows.append({"label": "예약 그룹", "value": r["reservationGroupTitle"]})
-        used = {s["ticketId"] for s in steps if s.get("ticketId")}
-        held = [(t["name"], len([x for x in t["available"] if x not in used]), t["total"]) for t in derived.get("tickets") or []]
-        held = [h for h in held if h[1]]
+        held = [(h["name"], h["left"], h["total"]) for h in BD.holdings(derived, steps) if h["left"]]
         if held:
             rows.append({"label": "보유 시술권", "value": ", ".join(f"{n} {left}/{total}회" for n, left, total in held)})
         if cust and cust.get("paid"):

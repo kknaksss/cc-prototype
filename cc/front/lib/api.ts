@@ -2,9 +2,11 @@
 import type {
   Board,
   LoginResult,
+  MemoInput,
   MutationResult,
   PatientDetail,
   ProcedureCandidate,
+  ResvList,
   StaffAccount,
   StaffHome,
   StepInput,
@@ -60,8 +62,9 @@ export const getProcedureCandidates = (scheduleId: string) =>
 export const login = (staffId: string, password: string) => post<LoginResult>('/api/login', { staffId, password });
 
 // §5.3 데스크 조작 — 응답 {version}
-export const checkIn = (scheduleId: string, steps: StepInput[]) =>
-  post<MutationResult>('/api/desk/check-in', { scheduleId, steps });
+// memo(선택) = 추가 요청 — 그 카테고리 메모 끝에 덧붙인다(SPEC-002 §5.1)
+export const checkIn = (scheduleId: string, steps: StepInput[], memo?: MemoInput) =>
+  post<MutationResult>('/api/desk/check-in', memo ? { scheduleId, steps, memo } : { scheduleId, steps });
 export const place = (scheduleId: string, room: string) => post<MutationResult>('/api/desk/place', { scheduleId, room });
 export const moveSleep = (scheduleId: string, room: string) =>
   post<MutationResult>('/api/desk/move-sleep', { scheduleId, room });
@@ -84,6 +87,12 @@ export const paymentComplete = (scheduleId: string) =>
 // 공개 없음 — KOS 요청(예약 상태 노쇼)
 // ======================================================
 export const noShow = (scheduleId: string) => post<MutationResult>('/api/desk/no-show', { scheduleId });
+// 추가 요청 메모 — 빈 text 400
+// ============kos api 연동 필요 ========================
+// 공식 changeReservationMemo(예약 메모) · updateScheduleConsultationInfo(상담 메모)
+// ======================================================
+export const addMemo = (scheduleId: string, memo: MemoInput) =>
+  post<MutationResult>('/api/desk/memo', { scheduleId, ...memo });
 export const discharge = (scheduleId: string) => post<MutationResult>('/api/desk/discharge', { scheduleId });
 export const undo = (version: number) => post<MutationResult>('/api/desk/undo', { version });
 export const resetBoard = () => post<MutationResult>('/api/admin/reset', {});
@@ -93,6 +102,17 @@ export const startStep = (staffId: string, stepId: string) =>
   post<MutationResult>(`/api/staff/${encodeURIComponent(staffId)}/start`, { stepId });
 export const finishStep = (staffId: string, stepId: string) =>
   post<MutationResult>(`/api/staff/${encodeURIComponent(staffId)}/finish`, { stepId });
+
+// SPEC-002 §3.2 예약관리 — 응답 {version}, 갱신은 SSE 로 다시 읽기
+export const getReservations = () => request<ResvList>('/api/reservations');
+// 데모 전용(링키 연동 자리) — 가짜 풀에서 다음 고객으로 예약 요청 · 대상 줄에 수정 요청(대상 없으면 409)
+export const demoResvRequest = () => post<MutationResult>('/api/reservations/demo/request', {});
+export const demoResvModify = () => post<MutationResult>('/api/reservations/demo/modify', {});
+// [KOS 등록하기 · 수정하기] — kos api 연동 필요(back 주석: 등록 = 예약 생성 · 수정 = 예약 변경)
+export const registerResv = (id: number) => post<MutationResult>(`/api/reservations/${id}/register`, {});
+// [변경 요청하기] — 빈 사유는 400
+export const changeRequestResv = (id: number, reason: string) =>
+  post<MutationResult>(`/api/reservations/${id}/change-request`, { reason });
 
 // §5.2 SSE — `event: state` `data: {"version": n}`. 화면 안 구독자는 연결 하나를 같이 쓴다.
 // 끊기면 EventSource 가 알아서 다시 붙고, 붙을 때마다(open) 한 번 다시 읽는다(끊긴 사이 변경을 놓치지 않게)

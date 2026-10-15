@@ -153,13 +153,11 @@ def test_6_revisit_bundles_and_visits(client):
 
     check_in(client, "sch-2", [{"bundleId": "ticket:grp-potenza"}])
     assert [s["ticketId"] for s in customer(client, "sch-2")["steps"]] == ["pz-3"]
-    pz = next(c for c in ok(client.get("/api/patients/sch-2/procedure-candidates")) if c["bundleId"] == "ticket:grp-potenza")
-    assert (pz["left"], pz["total"]) == (6, 10)  # 1회 차감
-    ok(client.post("/api/desk/add-procedures", json={"scheduleId": "sch-2", "bundleIds": ["ticket:grp-potenza", "ticket:p0-1"]}))
-    assert [s["ticketId"] for s in customer(client, "sch-2")["steps"]] == ["pz-3", "pz-4", "t-c"]
-    err(client.post("/api/desk/add-procedures", json={"scheduleId": "sch-2", "bundleIds": ["ticket:p0-1"]}), "bundle_empty")
-    err(client.post("/api/desk/add-procedures", json={"scheduleId": "sch-2", "bundleIds": ["nope"]}), "unknown_bundle")
+    # SPEC-002 §4: 접수 뒤 상담 종료 전엔 보유 시술권 후보 없음 · 차감은 시술 완료 때(D-32)라 n/m 그대로
+    assert [c for c in ok(client.get("/api/patients/sch-2/procedure-candidates")) if c["source"] == "ticket"] == []
+    err(client.post("/api/desk/add-procedures", json={"scheduleId": "sch-2", "bundleIds": ["ticket:p0-1"]}), "unknown_bundle")
     after = ok(client.get("/api/patients/sch-2"))
+    assert next(t for t in after["tickets"] if t["bundleId"] == "ticket:grp-potenza")["left"] == 7
     assert [v["today"] for v in after["visits"]] == [True, False] and after["visits"][0]["locked"]  # 최근이 위
 
 

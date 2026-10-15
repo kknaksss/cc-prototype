@@ -3,10 +3,9 @@
 import { useCallback, useState } from 'react';
 import { Badge, Button } from '@medisolve-ai/medikit';
 import * as api from '@/lib/api';
-import { RTITLE, SSTATE, STATUS, boxKey, hhmm, roomName } from '@/lib/board';
+import { RTITLE, SSTATE, STATUS, boxKey, elapsedCls, hhmm, roomName, stateLines } from '@/lib/board';
 import { useLive } from '@/lib/hooks';
 import { Bundles, MemoList, historyBlocks, todayBlocks } from '@/lib/memo';
-import { fmtMinSec } from '@/lib/time';
 import type { PatientDetail, Role, StaffAccount } from '@/lib/types';
 import { PayChip } from '@/components/desk/RoomPanel';
 import { card, isForeign, natName } from './common';
@@ -80,9 +79,9 @@ export function PatientView({
   const mineStep = mine ? p.route.find((s) => s.stepId === mine.stepId) : undefined;
   const showInterp = p.nationality !== 'KR';
   const label = gone ? '귀가한 고객' : need ? '확인 필요 · ' + p.status?.label : '내원 중인 고객';
-  const timer = gone
-    ? clock(p.leaveTime) + ' 귀가'
-    : (p.status?.key === 'consult' || p.status?.key === 'treat' ? '진행 ' : '대기 ') + fmtMinSec(p.since, now);
+  const timer = gone ? clock(p.leaveTime) + ' 귀가' : '';
+  // 현황 두 줄(SPEC-002 §5.5) — 현재 상태 / 경과 시간(오래 기다림 빨강)
+  const sl = gone ? null : stateLines(p.status, p.since, now);
 
   const act = async () => {
     if (busy || !mine) return;
@@ -134,7 +133,7 @@ export function PatientView({
             )}
           </div>
           <span className="text-typo-body-400 text-ms-gray-600">
-            {[p.sex, p.age !== null ? p.age + '세' : '', p.isNew ? '첫 방문' : '재내원'].filter(Boolean).join(' · ')}
+            {[p.sex, p.age !== null ? p.age + '세' : '', p.isNew ? '첫내원' : '재내원'].filter(Boolean).join(' · ')}
           </span>
         </div>
 
@@ -163,9 +162,14 @@ export function PatientView({
               <b className="text-primary" style={{ fontWeight: 600 }}>
                 {gone || !p.location ? '-' : roomName(p.location)}
               </b>{' '}
-              · {gone ? '오늘 동선 끝' : p.status?.label}
+              · {gone ? '오늘 동선 끝' : sl?.state}
             </span>
           </div>
+          {sl && (
+            <span className={elapsedCls(sl.long, 'text-typo-caption-md-500 text-ms-gray-700')} style={{ fontVariantNumeric: 'tabular-nums' }}>
+              {sl.elapsed}
+            </span>
+          )}
           {staffLine && <span className="text-typo-caption-md-400 text-ms-gray-700">{staffLine}</span>}
         </div>
 

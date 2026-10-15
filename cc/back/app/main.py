@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.api import admin, board, desk, events, interpret, patients, staff
+from app.api import admin, board, desk, events, interpret, patients, reservations, staff
 from app.config import Settings, get_settings
 from app.container import Container, build_container
 from app.domain.errors import DomainError
@@ -41,7 +41,8 @@ def create_app(settings: Settings | None = None, container: Container | None = N
     async def http_error(_: Request, exc: StarletteHTTPException) -> JSONResponse:
         return _error(exc.status_code, "not_found" if exc.status_code == 404 else "http_error", str(exc.detail))
 
-    for r in (board.router, desk.router, staff.router, patients.router, admin.router, events.router, interpret.router):
+    for r in (board.router, desk.router, staff.router, patients.router, admin.router, events.router, interpret.router,
+              reservations.router):
         app.include_router(r)
 
     @app.get("/api/health")

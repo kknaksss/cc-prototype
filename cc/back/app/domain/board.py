@@ -24,6 +24,9 @@ KIND_LABEL = {"consult": "상담", "doctor_consult": "원장 상담"}
 # 단계 종류 → 배정할 수 있는 직군(§3.2)
 KIND_ROLES = {"consult": {"상담사"}, "doctor_consult": {"의사"}, "procedure": {"의사", "피부관리사"}}
 PENDING = ("planned", "assigned")
+# 추가 요청 메모 카테고리(SPEC-002 §5.1) — KOS 공개 API 로 쓸 수 있는 두 메모
+MEMO_CATEGORIES = ("reservation", "consultation")
+MEMO_LABEL = {"reservation": "예약 메모", "consultation": "상담 메모"}
 CONSULT_KINDS = ("consult", "doctor_consult")
 
 State = dict
@@ -75,6 +78,29 @@ def held_by(d: State, room: str) -> dict | None:
 
 def staff_name(d: State, staff_id: str | None) -> str:
     return next((s["name"] for s in d["staff"] if s["staffId"] == staff_id), "")
+
+
+def person_fields(row: dict | None) -> dict:
+    """고객이 나오는 응답 공통 칸(SPEC-002 §5.1) — 한글 읽기 · 전화(검색용) · VIP. 예전 상태(칸 없음)면 빈 값."""
+    row = row or {}
+    return {"phoneticName": row.get("phoneticName"), "phone": row.get("phone"), "vip": bool(row.get("vip"))}
+
+
+def person_of(d: State, schedule_id: str) -> dict:
+    """그 일정 고객의 공통 칸 — 정본은 예약 줄(resv, 시드가 싣는다)."""
+    return person_fields(next((r for r in d["resv"] if r["scheduleId"] == schedule_id), None))
+
+
+def memo_adds(d: State, schedule_id: str) -> dict[str, list[str]]:
+    """데스크가 덧붙인 메모 줄(SPEC-002 §5.1) — {reservation: [...], consultation: [...]}."""
+    row = next((r for r in d["resv"] if r["scheduleId"] == schedule_id), None) or {}
+    adds = row.get("memoAdds") or {}
+    return {k: list(adds.get(k) or []) for k in MEMO_CATEGORIES}
+
+
+def ticket_used(steps: list[dict]) -> set[str]:
+    """사용 처리된 시술권 = **완료된** 시술 단계의 ticketId(D-32). 동선에 넣기만 한 것은 차감 전."""
+    return {s["ticketId"] for s in steps if s.get("ticketId") and s["state"] == "done"}
 
 
 # ── 방 · 고객 상태(§5.1) ─────────────────────────────────────────────
@@ -154,6 +180,22 @@ def _check_items(d: State, schedule_id: str, items: list[dict]) -> None:
             used.add(t)
 
 
+def _check_memo(memo: dict) -> tuple[str, str]:
+    category, text = memo.get("category"), (memo.get("text") or "").strip()
+    if category not in MEMO_CATEGORIES:
+        raise BadRequest("bad_memo_category", f"메모 카테고리는 {', '.join(MEMO_CATEGORIES)} 중 하나예요")
+    if not text:
+        raise BadRequest("empty_memo", "메모 내용을 적어 주세요")
+    return category, text
+
+
+def _append_memo(d: State, ctx: Ctx, row: dict, category: str, text: str) -> None:
+    """그 고객 오늘 예약 메모 / 상담 메모 끝에 덧붙인다. 예약 줄(resv)에 두므로 상담 완료 이벤트가 상담 메모를 채워도 남는다."""
+    adds = row.setdefault("memoAdds", {})
+    adds.setdefault(category, []).append(text)
+    _log(d, ctx, "memo", row["scheduleId"], detail=f"{MEMO_LABEL[category]} · {text}")
+
+
 def _require_here(c: dict) -> None:
     if not is_here(c):
         raise BadRequest("customer_not_here", "접수 중인 고객이 아니에요(귀가했거나 접수 전)")
@@ -162,7 +204,7 @@ def _require_here(c: dict) -> None:
 # ── 조작(§5.3) — 각 함수가 KOS 반영 자리 ───────────────────────────────
 
 
-def check_in(ctx: Ctx, schedule_id: str, items: list[dict]) -> Op:
+def check_in(ctx: Ctx, schedule_id: str, items: list[dict], memo: dict | None = None) -> Op:
     def op(d: State) -> None:
         row = next((r for r in d["resv"] if r["scheduleId"] == schedule_id), None)
         if row is None:
@@ -174,6 +216,7 @@ def check_in(ctx: Ctx, schedule_id: str, items: list[dict]) -> Op:
         if row["st"] == "noshow":
             raise BadRequest("reservation_noshow", "노쇼 처리된 예약이에요")
         _check_items(d, schedule_id, items)
+        note = _check_memo(memo) if memo is not None else None
         d["customers"].append({
             "scheduleId": schedule_id, "name": row["name"], "isNew": row.get("isNew"),
             "nationality": row.get("nationality", ""), "location": RECEPTION, "prevRoom": None,
@@ -189,6 +232,12 @@ def check_in(ctx: Ctx, schedule_id: str, items: list[dict]) -> Op:
         ## ============kos api 연동 필요 ========================
         ## 공식: changeFlowStep(RECEPTION)
         ## ======================================================
+        if note:
+            _append_memo(d, ctx, row, *note)
+            ## ============kos api 연동 필요 ========================
+            ## 공식: changeReservationMemo(예약 메모) | updateScheduleConsultationInfo(상담 메모)
+            ## — 원문 + 덧붙인 줄 전체를 쓴다
+            ## ======================================================
 
     return op
 
@@ -424,11 +473,39 @@ def finish(ctx: Ctx, staff_id: str, step_id: str, events: dict | None = None) ->
             ## 비공식: schedule/flow/v1/commands/change-tasks-complete {scheduleId, sequences[], complete:true}
             ## — KOS 화면 「시술 완료하기」, 시술권 차감 미확인. 다음 단계가 없으면 공식 changeFlowStep(PROCEDURE_DONE)
             ## ======================================================
-            pass
+            if s.get("ticketId"):
+                # 시술권 차감 = 이 순간(D-32) — 관제는 ticket_used() 가 완료 단계로 센다
+                ## ============kos api 연동 필요 ========================
+                ## 시술권 차감(ticketId 사용 처리): 공개 없음 · 내부 미확인 — KOS 요청
+                ## ======================================================
+                pass
         else:
             ## ============kos api 연동 필요 ========================
             ## 공식: updateScheduleConsultationInfo(차티 기록 → 상담 메모)
             ## 원장 상담 끝이면 공식 changeFlowStep(PROCEDURE_WAITING)
+            ## ======================================================
+            pass
+
+    return op
+
+
+def add_memo(ctx: Ctx, schedule_id: str, category: str, text: str) -> Op:
+    """추가 요청 메모(SPEC-002 §5.1 · D-33) — 오늘 예약 메모 / 상담 메모 끝에 줄을 덧붙인다. 바로 보인다."""
+
+    def op(d: State) -> None:
+        row = next((r for r in d["resv"] if r["scheduleId"] == schedule_id), None)
+        if row is None:
+            raise NotFound("reservation_not_found", f"예약 {schedule_id} 이 없어요")
+        cat, note = _check_memo({"category": category, "text": text})
+        _append_memo(d, ctx, row, cat, note)
+        if cat == "reservation":
+            ## ============kos api 연동 필요 ========================
+            ## 공식: changeReservationMemo — 원문 + 덧붙인 줄 전체를 쓴다
+            ## ======================================================
+            pass
+        else:
+            ## ============kos api 연동 필요 ========================
+            ## 공식: updateScheduleConsultationInfo(consultationMemo) — 원문 + 덧붙인 줄 전체를 쓴다
             ## ======================================================
             pass
 
@@ -507,4 +584,4 @@ def discharge(ctx: Ctx, schedule_id: str) -> Op:
 
 # 조작 함수 목록 — 시험이 「주석 수 = 조작 함수 수」를 센다
 OPERATIONS = (check_in, place, move_sleep, return_room, assign, unassign, add_procedures, reorder, start, finish,
-              payment_complete, no_show, discharge)
+              payment_complete, no_show, discharge, add_memo)

@@ -34,7 +34,15 @@
     "nationality": "TW",
     "gender": "FEMALE",
     "dateOfBirth": "1990-05-01",
-    "memo": ""
+    "memo": "",
+    "phoneticName": "린메이",
+    "phone": "+886 900 000 001",
+    "categories": [
+     {
+      "name": "vip500",
+      "color": "CYAN"
+     }
+    ]
    },
    "scenario": "S1",
    "scriptFrom": "script-sch-1"
@@ -60,7 +68,10 @@
     "nationality": "KR",
     "gender": "FEMALE",
     "dateOfBirth": "1990-05-01",
-    "memo": "*영주권*"
+    "memo": "*영주권*",
+    "phoneticName": null,
+    "phone": "+82 10 0000 0002",
+    "categories": []
    },
    "scenario": "S2",
    "scriptFrom": "script-sch-2"

@@ -24,9 +24,23 @@ class ProcedureItem(BaseModel):
     label: str = Field(min_length=1)
 
 
+MemoCategory = Literal["reservation", "consultation"]
+
+
+class MemoItem(BaseModel):
+    """추가 요청 메모(SPEC-002 §5.1) — 빈 text 는 도메인이 400(empty_memo)."""
+    category: MemoCategory
+    text: str
+
+
 class CheckInBody(BaseModel):
     scheduleId: str
     steps: list[StepItem] = []
+    memo: MemoItem | None = None  # 선택 — 주면 /api/desk/memo 와 같은 처리
+
+
+class MemoBody(MemoItem):
+    scheduleId: str
 
 
 class PlaceBody(BaseModel):
@@ -66,3 +80,8 @@ class UndoBody(BaseModel):
 class LoginBody(BaseModel):
     staffId: str
     password: str | None = None  # 시안대로 받기만 하고 검증하지 않는다(D-26)
+
+
+class ChangeRequestBody(BaseModel):
+    """예약 변경 요청(SPEC-002 §3.2) — 빈 사유는 서비스가 400 으로 막는다."""
+    reason: str

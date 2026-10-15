@@ -34,7 +34,7 @@ def customer_view(d: dict, c: dict) -> dict:
     view = {k: c.get(k) for k in CUSTOMER_FIELDS}
     view["unpaidAmount"] = view["unpaidAmount"] or 0
     view["paid"] = bool(view["paid"])
-    return {**view, "status": B.status_of(d, c),
+    return {**view, **B.person_of(d, c["scheduleId"]), "status": B.status_of(d, c),
             "steps": [step_view(d, s) for s in B.steps_of(d, c["scheduleId"])]}
 
 
@@ -46,6 +46,7 @@ def staff_work(d: dict, staff_id: str) -> list[dict]:
     for s in mine:
         c = next((x for x in d["customers"] if x["scheduleId"] == s["scheduleId"]), {})
         out.append({"stepId": s["stepId"], "scheduleId": s["scheduleId"], "customerName": c.get("name"),
+                    **B.person_of(d, s["scheduleId"]),
                     "location": c.get("location"), "kind": s["kind"], "label": s["label"], "state": s["state"]})
     return out
 
@@ -57,6 +58,11 @@ class BoardService:
         self.seed_path = seed_path
         self.clock = clock
         self._lock = threading.RLock()
+
+    @property
+    def lock(self) -> threading.RLock:
+        """version 을 올리는 다른 서비스(예약관리)도 이 잠금 하나로 줄 세운다."""
+        return self._lock
 
     # ── 읽기 ──
     def version(self) -> int:
@@ -75,7 +81,8 @@ class BoardService:
             "corridors": CORRIDORS,
             "customers": [customer_view(d, c) for c in d["customers"]],
             "staff": [{**s, "work": staff_work(d, s["staffId"])} for s in d["staff"]],
-            "resv": [{k: v for k, v in r.items() if k not in ("procedure", "doctor")} for r in d["resv"]],
+            "resv": [{**{k: v for k, v in r.items() if k not in ("procedure", "doctor", "memoAdds")}, **B.person_fields(r)}
+                     for r in d["resv"]],
             "version": version,
             "now": self.clock(),
         }
@@ -101,10 +108,13 @@ class BoardService:
         cust = next((c for c in d["customers"] if c["scheduleId"] == schedule_id), None)
         return BD.resolve(requests, BD.build(derived, events, cust, B.steps_of(d, schedule_id)))
 
-    def check_in(self, schedule_id: str, steps: list[dict]) -> dict:
+    def check_in(self, schedule_id: str, steps: list[dict], memo: dict | None = None) -> dict:
         with self._lock:
             items = self._resolve(schedule_id, steps)
-            return self._run(lambda ctx: B.check_in(ctx, schedule_id, items))
+            return self._run(lambda ctx: B.check_in(ctx, schedule_id, items, memo))
+
+    def add_memo(self, schedule_id: str, category: str, text: str) -> dict:
+        return self._run(lambda ctx: B.add_memo(ctx, schedule_id, category, text))
 
     def place(self, schedule_id: str, room: str) -> dict:
         return self._run(lambda ctx: B.place(ctx, schedule_id, room))

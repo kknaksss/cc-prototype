@@ -101,6 +101,13 @@ def staff_roles(accounts: list[dict], seed: dict, events: dict[str, dict]) -> tu
     return staff, notes
 
 
+def person(v: dict) -> dict:
+    """한글 읽기 · 전화 · VIP(SPEC-002 §5.1) — 시나리오 visitor 의 가짜 값. VIP = categories 중 이름이 `vip` 로 시작."""
+    cats = v.get("categories") or []
+    return {"phoneticName": v.get("phoneticName") or None, "phone": v.get("phone") or None,
+            "vip": any(str(c.get("name") or "").lower().startswith("vip") for c in cats)}
+
+
 def _age(dob: str | None, day: date) -> int | None:
     if not dob:
         return None
@@ -144,7 +151,8 @@ def build_seed(seed: dict, events: dict[str, dict], accounts: list[dict]) -> tup
         v = doc.setdefault("visitor", {})
         v["name"] = display_name(v.get("name"))
         age = _age(v.get("dateOfBirth"), day)
-        for k in ("dateOfBirth", "phone", "chartNumber", "phoneticName"):  # 응답에 내보내지 않는 칸(나이는 계산값만)
+        who = person(v)  # 예약 줄(상태)에 싣는다 — 응답은 거기서 읽는다
+        for k in ("dateOfBirth", "phone", "chartNumber", "phoneticName"):  # 참조 문서엔 두지 않는다(나이는 계산값만)
             v.pop(k, None)
         ref_schedule[sid] = doc
         vid = v.get("id")
@@ -163,6 +171,7 @@ def build_seed(seed: dict, events: dict[str, dict], accounts: list[dict]) -> tup
             "name": v.get("name", ""),
             "isNew": bool(v.get("isNew")),
             "nationality": v.get("nationality", ""),
+            **who,
             "st": "canceled" if r.get("status") == "CANCELED" else "booked",
         })
     missing = sorted(set(events) - set(ref_schedule))

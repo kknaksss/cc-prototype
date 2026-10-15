@@ -13,18 +13,20 @@ import {
   canPlace,
   capOf,
   custIn,
+  elapsedCls,
   hhmm,
   isSleep,
   pickCls,
   roomName,
+  stateLines,
   won,
 } from '@/lib/board';
-import { useLive } from '@/lib/hooks';
+import { useLive, useWide } from '@/lib/hooks';
 import { Bundles, MemoList, historyBlocks, todayBlocks } from '@/lib/memo';
 import { fmtElapsed } from '@/lib/time';
 import type { Board, BoardCustomer, MutationResult, PatientDetail, ProcedureCandidate, Step } from '@/lib/types';
-import { natName } from '@/components/staff/common';
-import { VisitChip } from './Aside';
+import { READING_CLS, natName, readingOf } from '@/components/staff/common';
+import { VipChip, VisitChip } from './Aside';
 
 type Run = (fn: () => Promise<MutationResult>, text: string | null) => Promise<boolean>;
 
@@ -47,6 +49,8 @@ export function RoomPanel({
   board,
   now,
   id,
+  focus,
+  onFocus,
   onClose,
   onSwitch,
   onDischarge,
@@ -55,6 +59,9 @@ export function RoomPanel({
   board: Board;
   now: number;
   id: string;
+  // 고객으로 연 패널(SPEC-002 §5.2 D-27) — 그 고객의 고객 패널. 접수대기실 고객도
+  focus?: string;
+  onFocus: (scheduleId: string) => void;
   onClose: () => void;
   onSwitch: (room: string) => void;
   onDischarge: (c: BoardCustomer) => void;
@@ -63,16 +70,19 @@ export function RoomPanel({
   const rn = (r: string | null) => roomName(r, board.rooms);
   const cs = custIn(board, id);
   const isLounge = id === 'reception';
-  const occ = !isLounge && cs.length > 0 ? cs[0] : null;
+  const occ = focus ? (cs.find((c) => c.scheduleId === focus) ?? null) : !isLounge && cs.length > 0 ? cs[0] : null;
   const k = occ ? boxKey(occ.status) : null;
+  // 폰(< 760px)에서는 84vw 가 Modal 여백(26px)과 합쳐 화면을 넘는다 — 폭만 맞춘다(SPEC-002 §2)
+  const phone = !useWide();
 
   return (
     <Modal isOpen onBackdropClick={onClose}>
       <div
         style={
           occ
-            ? // #30 — 고객 패널은 크기 고정(화면 비율), 두 열이 각자 스크롤
-              { width: '84vw', height: '85vh', display: 'flex', flexDirection: 'column', gap: 14, overflow: 'hidden' }
+            ? // #30 — 고객 패널은 크기 고정(화면 비율), 두 열이 각자 스크롤.
+              // SPEC-002 §5.3 — 왼쪽 열 약 520px 고정, 모달 폭을 그만큼 줄인다(오른쪽 메모 열 폭은 전과 같게: (84vw-16)/2.1)
+              { width: phone ? 'calc(100vw - 64px)' : 'min(84vw, calc(536px + (84vw - 16px) / 2.1))', height: '85vh', display: 'flex', flexDirection: 'column', gap: 14, overflow: 'hidden' }
             : {
                 width: 'min(560px, calc(100vw - 64px))',
                 maxHeight: 'min(880px, calc(100vh - 72px))',
@@ -91,9 +101,6 @@ export function RoomPanel({
                 {STATUS[k].name}
               </Badge>
             )}
-            <span className="text-typo-body-500 text-ms-gray-700" style={{ fontVariantNumeric: 'tabular-nums' }}>
-              {occ ? fmtElapsed(occ.since, now) : ''}
-            </span>
           </div>
           <Button variant="text" color="gray" size="sm" onClick={onClose}>
             닫기
@@ -111,7 +118,7 @@ export function RoomPanel({
             onDischarge={onDischarge}
           />
         ) : isLounge ? (
-          <LoungePanel board={board} now={now} run={run} onClose={onClose} />
+          <LoungePanel board={board} now={now} onFocus={onFocus} />
         ) : (
           <PlacePanel board={board} now={now} id={id} run={run} />
         )}
@@ -143,6 +150,9 @@ function CustomerPanel({
   const [picking, setPicking] = useState<string | null>(null);
   const [cands, setCands] = useState<ProcedureCandidate[]>([]);
   const [sleep, setSleep] = useState(false);
+  const [placing, setPlacing] = useState(false);
+  // 폰 폭 맞춤 — 두 열을 위아래로, 동선 줄의 담당 · 상태는 이름 아래 줄로(내용 · 동작 그대로)
+  const phone = !useWide();
 
   // 오늘 시술 후보 — 동선 · 결제가 바뀔 때마다 다시
   useEffect(() => {
@@ -197,6 +207,11 @@ function CustomerPanel({
           ? '배정 ' + hhmm(s.assignedAt)
           : '';
   const sleepRooms = board.rooms.filter((r) => isSleep(r.id) && canPlace(board, r.id));
+  const reading = readingOf(c.nationality, c.phoneticName);
+  const sl = stateLines(c.status, c.since, now);
+  // [방 배정] — 접수대기실 고객만(D-27). 후보 = 1차 접수대기실 배치 목록과 같다
+  const lounge = c.location === 'reception';
+  const freeRooms = board.rooms.filter((r) => /^(c\d|t\d)/.test(r.id) && canPlace(board, r.id));
 
   return (
     <>
@@ -214,11 +229,21 @@ function CustomerPanel({
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <span className="text-typo-heading-md-500 text-ms-gray-800">{c.name}</span>
+          {reading && <span className={READING_CLS}>{reading}</span>}
           <VisitChip isNew={c.isNew} />
+          {c.vip && <VipChip />}
           <span className="text-typo-caption-md-400 text-ms-gray-600">{meta}</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <span className={need ? 'text-typo-body-600 text-red' : 'text-typo-body-500 text-ms-gray-800'}>{c.status?.label}</span>
+          {/* 현황 두 줄(SPEC-002 §5.5) — 현재 상태(확인 필요면 빨강) / 경과 시간(오래 기다림 빨강) */}
+          {sl && (
+            <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+              <span className={need ? 'text-typo-body-600 text-red' : 'text-typo-body-500 text-ms-gray-800'}>{sl.state}</span>
+              <span className={elapsedCls(sl.long)} style={{ fontVariantNumeric: 'tabular-nums' }}>
+                {sl.elapsed}
+              </span>
+            </span>
+          )}
           {c.prevRoom && <span className="text-typo-caption-md-500 text-primary">원래 방 {rn(c.prevRoom)}</span>}
         </div>
       </div>
@@ -228,8 +253,8 @@ function CustomerPanel({
           flex: 1,
           minHeight: 0,
           display: 'grid',
-          gridTemplateColumns: 'minmax(0,1.1fr) minmax(0,1fr)',
-          gridTemplateRows: 'minmax(0,1fr)',
+          gridTemplateColumns: phone ? 'minmax(0,1fr)' : 'minmax(0, min(520px, 55%)) minmax(0,1fr)',
+          gridTemplateRows: phone ? 'minmax(0,1fr) minmax(0,1fr)' : 'minmax(0,1fr)',
           gap: 16,
         }}
       >
@@ -260,7 +285,7 @@ function CustomerPanel({
                   style={{
                     position: 'relative',
                     display: 'grid',
-                    gridTemplateColumns: '22px minmax(0,1fr) auto',
+                    gridTemplateColumns: phone ? '22px minmax(0,1fr)' : '22px minmax(0,1fr) auto',
                     gap: 8,
                     alignItems: 'center',
                     padding: '8px 0',
@@ -288,7 +313,7 @@ function CustomerPanel({
                       {timeOf(s)}
                     </span>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, ...(phone && { gridColumn: 2 }) }}>
                     {locked ? (
                       <span style={{ width: 132, boxSizing: 'border-box', padding: '0 8px', display: 'flex', alignItems: 'center', gap: 6 }}>
                         {s.assigneeName && (
@@ -367,10 +392,10 @@ function CustomerPanel({
                       className="bg-ms-white border-ms-gray-300"
                       style={{
                         position: 'absolute',
-                        right: 62,
+                        right: phone ? 0 : 62,
                         top: 'calc(100% - 6px)',
                         zIndex: 30,
-                        width: 268,
+                        width: phone ? 'min(268px, 100%)' : 268,
                         maxHeight: 340,
                         overflow: 'auto',
                         borderRadius: 10,
@@ -491,8 +516,29 @@ function CustomerPanel({
           )}
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            {lounge && (
+              <Button
+                variant="outlined"
+                color="blue"
+                size="sm"
+                onClick={() => {
+                  setPlacing((v) => !v);
+                  setSleep(false);
+                }}
+              >
+                방 배정
+              </Button>
+            )}
             {!isSleep(c.location) && (
-              <Button variant="outlined" color="gray" size="sm" onClick={() => setSleep((v) => !v)}>
+              <Button
+                variant="outlined"
+                color="gray"
+                size="sm"
+                onClick={() => {
+                  setSleep((v) => !v);
+                  setPlacing(false);
+                }}
+              >
                 수면시술실로 이동
               </Button>
             )}
@@ -515,6 +561,41 @@ function CustomerPanel({
               </Button>
             </div>
           </div>
+
+          {placing && lounge && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(104px, 1fr))', gap: 6 }}>
+              {freeRooms.map((r) => (
+                <button
+                  key={r.id}
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    void run(() => api.place(c.scheduleId, r.id), c.name + ' → ' + r.name);
+                  }}
+                  className="cc-free-room bg-ms-white border-ms-gray-300 text-ms-gray-800"
+                  style={{
+                    borderWidth: 1,
+                    borderStyle: 'solid',
+                    borderRadius: 8,
+                    padding: '8px 10px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'flex-start',
+                    gap: 2,
+                    cursor: 'pointer',
+                    font: 'inherit',
+                    textAlign: 'left',
+                  }}
+                >
+                  <span className="text-typo-caption-md-600">{r.name}</span>
+                  <span className="text-typo-caption-md-400 text-ms-gray-600">
+                    {capOf(r.id) > 1 ? custIn(board, r.id).length + '/2명' : '비어있음'}
+                  </span>
+                </button>
+              ))}
+              {!freeRooms.length && <span className="text-typo-caption-md-400 text-ms-gray-600">빈 관리실 없음</span>}
+            </div>
+          )}
 
           {sleep && !isSleep(c.location) && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -556,7 +637,8 @@ function CustomerPanel({
   );
 }
 
-function PickOpt({
+// 고르기 목록 한 줄 — 담당 고르기 · 접수 모달 추가 요청 셀렉터(SPEC-002 §5.3)가 같이 쓴다
+export function PickOpt({
   name,
   on,
   onPick,
@@ -707,38 +789,47 @@ function PlacePanel({ board, now, id, run }: { board: Board; now: number; id: st
       <span className="text-typo-caption-md-600 text-ms-gray-700">
         {sleep ? '수면 시술 고객 넣기' : '접수대기실 고객 넣기'}
       </span>
-      {cands.map((c) => (
-        <div
-          key={c.scheduleId}
-          className="border-ms-gray-200"
-          style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', ...line }}
-        >
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-              <span className="text-typo-body-600 text-ms-gray-800">{c.name}</span>
-              <span className="text-typo-caption-md-400 text-ms-gray-600" style={{ fontVariantNumeric: 'tabular-nums' }}>
-                {c.location === 'reception'
-                  ? '접수대기실 ' + fmtElapsed(c.receptionAt ?? c.since, now)
-                  : roomName(c.location, board.rooms)}
-              </span>
-            </div>
-            <span className="text-typo-caption-md-400 text-ms-gray-700">{c.steps.map((s) => s.label).join(' → ')}</span>
-          </div>
-          <Button
-            variant="solid"
-            color="blue"
-            size="sm"
-            onClick={() =>
-              void run(
-                () => (sleep ? api.moveSleep(c.scheduleId, id) : api.place(c.scheduleId, id)),
-                c.name + ' → ' + roomName(id, board.rooms),
-              )
-            }
+      {cands.map((c) => {
+        const sl = stateLines(c.status, c.since, now);
+        return (
+          <div
+            key={c.scheduleId}
+            className="border-ms-gray-200"
+            style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', ...line }}
           >
-            넣기
-          </Button>
-        </div>
-      ))}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                <span className="text-typo-body-600 text-ms-gray-800">{c.name}</span>
+                <span className="text-typo-caption-md-400 text-ms-gray-600" style={{ fontVariantNumeric: 'tabular-nums' }}>
+                  {roomName(c.location, board.rooms)}
+                </span>
+              </div>
+              {sl && (
+                <span style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  <span className="text-typo-caption-md-400 text-ms-gray-700">{sl.state}</span>
+                  <span className={elapsedCls(sl.long, 'text-typo-caption-md-400 text-ms-gray-600')} style={{ fontVariantNumeric: 'tabular-nums' }}>
+                    {sl.elapsed}
+                  </span>
+                </span>
+              )}
+              <span className="text-typo-caption-md-400 text-ms-gray-700">{c.steps.map((s) => s.label).join(' → ')}</span>
+            </div>
+            <Button
+              variant="solid"
+              color="blue"
+              size="sm"
+              onClick={() =>
+                void run(
+                  () => (sleep ? api.moveSleep(c.scheduleId, id) : api.place(c.scheduleId, id)),
+                  c.name + ' → ' + roomName(id, board.rooms),
+                )
+              }
+            >
+              넣기
+            </Button>
+          </div>
+        );
+      })}
       {!cands.length && (
         <span className="text-typo-body-400 text-ms-gray-500" style={{ padding: '4px 0' }}>
           {away ? away.name + ' · 복귀 예정' : sleep ? '옮길 고객 없음' : '접수대기실 고객 없음'}
@@ -748,20 +839,20 @@ function PlacePanel({ board, now, id, run }: { board: Board; now: number; id: st
   );
 }
 
-function LoungePanel({ board, now, run, onClose }: { board: Board; now: number; run: Run; onClose: () => void }) {
-  const [pick, setPick] = useState<string | null>(null);
+// 접수대기실 — 이름을 누르면 그 고객의 고객 패널(SPEC-002 §5.2 D-27). 방 배정은 고객 패널의 [방 배정]
+function LoungePanel({ board, now, onFocus }: { board: Board; now: number; onFocus: (scheduleId: string) => void }) {
   const cs = custIn(board, 'reception');
-  const picked = cs.find((c) => c.scheduleId === pick);
-  const freeRooms = board.rooms.filter((r) => /^(c\d|t\d)/.test(r.id) && canPlace(board, r.id));
   return (
-    <>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <span className="text-typo-caption-md-600 text-ms-gray-700">접수한 고객</span>
-        {cs.map((c) => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <span className="text-typo-caption-md-600 text-ms-gray-700">접수한 고객</span>
+      {cs.map((c) => {
+        const reading = readingOf(c.nationality, c.phoneticName);
+        const sl = stateLines(c.status, c.since, now);
+        return (
           <div
             key={c.scheduleId}
-            onClick={() => setPick(c.scheduleId)}
-            className={pickCls(pick === c.scheduleId)}
+            onClick={() => onFocus(c.scheduleId)}
+            className={pickCls(false)}
             style={{
               borderWidth: 1,
               borderStyle: 'solid',
@@ -774,53 +865,25 @@ function LoungePanel({ board, now, run, onClose }: { board: Board; now: number; 
             }}
           >
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
-              <span className="text-typo-body-600 text-ms-gray-800">{c.name}</span>
-              <span className="text-typo-caption-md-500 text-ms-gray-700" style={{ fontVariantNumeric: 'tabular-nums' }}>
-                대기 {fmtElapsed(c.receptionAt ?? c.since, now)}
+              <span style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0, flexWrap: 'wrap' }}>
+                <span className="text-typo-body-600 text-ms-gray-800">{c.name}</span>
+                {reading && <span className={READING_CLS}>{reading}</span>}
               </span>
+              {sl && (
+                <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1, whiteSpace: 'nowrap' }}>
+                  <span className="text-typo-caption-md-400 text-ms-gray-700">{sl.state}</span>
+                  <span className={elapsedCls(sl.long)} style={{ fontVariantNumeric: 'tabular-nums' }}>
+                    {sl.elapsed}
+                  </span>
+                </span>
+              )}
             </div>
             <span className="text-typo-caption-md-400 text-ms-gray-700">{c.steps.map((s) => s.label).join(' → ')}</span>
           </div>
-        ))}
-        {!cs.length && <span className="text-typo-body-400 text-ms-gray-500">접수대기실 고객 없음</span>}
-      </div>
-      {picked && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <span className="text-typo-caption-md-600 text-ms-gray-700">{picked.name} 님 배정할 관리실</span>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(104px, 1fr))', gap: 6 }}>
-            {freeRooms.map((r) => (
-              <button
-                key={r.id}
-                type="button"
-                onClick={() => {
-                  onClose();
-                  void run(() => api.place(picked.scheduleId, r.id), picked.name + ' → ' + r.name);
-                }}
-                className="cc-free-room bg-ms-white border-ms-gray-300 text-ms-gray-800"
-                style={{
-                  borderWidth: 1,
-                  borderStyle: 'solid',
-                  borderRadius: 8,
-                  padding: '8px 10px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'flex-start',
-                  gap: 2,
-                  cursor: 'pointer',
-                  font: 'inherit',
-                  textAlign: 'left',
-                }}
-              >
-                <span className="text-typo-caption-md-600">{r.name}</span>
-                <span className="text-typo-caption-md-400 text-ms-gray-600">
-                  {capOf(r.id) > 1 ? custIn(board, r.id).length + '/2명' : '비어있음'}
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-    </>
+        );
+      })}
+      {!cs.length && <span className="text-typo-body-400 text-ms-gray-500">접수대기실 고객 없음</span>}
+    </div>
   );
 }
 

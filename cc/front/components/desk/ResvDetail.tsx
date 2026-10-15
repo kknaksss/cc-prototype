@@ -3,7 +3,7 @@
 import { useCallback } from 'react';
 import { Button, Modal } from '@medisolve-ai/medikit';
 import * as api from '@/lib/api';
-import { useLive } from '@/lib/hooks';
+import { useLive, useWide } from '@/lib/hooks';
 import { Bundles, MemoList, historyBlocks, todayBlocks } from '@/lib/memo';
 import type { Board, PatientDetail, Reservation } from '@/lib/types';
 import { natName } from '@/components/staff/common';
@@ -39,6 +39,8 @@ export function ResvDetail({
         ] as [string, string][]
       ).filter(([, v]) => v)
     : [];
+  // 폰(< 760px) 폭 맞춤 — 예약 · 히스토리 두 열을 위아래로(SPEC-002 §2)
+  const phone = !useWide();
   const memo = p ? todayBlocks({ ...p, visits: [] }, { resvTitle: '예약 메모' }) : [];
 
   return (
@@ -80,7 +82,7 @@ export function ResvDetail({
             </span>
           ))}
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 16, alignItems: 'start' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: phone ? 'minmax(0,1fr)' : 'minmax(0,1fr) minmax(0,1fr)', gap: 16, alignItems: 'start' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <span className="text-typo-caption-md-600 text-ms-gray-700">예약</span>
             <MemoList blocks={memo} />

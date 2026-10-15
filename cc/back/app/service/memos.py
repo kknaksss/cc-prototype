@@ -5,12 +5,19 @@
 """
 
 
+def append(text: str | None, lines: list[str]) -> str | None:
+    """원문 끝에 데스크가 덧붙인 줄(SPEC-002 §5.1). 둘 다 없으면 None."""
+    return "\n".join([x for x in [text or ""] if x] + lines) or None
+
+
 def _names(people: list[dict] | None) -> list[str]:
     return [p["name"] for p in people or [] if p.get("name")]
 
 
-def visits(doc: dict, derived: dict, cust: dict | None, steps: list[dict], today: str) -> list[dict]:
-    """방문 카드 — 방문(일정) 하나당 하나, 최근이 위. 오늘 카드는 접수 뒤에만 있고 상담 · 오더는 상담 종료 뒤에 열린다."""
+def visits(doc: dict, derived: dict, cust: dict | None, steps: list[dict], today: str,
+           consult_adds: list[str] | None = None) -> list[dict]:
+    """방문 카드 — 방문(일정) 하나당 하나, 최근이 위. 오늘 카드는 접수 뒤에만 있고 상담 · 오더는 상담 종료 뒤에 열린다.
+    데스크가 덧붙인 상담 메모 줄은 공개 시점 예외 — 잠겨 있어도 `consultation` 에 그 줄만 보인다(SPEC-002 §5.1)."""
     cards = []
     if cust:
         open_ = bool(cust.get("consultApplied"))
@@ -19,7 +26,7 @@ def visits(doc: dict, derived: dict, cust: dict | None, steps: list[dict], today
         cards.append({
             "date": today, "today": True, "locked": not open_,
             "counselors": _names(cons.get("counselors")) if open_ else [],
-            "consultation": (cons.get("content") or {}).get("text") if open_ else None,
+            "consultation": append((cons.get("content") or {}).get("text") if open_ else None, consult_adds or []),
             "orderMemo": cust.get("orderMemo") if open_ else None,
             "procedures": [s["label"] for s in done],
             "assigneeMemos": [{"label": s["label"], "memo": s["assigneeMemo"]} for s in done if s.get("assigneeMemo")],

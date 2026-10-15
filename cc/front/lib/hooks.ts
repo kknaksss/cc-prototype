@@ -5,6 +5,17 @@ import { useRouter } from 'next/navigation';
 import { subscribeState } from './api';
 import { parseSession, readSessionRaw, type Session } from './session';
 
+// 폰 · 탭 경계 760px(DEC-004 D-09) — 공통 헤더 햄버거 · 폰 현황판이 같은 기준을 쓴다. 서버 렌더는 넓은 쪽
+const WIDE = '(min-width: 760px)';
+const subscribeWide = (cb: () => void) => {
+  const mq = window.matchMedia(WIDE);
+  mq.addEventListener('change', cb);
+  return () => mq.removeEventListener('change', cb);
+};
+export function useWide(): boolean {
+  return useSyncExternalStore(subscribeWide, () => window.matchMedia(WIDE).matches, () => true);
+}
+
 // 1초마다 지금 시각 — 경과 타이머용
 export function useNow(intervalMs = 1000): number {
   const [now, setNow] = useState(() => Date.now());

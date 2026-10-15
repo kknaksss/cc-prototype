@@ -48,6 +48,10 @@ export interface Step {
 export interface BoardCustomer {
   scheduleId: string;
   name: string;
+  // SPEC-002 §5.1 — 한글 읽기 · 전화번호(검색에만, 화면에 안 보임) · VIP(categories 이름이 vip 로 시작)
+  phoneticName: string | null;
+  phone: string | null;
+  vip: boolean;
   isNew: boolean;
   nationality: string;
   location: string | null; // null · "reception"(접수대기실) · 방 id
@@ -87,6 +91,10 @@ export interface Reservation {
   scheduleId: string;
   time: string;
   name: string;
+  // SPEC-002 §5.1 — 한글 읽기 · 전화번호(검색에만, 화면에 안 보임) · VIP(categories 이름이 vip 로 시작)
+  phoneticName: string | null;
+  phone: string | null;
+  vip: boolean;
   isNew: boolean;
   nationality: string;
   st: ResvState;
@@ -146,6 +154,10 @@ export interface AssignedItem {
   startedAt: TimeValue | null;
   endedAt: TimeValue | null;
   name: string;
+  // SPEC-002 §5.1 — 한글 읽기 · 전화번호(검색에만, 화면에 안 보임) · VIP(categories 이름이 vip 로 시작)
+  phoneticName: string | null;
+  phone: string | null;
+  vip: boolean;
   nationality: string;
   isNew: boolean;
   location: string | null;
@@ -165,6 +177,10 @@ export interface AssignedHome {
 export interface RoundsPatient {
   scheduleId: string;
   name: string;
+  // SPEC-002 §5.1 — 한글 읽기 · 전화번호(검색에만, 화면에 안 보임) · VIP(categories 이름이 vip 로 시작)
+  phoneticName: string | null;
+  phone: string | null;
+  vip: boolean;
   nationality: string;
   isNew: boolean;
   location: string | null;
@@ -219,6 +235,10 @@ export interface TicketBundle {
 export interface PatientDetail {
   scheduleId: string;
   name: string;
+  // SPEC-002 §5.1 — 한글 읽기 · 전화번호(검색에만, 화면에 안 보임) · VIP(categories 이름이 vip 로 시작)
+  phoneticName: string | null;
+  phone: string | null;
+  vip: boolean;
   nationality: string;
   sex: string;
   age: number | null;
@@ -258,5 +278,80 @@ export interface ProcedureCandidate {
   paymentRequired?: boolean;
 }
 
+// 추가 요청 메모(SPEC-002 §5.1 D-33) — 오늘 예약 메모 / 상담 메모 끝에 덧붙인다
+export type MemoCategory = 'reservation' | 'consultation';
+export interface MemoInput {
+  category: MemoCategory;
+  text: string;
+}
+
 // 접수 단계 한 줄 — kind(상담 · 원장 상담 직접) 또는 bundleId(묶음의 다음 1장)
 export type StepInput = { kind: 'consult' | 'doctor_consult' } | { bundleId: string };
+
+// ── SPEC-002 §3.1 예약관리(데모) — 날짜 YYYY-MM-DD · 시각 HH:MM · 시점 epoch ms ──
+export type ResvStatus = 'requested' | 'confirmed' | 'change_requested' | 'modify_requested' | 'modified' | 'superseded';
+
+export interface ResvCustomer {
+  name: string;
+  reading: string;
+  chart: string;
+  nat: string;
+  natCode: string;
+  sex: string;
+  birth: string;
+  phone: string;
+  zone: string;
+  isNew: boolean;
+}
+
+// 등록/수정 때 남기는 「KOS 등록 화면」 값 — front 가 KOS 카드 모양으로 그린다
+export interface ResvSnapshot {
+  kind: 'register' | 'modify';
+  at: number;
+  name: string;
+  reading: string;
+  chart: string;
+  nat: string;
+  natCode: string;
+  sex: string;
+  isNew: boolean;
+  visitType: string;
+  birth: string;
+  phone: string;
+  lastVisit: string;
+  source: string;
+  date: string;
+  time: string;
+  endTime: string;
+  floor: string;
+  zone: string;
+  proc: string;
+  lang: string;
+  interpret: string;
+  memo: string;
+}
+
+export interface ResvRequest {
+  id: number;
+  groupId: number;
+  kind: 'request' | 'modify';
+  modifyReason: 'customer' | 'change_request' | null;
+  receivedAt: number;
+  customer: ResvCustomer;
+  date: string;
+  time: string;
+  proc: string;
+  lang: string;
+  before: { time?: string; date?: string } | null;
+  status: ResvStatus;
+  changeReason: string | null;
+  changeAt: number | null;
+  registeredAt: number | null;
+  snapshot: ResvSnapshot | null;
+}
+
+export interface ResvList {
+  rows: ResvRequest[]; // 최신 묶음이 위 · 묶음 안은 오래된 줄이 위
+  counts: { needCheck: number; changeRequested: number; confirmed: number; total: number }; // total = 묶음 수
+  version: number;
+}

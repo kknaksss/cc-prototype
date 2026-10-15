@@ -1,4 +1,4 @@
-"""초기화 — §4.2 · §5.4."""
+"""초기화 — §4.2 · §5.4. SPEC-002 §3.2: 예약관리 줄도 비운다."""
 
 from fastapi import APIRouter
 
@@ -9,4 +9,4 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 @router.post("/reset")
 def reset(c: Ctr) -> dict:
-    return c.board.reset()
+    return c.reservations.reset()

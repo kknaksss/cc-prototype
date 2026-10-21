@@ -1,0 +1,33 @@
+# procedure 로컬 한 줄 실행 — `cd procedure && docker compose up --build` → back 8700 · front 3700(SPEC-003 §2.2)
+# env = procedure/.env 하나(gitignore · .env.example 참고). 비어 있는 값은 back 기본값을 쓴다.
+# front 의 NEXT_PUBLIC_* 는 빌드 때 번들에 박힌다 → 런타임 env 가 아니라 build.args 로 넘긴다.
+services:
+  back:
+    build: ./back
+    ports:
+      - "8700:8700"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      PROC_DB_PATH: /data/procedure.db
+    volumes:
+      - procedure-data:/data
+      # APNs 키 파일 하나만 읽기 전용 — 호스트 경로는 procedure/.env 의 APNS_KEY_HOST_PATH(레포 · 이미지에 키 0).
+      # 컨테이너 안 경로 = APNS_KEY_PATH(/run/secrets/apns.p8). 비면 빈 자리(/dev/null)라 푸시는 꺼진 채
+      - ${APNS_KEY_HOST_PATH:-/dev/null}:/run/secrets/apns.p8:ro
+    restart: unless-stopped
+  front:
+    build:
+      context: ./front
+      args:
+        # 브라우저가 부르는 back 주소 — procedure/.env 의 값, 비면 로컬 back
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8700}
+    ports:
+      - "3700:3700"
+    depends_on:
+      - back
+    restart: unless-stopped
+
+volumes:
+  procedure-data:

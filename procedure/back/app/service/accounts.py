@@ -1,0 +1,72 @@
+"""계정 만들기(SPEC-004 §3.1) — admin · nurse 는 env 로 1행, doctor 는 원장 목록(SPEC-003 §4.6) 한 명당 1행.
+
+- env 값이 비면 그 계정 · 카드를 만들지 않는다(이미 있던 행은 비활성 — 아무도 못 들어오는 쪽이 기본)
+- 의사 카드 = `CCC_DOCTOR_KOS_ACCOUNT_ID` 원장 1명(login_id = `CCC_DOCTOR_ID`). 나머지 원장 = 내부 login_id · 카드 없음
+- 원장 목록에서 빠진 원장의 계정은 active=false(행은 남김)
+"""
+
+import logging
+
+from app.config import Settings
+from app.domain.clock import Clock
+from app.repository.repo import Repository, Tx
+
+log = logging.getLogger("procedure")
+
+LABELS = {"admin": "간호 스테이션 · 의국", "doctor": "원장", "nurse": "간호사"}
+
+
+def internal_doctor_login(staff_id: int) -> str:
+    return f"doctor-{staff_id}"
+
+
+class AccountService:
+    def __init__(self, repo: Repository, settings: Settings, clock: Clock):
+        self.repo = repo
+        self.s = settings
+        self.clock = clock
+
+    def sync(self) -> None:
+        with self.repo.tx() as tx:
+            self._fixed(tx, "admin", self.s.ccc_admin_id, "관리자")
+            self._fixed(tx, "nurse", self.s.ccc_nurse_id, self.s.ccc_nurse_name or "간호사")
+            self._doctors(tx)
+
+    def _fixed(self, tx: Tx, role: str, login_id: str, name: str) -> None:
+        now = self.clock.now()
+        for a in tx.accounts():  # 같은 역할의 다른(옛) 고정 계정은 비활성
+            if a.role == role and a.login_id != login_id and (a.active or a.card):
+                tx.update_account(a.id, now, active=False, card=False)
+        if login_id:
+            tx.put_account(login_id, now, role=role, name=name, staff_id=None, active=True, card=True)
+
+    def _doctors(self, tx: Tx) -> None:
+        now = self.clock.now()
+        staff = tx.staff_by_kos()
+        listed = {s.id: s for s in staff.values() if s.is_doctor}
+        card_staff = staff.get(self.s.ccc_doctor_kos_account_id) if self.s.ccc_doctor_kos_account_id else None
+        if self.s.ccc_doctor_kos_account_id and self.s.ccc_doctor_id and (card_staff is None or card_staff.id not in listed):
+            log.warning("의사 카드를 만들지 않음 — CCC_DOCTOR_KOS_ACCOUNT_ID 원장이 원장 목록에 없음"
+                        "(비활성 · 시스템 · 제외 · 미조회)")
+        card_id = card_staff.id if card_staff is not None and card_staff.id in listed and self.s.ccc_doctor_id else None
+        existing = {a.staff_id: a for a in tx.accounts() if a.role == "doctor" and a.staff_id is not None}
+        for a in existing.values():  # 원장 목록에서 빠짐 → 비활성(행은 남김)
+            if a.staff_id not in listed and (a.active or a.card):
+                tx.update_account(a.id, now, active=False, card=False)
+        for sid, s in listed.items():
+            is_card = sid == card_id
+            login_id = self.s.ccc_doctor_id if is_card else internal_doctor_login(sid)
+            holder = tx.account(login_id)
+            if holder is not None and holder.staff_id != sid:  # 그 login_id 를 다른 행이 들고 있으면 비킨다
+                tx.update_account(holder.id, now, login_id=f"retired-{holder.id}", active=False, card=False)
+            prev = existing.get(sid)
+            if prev is not None and prev.login_id != login_id:
+                tx.update_account(prev.id, now, login_id=login_id)
+            tx.put_account(login_id, now, role="doctor", name=s.name, staff_id=sid, active=True, card=is_card)
+
+    def cards(self) -> list[dict[str, str]]:
+        with self.repo.tx() as tx:
+            rows = [a for a in tx.accounts() if a.card and a.active]
+        order = {"admin": 0, "doctor": 1, "nurse": 2}
+        return [{"id": a.login_id, "name": a.name, "label": LABELS[a.role], "role": a.role}
+                for a in sorted(rows, key=lambda a: (order.get(a.role, 9), a.id))]

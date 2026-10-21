@@ -1,0 +1,135 @@
+/* 시안 helmet 의 공통 스타일 */
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+a {
+  color: #2498bd;
+}
+a:hover {
+  color: #1d7f9e;
+}
+:where(.cc-btn) {
+  background: none;
+  border-width: 0;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.cc-input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 48px;
+  border-radius: 8px;
+  border: 1px solid #e3e3e3;
+  padding: 0 14px;
+  font: inherit;
+  font-size: 15px;
+  color: #3e3e3e;
+  background: #fff;
+  outline: none;
+}
+.cc-input:focus {
+  border-color: #2498bd;
+}
+.cc-room:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+.cc-free-room:hover {
+  border-color: var(--ms-primary);
+}
+.ip-pulse {
+  animation: ipPulse 1.6s ease-out infinite;
+}
+@keyframes ipPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(36, 152, 189, 0.45);
+  }
+  100% {
+    box-shadow: 0 0 0 18px rgba(36, 152, 189, 0);
+  }
+}
+.ip-spin {
+  animation: ipSpin 0.9s linear infinite;
+}
+@keyframes ipSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+/* 예약관리 v1 시안 helmet — 데모 전용(주황 점선) · 사유 입력 · 새 줄 강조 */
+.rv-demo-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 8px;
+  border: 1px dashed #fd9400;
+  background: #fff;
+  color: #b35c00;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.rv-demo-btn:hover {
+  background: #fff4e0;
+}
+.rv-demo-btn[disabled] {
+  border-color: #d9d9d9;
+  color: #b4b4b4;
+  cursor: default;
+  background: #fafafa;
+}
+.rv-text {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 112px;
+  resize: vertical;
+  border-radius: 8px;
+  border: 1px solid #e3e3e3;
+  padding: 12px 14px;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.5;
+  color: #3e3e3e;
+  background: #fff;
+  outline: none;
+}
+.rv-text:focus {
+  border-color: #2498bd;
+}
+.rv-new {
+  animation: rvNew 1.6s ease-out 1;
+}
+@keyframes rvNew {
+  0% {
+    box-shadow: 0 0 0 3px rgba(36, 152, 189, 0.35);
+  }
+  100% {
+    box-shadow: 0 0 0 3px rgba(36, 152, 189, 0);
+  }
+}
+/* 접수 모달 추가 요청 메모(SPEC-002 §5.2 D-33) — cc-input 과 같은 테두리 */
+.cc-text {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 88px;
+  resize: vertical;
+  border-radius: 8px;
+  border: 1px solid #e3e3e3;
+  padding: 12px 14px;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.5;
+  color: #3e3e3e;
+  background: #fff;
+  outline: none;
+}
+.cc-text:focus {
+  border-color: #2498bd;
+}

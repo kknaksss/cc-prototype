@@ -1,0 +1,12 @@
+# 데이터 · 비밀 · 개발 산출물은 이미지에 넣지 않는다
+data/
+.env
+.env.*
+.venv/
+.pytest_cache/
+.ruff_cache/
+**/__pycache__/
+tests/
+# 키 파일은 어떤 경우에도 이미지에 넣지 않는다
+*.p8
+*.pem

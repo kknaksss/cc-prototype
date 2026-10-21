@@ -1,0 +1,8 @@
+{
+  "aps": {
+    "alert": { "title": "원장 호출", "body": "A-룸1 · 시술 2건 · 전체 호출" },
+    "sound": "default"
+  },
+  "visitId": 1,
+  "callId": 1
+}

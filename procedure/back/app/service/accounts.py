@@ -7,14 +7,13 @@
 
 import logging
 
+import bcrypt
+
 from app.config import Settings
 from app.domain.clock import Clock
 from app.repository.repo import Repository, Tx
 
 log = logging.getLogger("procedure")
-
-LABELS = {"admin": "간호 스테이션 · 의국", "doctor": "원장", "nurse": "간호사"}
-
 
 def internal_doctor_login(staff_id: int) -> str:
     return f"doctor-{staff_id}"
@@ -31,6 +30,30 @@ class AccountService:
             self._fixed(tx, "admin", self.s.ccc_admin_id, "관리자")
             self._fixed(tx, "nurse", self.s.ccc_nurse_id, self.s.ccc_nurse_name or "간호사")
             self._doctors(tx)
+            self._passwords(tx)
+
+    def _passwords(self, tx: Tx) -> None:
+        """비밀번호 원천 = env(OQ-601) → bcrypt 해시로 account 에.
+
+        어드민 · PoC 의사 · 간호사만 · 그 밖 계정은 해시 없음(로그인 불가).
+
+        env 값이 지금 해시와 맞으면 다시 만들지 않는다(서버 시작 · 1시간마다 sync 해도 해시가 그대로).
+        """
+        now = self.clock.now()
+        source = {"admin": (self.s.ccc_admin_id, self.s.ccc_admin_password),
+                  "nurse": (self.s.ccc_nurse_id, self.s.ccc_nurse_password),
+                  "doctor": (self.s.ccc_doctor_id, self.s.ccc_doctor_password)}
+        for a in tx.accounts():
+            login_id, password = source.get(a.role, ("", ""))
+            want = password if (a.login_id == login_id and login_id and a.active and a.card) else ""
+            if not want:
+                if a.password_hash is not None:
+                    tx.update_account(a.id, now, password_hash=None)
+                continue
+            if a.password_hash and bcrypt.checkpw(want.encode(), a.password_hash.encode()):
+                continue
+            hashed = bcrypt.hashpw(want.encode(), bcrypt.gensalt(rounds=self.s.proc_bcrypt_rounds)).decode()
+            tx.update_account(a.id, now, password_hash=hashed)
 
     def _fixed(self, tx: Tx, role: str, login_id: str, name: str) -> None:
         now = self.clock.now()
@@ -63,10 +86,3 @@ class AccountService:
             if prev is not None and prev.login_id != login_id:
                 tx.update_account(prev.id, now, login_id=login_id)
             tx.put_account(login_id, now, role="doctor", name=s.name, staff_id=sid, active=True, card=is_card)
-
-    def cards(self) -> list[dict[str, str]]:
-        with self.repo.tx() as tx:
-            rows = [a for a in tx.accounts() if a.card and a.active]
-        order = {"admin": 0, "doctor": 1, "nurse": 2}
-        return [{"id": a.login_id, "name": a.name, "label": LABELS[a.role], "role": a.role}
-                for a in sorted(rows, key=lambda a: (order.get(a.role, 9), a.id))]

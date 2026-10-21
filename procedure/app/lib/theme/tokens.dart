@@ -71,3 +71,11 @@ ThemeData ceramiqueTheme() {
     dividerColor: Ms.gray200,
   );
 }
+
+// 반응형 글자 배율(실기기 E2E T4) — 폰(짧은 변 < 600) = 1 · 태블릿 = 짧은 변 / 700(1.15 ~ 1.3).
+// 아이패드 11"(834) ≈ 1.19 · 13"(1032) = 1.3 · mini(744) = 1.15. Typo · 숫자 타이머 등 모든 Text 에 MediaQuery.textScaler 로 걸린다
+double uiScale(Size size) {
+  final short = size.shortestSide;
+  if (short < 600) return 1.0;
+  return (short / 700).clamp(1.15, 1.3);
+}

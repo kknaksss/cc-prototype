@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.main import create_app
 from app.service.auth import _b64, _unb64
-from tests.conftest import make_settings
+from tests.conftest import PW, make_settings
 from tests.helpers import T0, seed_staff, seed_visit
 
 IDS = {"admin": "admin1", "doctor": "doctor1", "nurse": "nurse1"}
@@ -26,7 +26,7 @@ def env(tmp_path):
 
 
 def login(client, role):
-    body = client.post("/api/auth/login", json={"id": IDS[role]}).json()
+    body = client.post("/api/auth/login", json={"id": IDS[role], "password": PW[role]}).json()
     return {"Authorization": f"Bearer {body['token']}"}, body
 
 
@@ -168,16 +168,22 @@ def test_token_claims_and_db_checks(env):
     assert c.auth.verify(ab["token"]).role == "admin"
 
 
-def test_login_response_and_cards(env):
+def test_login_response_and_password_accounts(env):
+    """OQ-601 — 비밀번호가 있는 계정(어드민 · PoC 의사 · 간호사)만 로그인 · 그 밖 원장은 해시 없음 → 401."""
     client, c, staff = env
-    cards = client.get("/api/auth/accounts").json()
-    assert [(x["role"], x["id"], x["label"]) for x in cards] == [
-        ("admin", IDS["admin"], "간호 스테이션 · 의국"), ("doctor", IDS["doctor"], "원장"), ("nurse", IDS["nurse"], "간호사")]
-    assert cards[2]["name"] == "간호 A" and cards[1]["name"] == "가 원장"
     _, body = login(client, "admin")
     assert set(body) == {"token", "expiresAt", "id", "role", "name", "staffId"} and body["staffId"] is None
-    # 카드가 아닌 내부 의사 계정으로는 로그인 못 함
-    assert client.post("/api/auth/login", json={"id": f"doctor-{staff['B']}"}).status_code == 401
+    assert login(client, "nurse")[1]["name"] == "간호 A" and login(client, "doctor")[1]["name"] == "가 원장"
+    with c.repo.tx() as tx:
+        hashed = {a.login_id: a.password_hash for a in tx.accounts()}
+    assert hashed[f"doctor-{staff['B']}"] is None and hashed[IDS["doctor"]].startswith("$2")  # bcrypt
+    assert PW["doctor"] not in json.dumps(hashed)  # 평문 0
+    r = client.post("/api/auth/login", json={"id": f"doctor-{staff['B']}", "password": ""})
+    assert (r.status_code, r.json()["error"]["code"]) == (401, "invalid_credentials")
+    assert client.get("/api/auth/accounts").status_code == 404  # 공개 계정 목록 제거
+    c.accounts.sync()  # env 가 같으면 해시를 다시 만들지 않는다
+    with c.repo.tx() as tx:
+        assert tx.account(IDS["doctor"]).password_hash == hashed[IDS["doctor"]]
 
 
 # ------------------------------------------------------------------ 계정(§3.1)
@@ -196,9 +202,9 @@ def test_doctor_rows_follow_doctor_list(env):
     assert b.active is False  # 행은 남김
 
 
-def test_no_env_no_cards(tmp_path):
-    with TestClient(create_app(make_settings(tmp_path, ccc_admin_id=""))) as client:
-        assert client.get("/api/auth/accounts").json() == []
+def test_no_env_no_login(tmp_path):
+    with TestClient(create_app(make_settings(tmp_path, ccc_admin_password=""))) as client:  # 비밀번호 env 가 비면 못 들어온다
+        assert client.post("/api/auth/login", json={"id": "tester", "password": ""}).status_code == 401
 
 
 def test_doctor_card_not_made_when_kos_account_not_listed(tmp_path):
@@ -207,7 +213,8 @@ def test_doctor_card_not_made_when_kos_account_not_listed(tmp_path):
         c = client.app.state.container
         seed_staff(c.repo)
         c.accounts.sync()
-        assert [x["role"] for x in client.get("/api/auth/accounts").json()] == ["admin"]
+        r = client.post("/api/auth/login", json={"id": "d", "password": PW["doctor"]})
+        assert r.status_code == 401  # 의사 계정(카드)이 없다
 
 
 # ------------------------------------------------------------------ actor(§3.5)

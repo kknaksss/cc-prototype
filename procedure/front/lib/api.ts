@@ -1,6 +1,6 @@
 // back 호출은 이 모듈에서만 한다(rules: 컴포넌트에서 직접 fetch 금지). 주소는 env 로만(SPEC-003 §2.3)
 import { readSession } from './session';
-import type { Account, CallTarget, LoginResult, Me } from './types';
+import type { CallTarget, LoginResult, Me } from './types';
 
 // NEXT_PUBLIC_* 는 Next 가 빌드(또는 dev 시작) 때 번들에 박는다 — 값은 둘 중 하나로 들어온다
 //   · compose / docker build: 빌드 인자 NEXT_PUBLIC_API_BASE_URL(Dockerfile ARG → ENV)
@@ -48,9 +48,8 @@ async function request<T>(path: string, init?: { method?: 'GET' | 'POST'; body?:
 
 const post = <T>(path: string, body?: unknown) => request<T>(path, { method: 'POST', body });
 
-// 로그인(SPEC-004 §3.3) — 계정 카드를 누르면 바로 로그인(비밀번호 없음). 웹은 admin 카드만 쓴다(§3.6)
-export const getAccounts = () => request<Account[]>('/api/auth/accounts');
-export const login = (id: string) => post<LoginResult>('/api/auth/login', { id });
+// 로그인 — 아이디 + 비밀번호(필수). 틀리면 401 invalid_credentials · 여러 번 틀리면 429(잠금)
+export const login = (id: string, password: string) => post<LoginResult>('/api/auth/login', { id, password });
 export const me = () => request<Me>('/api/auth/me');
 
 // §7.5 SSE — EventSource 는 헤더를 못 실어 ?token=

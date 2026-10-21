@@ -9,22 +9,13 @@ class _Req(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-# §7.1 로그인 — 계정 카드를 눌러 바로 로그인(1 · 2차 PoC 와 같음). 비밀번호는 받아도 검증하지 않는다
+# §7.1 로그인 — 아이디 + 비밀번호(OQ-601 닫음 · 정상 로그인)
 class LoginRequest(_Req):
     id: str
-    password: str | None = None
+    password: str
 
 
 Role = Literal["admin", "doctor", "nurse"]
-
-
-class Account(BaseModel):
-    """로그인 카드(SPEC-004 §3.3) — id = login_id."""
-
-    id: str
-    name: str
-    label: str
-    role: Role
 
 
 class LoginResponse(BaseModel):

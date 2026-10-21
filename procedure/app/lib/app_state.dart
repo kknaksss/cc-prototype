@@ -85,8 +85,9 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  Future<void> login(String id) async {
-    final s = await api.login(id);
+  Future<void> login(String id, String password) async {
+    final s = await api.login(id, password);
+    await store.writeLastId(id); // 아이디만 기억 — 비밀번호는 저장하지 않는다
     session = s;
     await store.write(s);
     _enter();

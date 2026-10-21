@@ -118,7 +118,8 @@ class BoardService:
                                     lastMinutes=r.last_anes_minutes(v), long=r.anes_long(v),
                                     canStart=not home and running is None, canEnd=not home and running is not None),
             procedures=[self._proc(r, v, p) for p in r.ordered_procedures(v)],
-            canCall=not home and not all_done,
+            # T6: 호출할 수 있는(pickable) 시술이 1개 이상일 때만 — 기타 작업만 있는 카드는 [의사 호출] 꺼짐
+            canCall=not home and not all_done and any(r.pickable(v, p) for p in r.procedures(v)),
             canHome=not home and all_done,
             need=s.Need(why=need[0], since=iso(need[1]), limitMin=need[2]) if need else None,
             kos=s.KosState(status="failed" if failed else "pending" if pending else "ok", failed=failed),

@@ -1,38 +1,36 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { getAccounts, login } from '@/lib/api';
+import { Button } from '@medisolve-ai/medikit';
+import { ApiError, login } from '@/lib/api';
 import { HOME, writeSession } from '@/lib/session';
-import type { Account } from '@/lib/types';
 
-// 로그인 — 계정 카드를 누르면 바로 로그인(1 · 2차 PoC 시연 카드 모양 · 아이디/비밀번호 입력 없음).
-// 웹 = 간호 스테이션 · 의국 PC 용이라 back 목록 중 role=admin 카드만 보인다(SPEC-004 §3.6). 의사 · 간호사 카드는 앱 몫
+// 로그인 — 아이디 + 비밀번호(1차 cc 로그인 폼의 칸 · 버튼 모양). Enter 로 제출 · 실패는 빨간 한 줄
+const BAD = '아이디 또는 비밀번호가 맞지 않아요.';
+
 export default function LoginPage() {
   const router = useRouter();
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [loadErr, setLoadErr] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [toast, setToast] = useState('');
+  const [id, setId] = useState('');
+  const [pw, setPw] = useState('');
+  const [err, setErr] = useState('');
   const busy = useRef(false);
 
-  useEffect(() => {
-    getAccounts()
-      .then((list) => setAccounts(list.filter((a) => a.role === 'admin')))
-      .catch((e: Error) => setLoadErr(e.message))
-      .finally(() => setLoading(false));
-  }, []);
-
-  const enter = async (a: Account) => {
+  const submit = async () => {
     if (busy.current) return;
+    if (!id.trim() || !pw) {
+      setErr(BAD);
+      return;
+    }
     busy.current = true;
     try {
-      const r = await login(a.id);
+      const r = await login(id.trim(), pw);
       writeSession({ token: r.token, id: r.id, expiresAt: r.expiresAt, role: r.role, name: r.name });
       router.replace(HOME);
     } catch (e) {
-      setToast(e instanceof Error ? e.message : '로그인하지 못했어요');
-      setTimeout(() => setToast(''), 2400);
+      // 401 = 틀림 · 429 = 잠금(back 문구) · 그 밖(연결 · 설정) = back/front 문구
+      if (e instanceof ApiError && e.status === 401) setErr(BAD);
+      else setErr(e instanceof Error ? e.message : '로그인하지 못했어요');
     } finally {
       busy.current = false;
     }
@@ -73,71 +71,52 @@ export default function LoginPage() {
             <img src="/ceramique-logo-color.svg" alt="CÉRAMIQUE" style={{ height: 20, display: 'block' }} />
             <span className="text-typo-caption-md-400 text-ms-gray-600">명동점</span>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <span className="text-typo-title-sm-600 text-ms-gray-800">로그인</span>
-            <span className="text-typo-body-400 text-ms-gray-600" style={{ wordBreak: 'keep-all' }}>
-              계정을 누르면 바로 시술 현황판이 열려요.
-            </span>
-          </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <span className="text-typo-caption-md-600 text-ms-gray-700">시연용 계정</span>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {accounts.map((a) => (
-                <button
-                  key={a.id}
-                  type="button"
-                  onClick={() => void enter(a)}
-                  className="cc-btn bg-ms-white border-ms-gray-300 hover:bg-primary-100 hover:border-primary"
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: '10px minmax(0,1fr) auto',
-                    gap: 10,
-                    alignItems: 'center',
-                    padding: '11px 12px',
-                    borderRadius: 8,
-                    borderWidth: 1,
-                    borderStyle: 'solid',
-                  }}
-                >
-                  <span className="bg-primary" style={{ width: 8, height: 8, borderRadius: '50%' }} />
-                  <span style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 }}>
-                    <span className="text-typo-body-600 text-ms-gray-800">{a.name}</span>
-                    <span className="text-typo-caption-md-400 text-ms-gray-600">{a.label}</span>
-                  </span>
-                  <span className="text-typo-caption-md-500 text-primary" style={{ whiteSpace: 'nowrap' }}>
-                    → 시술 현황
-                  </span>
-                </button>
-              ))}
-              {loading && <span className="text-typo-caption-md-400 text-ms-gray-500">계정을 불러오는 중…</span>}
-              {!loading && !loadErr && !accounts.length && (
-                <span className="text-typo-caption-md-400 text-ms-gray-500">로그인할 수 있는 계정이 없어요</span>
-              )}
-              {loadErr && <span className="text-typo-caption-md-500 text-red">{loadErr}</span>}
-            </div>
-          </div>
-        </div>
-
-        {toast && (
-          <div
-            className="bg-ms-gray-800 text-ms-white"
-            style={{
-              position: 'fixed',
-              left: '50%',
-              bottom: 28,
-              transform: 'translateX(-50%)',
-              zIndex: 9999,
-              borderRadius: 10,
-              padding: '10px 16px',
-              boxShadow: '0 6px 20px rgba(0,0,0,0.18)',
+          <span className="text-typo-title-sm-600 text-ms-gray-800">로그인</span>
+          <form
+            style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
+            onSubmit={(e) => {
+              e.preventDefault();
+              void submit();
             }}
           >
-            <span className="text-typo-body-500" style={{ whiteSpace: 'nowrap' }}>
-              {toast}
-            </span>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <span className="text-typo-caption-md-600 text-ms-gray-700">아이디</span>
+              <input
+                className="cc-input"
+                value={id}
+                onChange={(e) => {
+                  setId(e.target.value);
+                  setErr('');
+                }}
+                placeholder="아이디"
+                autoComplete="username"
+                autoFocus
+              />
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <span className="text-typo-caption-md-600 text-ms-gray-700">비밀번호</span>
+              <input
+                className="cc-input"
+                type="password"
+                value={pw}
+                onChange={(e) => {
+                  setPw(e.target.value);
+                  setErr('');
+                }}
+                placeholder="비밀번호"
+                autoComplete="current-password"
+              />
+            </label>
+            {err && <span className="text-typo-caption-md-500 text-red">{err}</span>}
+            {/* Enter 로 제출 */}
+            <button type="submit" hidden />
+          </form>
+          <div data-fill-buttons="true" style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr)' }}>
+            <Button variant="solid" color="blue" size="lg" onClick={() => void submit()} style={{ width: '100%' }}>
+              로그인
+            </Button>
           </div>
-        )}
+        </div>
       </div>
     </div>
   );

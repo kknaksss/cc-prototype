@@ -42,7 +42,8 @@ CREATE TABLE IF NOT EXISTS procedure (
 CREATE TABLE IF NOT EXISTS account (
     id INTEGER PRIMARY KEY, login_id TEXT NOT NULL UNIQUE, role TEXT NOT NULL,   -- admin | doctor | nurse
     name TEXT NOT NULL, staff_id INTEGER REFERENCES staff(id),                  -- 의사만(KOS 원장)
-    active INTEGER NOT NULL DEFAULT 1, card INTEGER NOT NULL DEFAULT 0,        -- card = 로그인 카드에 보이나
+    active INTEGER NOT NULL DEFAULT 1, card INTEGER NOT NULL DEFAULT 0,        -- card = PoC 계정(어드민 · 의사 1 · 간호사)
+    password_hash TEXT,                                                         -- bcrypt · 없으면 로그인 불가
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS device (                                         -- 원장 호출 푸시 기기(SPEC-004 §5-1.1)
@@ -97,7 +98,7 @@ CREATE TABLE IF NOT EXISTS sync_state (
 
 
 MIGRATIONS = (("procedure", "room_kos_id", "TEXT"), ("visit", "open_task_seqs", "TEXT NOT NULL DEFAULT '[]'"),
-              ("procedure", "kind", "TEXT NOT NULL DEFAULT 'procedure'"))
+              ("procedure", "kind", "TEXT NOT NULL DEFAULT 'procedure'"), ("account", "password_hash", "TEXT"))
 
 
 class Database:

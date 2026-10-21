@@ -35,10 +35,22 @@ class _PhraseChipsState extends State<PhraseChips> {
     if (mounted && _playing == p.ko) setState(() => _playing = null);
   }
 
+  // 칩 줄 끝은 흐리게(T7 — 가로 태블릿에서 마지막 칩이 칼로 잘린 듯 보이던 것) · 끝까지 밀면 마지막 칩이 페이드 밖에 오도록 오른쪽 여백
+  static const _fade = 28.0;
+
   @override
   Widget build(BuildContext context) => SizedBox(
-        height: widget.height,
+    height: widget.height * uiScale(MediaQuery.sizeOf(context)),
+    child: LayoutBuilder(
+      builder: (context, box) => ShaderMask(
+        blendMode: BlendMode.dstIn,
+        shaderCallback: (r) => LinearGradient(
+          colors: const [Color(0xFFFFFFFF), Color(0xFFFFFFFF), Color(0x00FFFFFF)],
+          stops: [0, box.maxWidth <= _fade ? 0 : 1 - _fade / box.maxWidth, 1],
+        ).createShader(r),
         child: ListView.separated(
+          key: const Key('phrase-chips'),
+          padding: const EdgeInsets.only(right: _fade),
           scrollDirection: Axis.horizontal,
           itemCount: phrases.length,
           separatorBuilder: (_, _) => const SizedBox(width: 6),
@@ -54,18 +66,23 @@ class _PhraseChipsState extends State<PhraseChips> {
                   borderRadius: BorderRadius.circular(999),
                   border: Border.all(color: on ? Ms.primary : Ms.gray300),
                 ),
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  if (widget.icon) ...[
-                    Icon(Icons.volume_up_rounded, size: 14, color: on ? Ms.white : Ms.gray800),
-                    const SizedBox(width: 6),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (widget.icon) ...[
+                      Icon(Icons.volume_up_rounded, size: 14, color: on ? Ms.white : Ms.gray800),
+                      const SizedBox(width: 6),
+                    ],
+                    Text(p.ko, style: (on ? Typo.caption600 : Typo.caption500).copyWith(color: on ? Ms.white : Ms.gray800, fontSize: 13)),
                   ],
-                  Text(p.ko, style: (on ? Typo.caption600 : Typo.caption500).copyWith(color: on ? Ms.white : Ms.gray800, fontSize: 13)),
-                ]),
+                ),
               ),
             );
           },
         ),
-      );
+      ),
+    ),
+  );
 }
 
 class InterpretBar extends StatelessWidget {
@@ -74,7 +91,14 @@ class InterpretBar extends StatelessWidget {
   final bool traditional;
   final String? lastTalk;
   final VoidCallback onOpen;
-  const InterpretBar({super.key, required this.tablet, required this.langCode, required this.traditional, this.lastTalk, required this.onOpen});
+  const InterpretBar({
+    super.key,
+    required this.tablet,
+    required this.langCode,
+    required this.traditional,
+    this.lastTalk,
+    required this.onOpen,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -83,37 +107,67 @@ class InterpretBar extends StatelessWidget {
     if (tablet) {
       return Container(
         padding: EdgeInsets.fromLTRB(24, 10, 24, 10 + bottom),
-        decoration: const BoxDecoration(color: Ms.white, border: Border(top: BorderSide(color: Ms.gray200))),
-        child: Row(children: [
-          Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('통역 · $name', style: Typo.caption600.copyWith(color: Ms.gray700)),
-            if (lastTalk != null) Text(lastTalk!, style: Typo.caption400.copyWith(color: Ms.gray600)),
-          ]),
-          const SizedBox(width: 12),
-          Expanded(child: PhraseChips(langCode: langCode, traditional: traditional)),
-          const SizedBox(width: 12),
-          SizedBox(width: 160, child: MsButton('통역하기', size: BtnSize.lg, expand: true, onPressed: onOpen)),
-        ]),
+        decoration: const BoxDecoration(
+          color: Ms.white,
+          border: Border(top: BorderSide(color: Ms.gray200)),
+        ),
+        child: Row(
+          children: [
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('통역 · $name', style: Typo.caption600.copyWith(color: Ms.gray700)),
+                if (lastTalk != null) Text(lastTalk!, style: Typo.caption400.copyWith(color: Ms.gray600)),
+              ],
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: PhraseChips(langCode: langCode, traditional: traditional),
+            ),
+            const SizedBox(width: 12),
+            SizedBox(
+              width: 160,
+              child: MsButton('통역하기', size: BtnSize.lg, expand: true, onPressed: onOpen),
+            ),
+          ],
+        ),
       );
     }
     return Container(
       padding: EdgeInsets.fromLTRB(12, 10, 12, 10 + (bottom > 0 ? bottom : 10)),
-      decoration: const BoxDecoration(color: Ms.white, border: Border(top: BorderSide(color: Ms.gray200))),
-      child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4),
-          child: Row(children: [
-            Text('빠른 말하기 · $name', style: Typo.caption600.copyWith(color: Ms.gray700)),
-            const SizedBox(width: 8),
-            if (lastTalk != null)
-              Expanded(child: Text(lastTalk!, maxLines: 1, overflow: TextOverflow.ellipsis, style: Typo.caption400.copyWith(color: Ms.gray600))),
-          ]),
-        ),
-        const SizedBox(height: 8),
-        PhraseChips(langCode: langCode, traditional: traditional),
-        const SizedBox(height: 8),
-        MsButton('통역하기', size: BtnSize.lg, expand: true, onPressed: onOpen),
-      ]),
+      decoration: const BoxDecoration(
+        color: Ms.white,
+        border: Border(top: BorderSide(color: Ms.gray200)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Row(
+              children: [
+                Text('빠른 말하기 · $name', style: Typo.caption600.copyWith(color: Ms.gray700)),
+                const SizedBox(width: 8),
+                if (lastTalk != null)
+                  Expanded(
+                    child: Text(
+                      lastTalk!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Typo.caption400.copyWith(color: Ms.gray600),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          PhraseChips(langCode: langCode, traditional: traditional),
+          const SizedBox(height: 8),
+          MsButton('통역하기', size: BtnSize.lg, expand: true, onPressed: onOpen),
+        ],
+      ),
     );
   }
 }

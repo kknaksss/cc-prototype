@@ -20,7 +20,7 @@ fvm flutter run -d <기기>          --dart-define=API_BASE=http://<맥 IP>:8700
 fvm flutter analyze && fvm flutter test
 fvm flutter build ios --no-codesign --dart-define=API_BASE=http://<맥 IP>:8700
 # 화면 스크린샷(시뮬레이터): SHOT_DIR=<폴더> fvm flutter drive --driver=test_driver/integration_test.dart \
-#   --target=integration_test/screens_test.dart -d <시뮬레이터> --dart-define=API_BASE=... --dart-define=SCENE=board|interpret --dart-define=SHOT=phone|tablet --dart-define=ROLE=nurse|doctor|admin
+#   --target=integration_test/screens_test.dart -d <시뮬레이터> --dart-define=API_BASE=... --dart-define=SCENE=board|interpret --dart-define=SHOT=phone|tablet --dart-define=LOGIN_ID=<아이디> --dart-define=LOGIN_PW=<비밀번호>
 ```
 
 ## 서명 · TestFlight (사용자 맥)

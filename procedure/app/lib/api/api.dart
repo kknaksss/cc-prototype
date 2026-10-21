@@ -59,14 +59,9 @@ class Api {
   // §6.1 [연결 확인]
   Future<void> health() => _req('GET', '/api/health', auth: false);
 
-  // §3.3 로그인 — 카드를 누르면 바로(비밀번호 없음)
-  Future<List<AccountCard>> accounts() async {
-    final data = await _req('GET', '/api/auth/accounts', auth: false);
-    return data is List ? data.whereType<Map>().map((e) => AccountCard.fromJson(e.cast<String, dynamic>())).toList() : [];
-  }
-
-  Future<Session> login(String id) async {
-    final data = await _req('POST', '/api/auth/login', body: {'id': id}, auth: false);
+  // 로그인 — 아이디 + 비밀번호(카드 없음 · 2026-10-21 사용자 결정). 실패 401 · 잠금 429 는 back message 를 그대로
+  Future<Session> login(String id, String password) async {
+    final data = await _req('POST', '/api/auth/login', body: {'id': id, 'password': password}, auth: false);
     return Session.fromJson((data as Map).cast<String, dynamic>());
   }
 

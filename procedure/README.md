@@ -67,13 +67,12 @@ back(8700)이 먼저 떠 있어야 한다. `.env.local` 이 없으면 요청이 
 | `KOS_ZONE_ID` | 공개 `getZones` 의 「4층」 id — `kos-demo-api.md` §1.2 |
 | `KOS_EXCLUDE_ACCOUNT_IDS` | 원장 목록에서 뺄 계정 id(「마취용」 등, 쉼표). 공개 `getAccounts` 에서 찾는다 |
 | `KOS_POLL_SCHEDULE_SEC` · `KOS_POLL_MASTER_SEC` · `KOS_POLL_WINDOW` | 비우면 10 · 3600 · `09:00-21:00`(KST) |
-| `CCC_ADMIN_ID` | 어드민 로그인 아이디 — 정해서 넣는다. 로그인 카드(「관리자 · 간호 스테이션 · 의국」) · **누르면 바로 로그인**(비밀번호 없음). 비면 카드가 없다 |
-| `CCC_DOCTOR_ID` · `CCC_DOCTOR_KOS_ACCOUNT_ID` | PoC 의사 카드 아이디 + 연결할 **KOS 데모 지점 실제 원장**의 계정 id(공개 `getAccounts` id · 원장 목록에 있는 사람 · 시스템 계정 X). 원장 목록 밖이면 카드를 만들지 않는다(로그에 사유) |
-| `CCC_NURSE_ID` · `CCC_NURSE_NAME` | PoC 간호사 카드 아이디 · 표시 이름 |
+| `CCC_ADMIN_ID` · `CCC_ADMIN_PASSWORD` | 어드민 로그인 아이디 · 비밀번호(간호 스테이션 · 의국). **로그인 = 아이디 + 비밀번호**(OQ-601) — 서버 시작 때 bcrypt 해시로 DB 에. 비면 그 계정은 못 들어온다 |
+| `CCC_DOCTOR_ID` · `CCC_DOCTOR_PASSWORD` · `CCC_DOCTOR_KOS_ACCOUNT_ID` | PoC 의사 아이디 · 비밀번호 + 연결할 **KOS 데모 지점 실제 원장**의 계정 id(공개 `getAccounts` id · 원장 목록에 있는 사람 · 시스템 계정 X). 원장 목록 밖이면 의사 계정을 만들지 않는다(로그에 사유) |
+| `CCC_NURSE_ID` · `CCC_NURSE_PASSWORD` · `CCC_NURSE_NAME` | PoC 간호사 아이디 · 비밀번호 · 표시 이름 |
 | `APNS_KEY_PATH` · `APNS_KEY_ID` · `APNS_TEAM_ID` · `APNS_BUNDLE_ID` · `APNS_ENV` | 원장 호출 푸시(APNs 직접). `.p8` 키 파일은 **레포 밖**(경로만 env) · `APNS_ENV` = `sandbox` \| `production`(TestFlight = production). 하나라도 비면 발송을 끄고 시작 로그 1줄 — 호출 · 조작은 그대로. compose 로 띄울 때는 `APNS_KEY_HOST_PATH`(호스트 `.p8` 경로)를 넣고 `APNS_KEY_PATH=/run/secrets/apns.p8` — compose 가 그 파일 하나만 읽기 전용 마운트한다(레포 · 이미지에 키 0). 시작 로그 「APNs JWT 서명 OK」로 확인 |
 | `SONIOX_API_KEY` | 통역(Soniox STT · TTS) 키 — ax-clinic-project `scripts/.env` 의 같은 이름. 비면 통역이 `no_api_key` |
 | `PROC_INTERPRET_ORIGIN` | (선택) 브라우저에서 통역 WS 를 여는 허용 출처 — 비면 `PROC_FRONT_ORIGIN` |
-| `CCC_ADMIN_PASSWORD` | 선택 · 지금은 쓰지 않는다(로그인이 비밀번호를 검증하지 않는다) |
 | `PROC_SESSION_SECRET` | 아무 긴 난수(`python3 -c 'import secrets;print(secrets.token_urlsafe(32))'`) |
 | `PROC_DB_PATH` · `PROC_BACK_PORT` · `PROC_FRONT_ORIGIN` | 비우면 `back/data/procedure.db` · 8700 · `http://localhost:3700`(compose 는 DB 를 볼륨 `/data` 에 둔다) |
 | `PROC_FAKE_BOARD` | **개발 전용 · 배포 env 에 넣지 않는다.** `1` 이면 `/api/board` · `/stream` 이 가짜 스냅샷(front 단독 작업)이고 조작 API 는 403 `fake_board`. 평소엔 비운다 |
@@ -83,8 +82,9 @@ KOS 값이 하나라도 비면 back 은 KOS 조회 · 반영 없이 뜬다(`/api
 
 ## API (SPEC-003 §7)
 
-- 계정 · 권한(SPEC-004 §3): `GET /api/auth/accounts` → `[{id, name, label, role}]`(로그인 카드 · 인증 없음 · role = admin | doctor | nurse) ·
-  `POST /api/auth/login {id}` → `{token, expiresAt, id, role, name, staffId}`(카드 계정이면 비밀번호 없이) · `GET /api/auth/me` → `{id, role, name, staffId}`.
+- 계정 · 권한(SPEC-004 §3 · OQ-601): `POST /api/auth/login {id, password}` → `{token, expiresAt, id, role, name, staffId}`(role = admin | doctor | nurse) ·
+  실패는 이유와 상관없이 401 `invalid_credentials`「아이디 또는 비밀번호가 맞지 않아요」 · 같은 아이디 5회 실패면 1분 429 `too_many_attempts` ·
+  `GET /api/auth/me` → `{id, role, name, staffId}`. 공개 계정 목록(`/api/auth/accounts`)은 없다. 비밀번호가 있는 계정 = 어드민 · PoC 의사 · 간호사.
   토큰 claims `{sub, role, staffId, exp}` · 검증은 DB 의 지금 값(비활성 · 역할 바뀜 → 401). 계정 = admin · nurse 는 env 1행, doctor 는 원장 목록 한 명당 1행(카드는 1명)
 - 수락 `POST /api/calls/{id}/accept {doctorId?}` — doctor = 자기 원장으로만(생략 가능 · 다르면 403 `doctor_forbidden` · 남의 지정 호출 403 `not_your_call`) ·
   admin = 원장을 골라 `doctorId` 필수 · nurse = 403 `role_forbidden`. 나머지 조작은 세 역할 모두. `event_log.actor` = 로그인 아이디

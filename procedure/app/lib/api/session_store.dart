@@ -28,6 +28,22 @@ class SessionStore {
     } catch (_) {}
   }
 
+  // 마지막 로그인 아이디(키체인 · 비밀번호는 저장하지 않는다) — 로그아웃해도 남긴다
+  static const _idKey = 'login.lastId';
+  Future<String?> readLastId() async {
+    try {
+      return await _s.read(key: _idKey);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> writeLastId(String id) async {
+    try {
+      await _s.write(key: _idKey, value: id);
+    } catch (_) {}
+  }
+
   Future<void> clear() async {
     try {
       await _s.delete(key: _key);

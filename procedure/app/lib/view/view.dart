@@ -9,7 +9,7 @@ const stateName = {'waiting': '시술 대기', 'doing': '시술 진행', 'home':
 const stateBadge = {'waiting': BadgeVariant.warning, 'doing': BadgeVariant.primary, 'home': BadgeVariant.neutral};
 
 // 필터 6칸(웹과 같음 · 겹쳐 셈) + 의사 계정만 「수락 대기」
-enum FilterId { all, need, waiting, anes, call, doing, mine }
+enum FilterId { all, need, waiting, anes, call, doing, home, mine }
 
 const filterName = {
   FilterId.all: '전체',
@@ -18,6 +18,7 @@ const filterName = {
   FilterId.anes: '마취',
   FilterId.call: '호출',
   FilterId.doing: '진행',
+  FilterId.home: '귀가',
   FilterId.mine: '수락 대기',
 };
 
@@ -28,6 +29,8 @@ int filterCount(FilterId id, Board b, Me me) => switch (id) {
       FilterId.anes => b.counts.anes,
       FilterId.call => b.counts.call,
       FilterId.doing => b.counts.doing,
+      // 스냅샷 counts 에 귀가 칸이 없다 — 판의 귀가 대기 카드 수(웹 E2E-9: 귀가 대기는 흐리게 남고 「전체」에 들어감)
+      FilterId.home => b.cards.where((c) => c.state == 'home').length,
       FilterId.mine => myCalls(b, me).length,
     };
 
@@ -38,6 +41,7 @@ bool Function(BoardCard) filterFn(FilterId id, Board b, Me me) => switch (id) {
       FilterId.anes => (c) => c.state != 'home' && c.anesthesia.runningSince != null,
       FilterId.call => (c) => c.state != 'home' && b.calls.any((k) => k.visitId == c.visitId),
       FilterId.doing => (c) => c.state == 'doing',
+      FilterId.home => (c) => c.state == 'home',
       FilterId.mine => (c) => myCalls(b, me).any((k) => k.visitId == c.visitId),
       FilterId.all => (_) => true,
     };

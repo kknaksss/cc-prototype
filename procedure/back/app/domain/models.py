@@ -36,6 +36,7 @@ class Account:
     staff_id: int | None
     active: bool
     card: bool
+    password_hash: str | None = None  # bcrypt — 없으면 로그인 불가(OQ-601)
 
 
 @dataclass

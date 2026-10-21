@@ -16,23 +16,31 @@ def test_health(client):
 def test_login_and_me(client, auth):
     r = client.get("/api/auth/me", headers=auth)
     assert r.status_code == 200 and r.json() == {"id": ADMIN["id"], "role": "admin", "name": "관리자", "staffId": None}
-    # 비밀번호는 보지 않는다(카드 로그인) · 목록에 없는 id 는 401
-    assert client.post("/api/auth/login", json={"id": ADMIN["id"], "password": "아무거나"}).status_code == 200
-    bad = client.post("/api/auth/login", json={"id": "nobody"})
-    assert bad.status_code == 401 and bad.json()["error"]["code"] == "invalid_credentials"
+    # 틀린 비밀번호 · 없는 아이디 = 같은 401 · 같은 문구
+    for body in ({"id": ADMIN["id"], "password": "wrong"}, {"id": "nobody", "password": "x"}):
+        bad = client.post("/api/auth/login", json=body)
+        assert bad.status_code == 401 and bad.json()["error"] == {"code": "invalid_credentials",
+                                                                 "message": "아이디 또는 비밀번호가 맞지 않아요"}
+    assert client.post("/api/auth/login", json={"id": ADMIN["id"]}).status_code == 400  # 비밀번호 필수
+    assert client.get("/api/auth/accounts").status_code == 404  # 공개 계정 목록 없음
+    long_pw = client.post("/api/auth/login", json={"id": ADMIN["id"], "password": "x" * 100})  # bcrypt 72바이트 넘음
+    assert long_pw.status_code == 401
 
 
-def test_accounts_list(client, tmp_path):
-    assert client.get("/api/auth/accounts").json() == [
-        {"id": ADMIN["id"], "name": "관리자", "label": "간호 스테이션 · 의국", "role": "admin"}]
-    from fastapi.testclient import TestClient
-
-    from app.main import create_app
-    from tests.conftest import make_settings
-
-    with TestClient(create_app(make_settings(tmp_path, ccc_admin_id=""))) as c2:  # 관리자 id 가 없으면 아무도 못 들어온다
-        assert c2.get("/api/auth/accounts").json() == []
-        assert c2.post("/api/auth/login", json={"id": ""}).status_code == 401
+def test_login_lockout(client):
+    auth = client.app.state.container.auth
+    now = [1000.0]
+    auth.now_mono = lambda: now[0]
+    for _ in range(5):
+        assert client.post("/api/auth/login", json={"id": ADMIN["id"], "password": "wrong"}).status_code == 401
+    r = client.post("/api/auth/login", json=ADMIN)  # 맞는 비밀번호여도 잠금 중이면 429
+    assert (r.status_code, r.json()["error"]["code"]) == (429, "too_many_attempts")
+    assert client.post("/api/auth/login", json={"id": "other", "password": "x"}).status_code == 401  # 다른 아이디는 따로
+    now[0] += 61  # 1분 뒤 풀림
+    assert client.post("/api/auth/login", json=ADMIN).status_code == 200
+    for _ in range(4):  # 성공하면 실패 수가 지워진다
+        client.post("/api/auth/login", json={"id": ADMIN["id"], "password": "wrong"})
+    assert client.post("/api/auth/login", json=ADMIN).status_code == 200
 
 
 def test_board_requires_login(client):

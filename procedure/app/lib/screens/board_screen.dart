@@ -91,6 +91,7 @@ class _BoardScreenState extends State<BoardScreen> {
       FilterId.anes,
       FilterId.call,
       FilterId.doing,
+      FilterId.home,
     ];
     final filter = ids.contains(_filter) ? _filter : FilterId.all;
     final pick = filterFn(filter, b, me);
@@ -132,17 +133,24 @@ class _BoardScreenState extends State<BoardScreen> {
                     );
                   }
                   return LayoutBuilder(builder: (context, box) {
-                    // grid-template-columns: repeat(auto-fill, minmax(270px, 1fr))
+                    // grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)) — 최소 폭도 글자 배율만큼(T4)
                     const gap = 12.0;
                     final w = box.maxWidth - 48;
-                    final cols = ((w + gap) / (270 + gap)).floor().clamp(1, 8);
+                    final minW = 270 * uiScale(MediaQuery.sizeOf(context));
+                    final cols = ((w + gap) / (minW + gap)).floor().clamp(1, 8);
                     final cw = (w - gap * (cols - 1)) / cols;
                     return SingleChildScrollView(
                       padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
-                      child: Wrap(
-                        spacing: gap,
-                        runSpacing: gap,
-                        children: [for (final c in cards) SizedBox(width: cw, child: card(c))],
+                      // 폭 전체 · 왼쪽 위부터(T5) — 내용 폭으로 줄면 카드 1장이 가운데 뜬다
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: Wrap(
+                          alignment: WrapAlignment.start,
+                          runAlignment: WrapAlignment.start,
+                          spacing: gap,
+                          runSpacing: gap,
+                          children: [for (final c in cards) SizedBox(width: cw, child: card(c))],
+                        ),
                       ),
                     );
                   });

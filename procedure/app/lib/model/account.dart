@@ -1,4 +1,4 @@
-// 계정 · 로그인 모양(SPEC-004 §3.3) — GET /api/auth/accounts · POST /api/auth/login · GET /api/auth/me
+// 계정 · 로그인 모양(SPEC-004 §3.3) — POST /api/auth/login {id, password} · GET /api/auth/me
 import 'board.dart' show Json;
 
 enum Role { admin, doctor, nurse }
@@ -8,21 +8,6 @@ Role roleOf(Object? v) => switch (v) {
       'nurse' => Role.nurse,
       _ => Role.admin,
     };
-
-// 로그인 카드
-class AccountCard {
-  final String id; // login_id
-  final String name;
-  final String label;
-  final Role role;
-  const AccountCard({required this.id, required this.name, required this.label, required this.role});
-  factory AccountCard.fromJson(Json j) => AccountCard(
-        id: '${j['id'] ?? ''}',
-        name: '${j['name'] ?? ''}',
-        label: '${j['label'] ?? ''}',
-        role: roleOf(j['role']),
-      );
-}
 
 // 로그인한 계정 — 토큰과 함께 기기에 저장
 class Session {

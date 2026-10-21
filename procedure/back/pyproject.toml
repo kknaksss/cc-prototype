@@ -12,6 +12,7 @@ dependencies = [
     "websockets>=17.2",
     "opencc-python-reimplemented>=0.1.7",
     "pyjwt[crypto]>=2.8",
+    "bcrypt>=4.1",
 ]
 
 [dependency-groups]

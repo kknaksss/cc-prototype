@@ -1,6 +1,7 @@
 // 화면 스크린샷 순회(SPEC-004 §8.2) — 로그인 · 목록 · 룸 상세 · 호출 시트 · 통역 드로어
 // flutter drive --driver=test_driver/integration_test.dart --target=integration_test/screens_test.dart \
-//   -d <시뮬레이터> --dart-define=API_BASE=http://localhost:8700 --dart-define=SCENE=board|interpret --dart-define=SHOT=phone|tablet --dart-define=ROLE=nurse
+//   -d <시뮬레이터> --dart-define=API_BASE=http://localhost:8700 --dart-define=SCENE=board|interpret --dart-define=SHOT=phone|tablet
+//   --dart-define=LOGIN_ID=<아이디> --dart-define=LOGIN_PW=<비밀번호>(값은 레포에 쓰지 않는다)
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -12,8 +13,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 const scene = String.fromEnvironment('SCENE', defaultValue: 'board');
 const shot = String.fromEnvironment('SHOT', defaultValue: 'phone');
+const loginId = String.fromEnvironment('LOGIN_ID');
+const loginPw = String.fromEnvironment('LOGIN_PW');
 const role = String.fromEnvironment('ROLE', defaultValue: 'nurse');
-const roleLabel = {'nurse': '간호사', 'doctor': '원장', 'admin': '간호 스테이션 · 의국'};
 
 void main() {
   final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -45,11 +47,13 @@ void main() {
     await state.boot();
     await binding.convertFlutterSurfaceToImage();
 
-    await wait(t, find.text(roleLabel[role]!));
+    await wait(t, find.byKey(const Key('login-id')));
     await settle(t);
     await take('01_login_$scene');
 
-    await t.tap(find.text(roleLabel[role]!).first);
+    await t.enterText(find.byKey(const Key('login-id')), loginId);
+    await t.enterText(find.byKey(const Key('login-password')), loginPw);
+    await t.tap(find.text('로그인'));
     await wait(t, find.byType(RoomCard));
     await settle(t, 2000);
     await take('02_list_${scene}_$role');

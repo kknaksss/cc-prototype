@@ -37,11 +37,13 @@ class MsButton extends StatelessWidget {
       BtnColor.gray => Ms.gray800,
       BtnColor.red => Ms.red,
     };
-    final h = switch (size) {
-      BtnSize.lg => 48.0,
-      BtnSize.md => 40.0,
-      BtnSize.sm => 33.0,
-    };
+    // 높이도 태블릿 글자 배율만큼(T4)
+    final h = uiScale(MediaQuery.sizeOf(context)) *
+        switch (size) {
+          BtnSize.lg => 48.0,
+          BtnSize.md => 40.0,
+          BtnSize.sm => 33.0,
+        };
     final text = switch (size) {
       BtnSize.lg => Typo.headingMd600,
       BtnSize.md => Typo.body600,
@@ -110,7 +112,7 @@ class MsBadge extends StatelessWidget {
       BadgeVariant.purple => Ms.purple,
     };
     return Container(
-      height: 22,
+      height: 22 * uiScale(MediaQuery.sizeOf(context)),
       padding: const EdgeInsets.symmetric(horizontal: 8),
       decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(999)),
       child: Row(mainAxisSize: MainAxisSize.min, children: [

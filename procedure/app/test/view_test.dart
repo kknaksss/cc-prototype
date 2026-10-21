@@ -1,4 +1,6 @@
+import 'package:flutter/widgets.dart' show Size;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:procedure_app/theme/tokens.dart';
 import 'package:procedure_app/model/board.dart';
 import 'package:procedure_app/view/time.dart';
 import 'package:procedure_app/view/view.dart';
@@ -104,5 +106,18 @@ void main() {
     final bb = Board.fromJson({'now': 'x', 'cards': [{'visitId': 1}]});
     expect(bb.cards.single.procedures, isEmpty);
     expect(bb.counts.all, 0);
+  });
+
+  test('「귀가」 칩 — 귀가 대기 카드만 · 수 = 그 카드 수(T5)', () {
+    final bb = board(cards: [card(1, state: 'home'), card(2, state: 'home'), card(3)]);
+    expect(filterCount(FilterId.home, bb, Me.none), 2);
+    expect(bb.cards.where(filterFn(FilterId.home, bb, Me.none)).map((c) => c.visitId), [1, 2]);
+  });
+
+  test('반응형 글자 배율(T4) — 폰 1 · 태블릿 짧은 변 / 700(1.15 ~ 1.3)', () {
+    expect(uiScale(const Size(390, 844)), 1.0);
+    expect(uiScale(const Size(1194, 834)), closeTo(1.19, 0.01));
+    expect(uiScale(const Size(744, 1133)), 1.15);
+    expect(uiScale(const Size(1376, 1032)), 1.3);
   });
 }

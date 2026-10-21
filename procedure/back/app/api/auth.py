@@ -1,20 +1,14 @@
 from fastapi import APIRouter
 
 from app.api.deps import Actor, Ctr
-from app.schemas.actions import Account, LoginRequest, LoginResponse, MeResponse
+from app.schemas.actions import LoginRequest, LoginResponse, MeResponse
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
-@router.get("/accounts", response_model=list[Account])
-def accounts(c: Ctr) -> list[Account]:
-    """로그인 화면의 계정 카드(로그인 전 · 인증 없음)."""
-    return [Account(**a) for a in c.auth.accounts()]
-
-
 @router.post("/login", response_model=LoginResponse)
 def login(body: LoginRequest, c: Ctr) -> LoginResponse:
-    token, expires_at, a = c.auth.login(body.id)
+    token, expires_at, a = c.auth.login(body.id, body.password)
     return LoginResponse(token=token, expiresAt=expires_at, id=a.login_id, role=a.role, name=a.name, staffId=a.staff_id)
 
 

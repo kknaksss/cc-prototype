@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 from app.main import create_app
 from app.push.apns import ApnsClient
 from app.service.push import PushService
-from tests.conftest import make_settings
+from tests.conftest import PW, make_settings
 from tests.helpers import T0, seed_staff, seed_visit
 
 IDS = {"admin": "admin1", "doctor": "doctor1", "nurse": "nurse1"}
@@ -122,7 +122,8 @@ def test_api_call_schedules_push_after_commit(env):
     """조작 API 응답 뒤 비동기로 발송 — 지정 호출 + [다른 원장에게](새 전체 호출) 둘 다."""
     client, c, staff, fake, acc = env
     v = seed_visit(c.repo, 1, procs=2)
-    auth = {"Authorization": f"Bearer {client.post('/api/auth/login', json={'id': IDS['nurse']}).json()['token']}"}
+    nurse = client.post("/api/auth/login", json={"id": IDS["nurse"], "password": PW["nurse"]}).json()["token"]
+    auth = {"Authorization": f"Bearer {nurse}"}
     body = {"procedureIds": v["procs"][:1], "target": {"kind": "one", "doctorId": staff["A"]}}
     one = client.post(f"/api/visits/{v['visit']}/calls", json=body, headers=auth).json()["callId"]
     new = client.post(f"/api/calls/{one}/reassign-all", headers=auth).json()["callId"]
@@ -188,7 +189,7 @@ def test_disabled_without_apns_env(tmp_path, caplog):
         assert c.push.enabled is False and c.push.client is None
         seed_staff(c.repo)
         v = seed_visit(c.repo, 1, procs=1)
-        login = client.post("/api/auth/login", json={"id": IDS["admin"]}).json()["token"]
+        login = client.post("/api/auth/login", json={"id": IDS["admin"], "password": PW["admin"]}).json()["token"]
         r = client.post(f"/api/visits/{v['visit']}/calls", json={"procedureIds": v["procs"], "target": {"kind": "all"}},
                         headers={"Authorization": f"Bearer {login}"})
         assert r.status_code == 200
@@ -212,7 +213,8 @@ def test_devices_api(env):
     client, c, staff, fake, acc = env
 
     def auth(role):
-        return {"Authorization": f"Bearer {client.post('/api/auth/login', json={'id': IDS[role]}).json()['token']}"}
+        token = client.post("/api/auth/login", json={"id": IDS[role], "password": PW[role]}).json()["token"]
+        return {"Authorization": f"Bearer {token}"}
 
     t = tok("shared-ipad")
     assert client.post("/api/devices", json={"token": t}, headers=auth("admin")).json() == {"ok": True}
@@ -284,7 +286,7 @@ def test_push_log_rows(env):
 def test_accept_source_recorded(env, headers, want):
     client, c, staff, fake, acc = env
     call, _ = new_call(c, 1)
-    token = client.post("/api/auth/login", json={"id": IDS["doctor"]}).json()["token"]
+    token = client.post("/api/auth/login", json={"id": IDS["doctor"], "password": PW["doctor"]}).json()["token"]
     r = client.post(f"/api/calls/{call}/accept", json={}, headers={"Authorization": f"Bearer {token}", **headers})
     assert r.status_code == 200
     with c.repo.tx() as tx:

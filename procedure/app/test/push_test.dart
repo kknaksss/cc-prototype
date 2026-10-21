@@ -79,7 +79,7 @@ void main() {
     );
     app = AppState(store: store, api: api, push: PushChannel(ch));
     await app.boot();
-    await app.login('doctor');
+    await app.login('doctor', 'pw');
     await Future<void>.delayed(Duration.zero);
     expect(app.notif, NotifStatus.authorized);
     expect(log, contains('POST /api/devices')); // 저장된 토큰 다시 등록(멱등)
@@ -115,7 +115,7 @@ void main() {
     final push = PushChannel(ch);
     app = AppState(store: MemStore([]), api: api, push: push);
     await app.boot();
-    await app.login('admin');
+    await app.login('admin', 'pw');
     push.onToken!('cafe01');
     await Future<void>.delayed(const Duration(milliseconds: 10));
     expect(bodies, contains('{"token":"cafe01"}'));

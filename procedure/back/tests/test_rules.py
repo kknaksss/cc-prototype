@@ -126,3 +126,18 @@ def test_canceled_procedure_excluded(ctr):
     ctr.actions.finish("t", v["procs"][0])
     c = card(ctr, v["visit"])
     assert [p.id for p in c.procedures] == [v["procs"][0]] and c.canHome
+
+
+def test_can_call_needs_pickable_procedure(ctr):
+    """T6 — [의사 호출] 은 호출할 수 있는(pickable) 시술이 1개 이상일 때만."""
+    s = seed_staff(ctr.repo)
+    only_etc = seed_visit(ctr.repo, 1, procs=0)
+    with ctr.repo.tx() as tx:  # 시술 0개 · 기타 작업(방 배정)만
+        tx.upsert_procedure(only_etc["visit"], 9, {"kos_order": 9, "title": "방 배정", "kos_status": "READY", "kind": "etc"})
+    busy = seed_visit(ctr.repo, 2, procs=2, doctors={1: [s["A"]], 2: [s["A"]]})
+    ctr.actions.start("t", busy["procs"][0])
+    assert card(ctr, busy["visit"]).canCall  # 대기 시술 1개 남음
+    ctr.actions.start("t", busy["procs"][1])
+    c1, c2 = card(ctr, only_etc["visit"]), card(ctr, busy["visit"])
+    assert not c1.canCall and not c1.canHome  # 기타 작업만 → 호출 꺼짐(시술이 없으니 귀가 대기도 아님)
+    assert not c2.canCall and not c2.canHome  # 전부 진행 중 · 대기 시술 0

@@ -67,7 +67,8 @@ def _procedure(r: sqlite3.Row) -> Procedure:
 
 
 def _account(r: sqlite3.Row) -> Account:
-    return Account(r["id"], r["login_id"], r["role"], r["name"], r["staff_id"], bool(r["active"]), bool(r["card"]))
+    return Account(r["id"], r["login_id"], r["role"], r["name"], r["staff_id"], bool(r["active"]), bool(r["card"]),
+                   r["password_hash"])
 
 
 def _op(r: sqlite3.Row) -> KosOp:

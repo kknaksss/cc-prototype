@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     # ccc 계정(SPEC-004 §2.3) — 비면 그 계정 · 카드를 만들지 않는다
     ccc_admin_id: str = ""
     ccc_doctor_id: str = ""
+    ccc_doctor_password: str = ""
+    ccc_nurse_password: str = ""
+    proc_bcrypt_rounds: int = 12  # 비밀번호 해시 비용(시험은 낮춘다)
     ccc_doctor_kos_account_id: str = ""  # PoC 의사 카드에 연결할 KOS 데모 지점 실제 원장(getAccounts id)
     ccc_nurse_id: str = ""
     ccc_nurse_name: str = ""

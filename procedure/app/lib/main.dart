@@ -29,7 +29,15 @@ class ProcedureApp extends StatelessWidget {
         debugShowCheckedModeBanner: false,
         theme: ceramiqueTheme(),
         locale: const Locale('ko'),
-        builder: (context, child) => ToastLayer(toaster: state.toaster, child: child ?? const SizedBox()),
+        // 태블릿 글자 배율(T4) — 기기 글자 크기 설정에 곱한다
+        builder: (context, child) {
+          final mq = MediaQuery.of(context);
+          final k = uiScale(mq.size) * mq.textScaler.scale(1);
+          return MediaQuery(
+            data: mq.copyWith(textScaler: TextScaler.linear(k)),
+            child: ToastLayer(toaster: state.toaster, child: child ?? const SizedBox()),
+          );
+        },
         home: const _Root(),
       ),
     );

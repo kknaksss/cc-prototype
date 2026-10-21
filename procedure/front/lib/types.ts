@@ -150,16 +150,8 @@ export interface BoardEvent extends Board {
   version: number;
 }
 
-// 계정 역할(SPEC-004 §3.1) — 웹은 admin 만 로그인 카드로 보인다(§3.6)
+// 계정 역할(SPEC-004 §3.1)
 export type Role = 'admin' | 'doctor' | 'nurse';
-
-// 로그인 화면 계정 카드 — GET /api/auth/accounts(id = login_id)
-export interface Account {
-  id: string;
-  name: string;
-  label: string;
-  role: Role;
-}
 
 // POST /api/auth/login(SPEC-004 §3.3)
 export interface LoginResult {

@@ -60,7 +60,7 @@ class _RoomScreenState extends State<RoomScreen> {
             SafeArea(
               bottom: false,
               child: Column(children: [
-                _header(app, b, card),
+                tablet ? _tabletHeader(app, b, card) : _header(app, b, card),
                 Expanded(
                   child: Ticker(builder: (context) {
                     final now = DateTime.now().millisecondsSinceEpoch + app.stream.skewMs;
@@ -162,6 +162,61 @@ class _RoomScreenState extends State<RoomScreen> {
     );
   }
 
+  // 태블릿 머리 한 줄(T2 · 시안 태블릿 room) — [← 현황 · 다른 룸 확인] │ 방(크게) │ 고객 · 국적 · 첫/재내원 / 입실 … │ 상태 · 시각
+  Widget _tabletHeader(AppState app, Board b, BoardCard c) {
+    final others = b.counts.need - (c.need != null ? 1 : 0);
+    final badge = cardBadge(b, c);
+    final kos = kosText(c.kos);
+    return Container(
+      height: 72 * uiScale(MediaQuery.sizeOf(context)),
+      padding: const EdgeInsets.fromLTRB(12, 0, 24, 0),
+      decoration: const BoxDecoration(color: Ms.white, border: Border(bottom: BorderSide(color: Ms.gray200))),
+      child: Row(children: [
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => Navigator.of(context).maybePop(),
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 48),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+            decoration: BoxDecoration(color: Ms.gray100, borderRadius: BorderRadius.circular(10)),
+            child: Column(mainAxisSize: MainAxisSize.min, mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('← 현황', style: Typo.body600),
+              if (others > 0) Text('다른 룸 확인 $others', style: Typo.caption600.copyWith(color: Ms.red)),
+            ]),
+          ),
+        ),
+        const SizedBox(width: 16),
+        Text(c.room.title, style: Typo.titleMd600.copyWith(fontSize: 32, height: 1.3)),
+        const SizedBox(width: 16),
+        Container(width: 1, height: 28, color: Ms.gray300),
+        const SizedBox(width: 16),
+        Expanded(
+          child: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Flexible(child: Text(c.customer.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: Typo.titleSm600)),
+              const SizedBox(width: 6),
+              if ((c.customer.nationality ?? '').isNotEmpty) ...[Tag(c.customer.nationality!), const SizedBox(width: 6)],
+              visitTag(c.customer.isNew),
+            ]),
+            const SizedBox(height: 2),
+            Row(children: [
+              if (c.inAt != null) Text('입실 ${hm(c.inAt)}', style: Typo.caption400.copyWith(color: Ms.gray600)),
+              if (c.paymentRequired) ...[const SizedBox(width: 8), const Tag('수납 필요', bg: Ms.yellow100, fg: Ms.yellow, bold: true)],
+              if (kos != null) ...[
+                const SizedBox(width: 8),
+                Text(kos, style: Typo.caption600.copyWith(color: c.kos.status == 'failed' ? Ms.red : Ms.gray600)),
+              ],
+            ]),
+          ]),
+        ),
+        const SizedBox(width: 12),
+        MsBadge(badge.text, badge.variant),
+        const SizedBox(width: 12),
+        Ticker(builder: (_) => Text(clockText(app), style: Typo.headingSm400.copyWith(color: Ms.black, fontFeatures: tabular))),
+      ]),
+    );
+  }
+
   Widget _mobileBody(AppState app, Board b, BoardCard c, int now) => ListView(
         padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
         children: _gap([
@@ -174,22 +229,36 @@ class _RoomScreenState extends State<RoomScreen> {
         ]),
       );
 
+  // 태블릿 두 열 = 남은 높이 전부(T1 · 시안 태블릿 room) — 카드 배경이 통역 바 바로 위까지 이어진다
+  //   왼쪽: 오더 메모 카드(늘어남 · 안에서 스크롤) + 마취 아래
+  //   오른쪽: 호출 · 완료 상자 + 시술 카드(늘어남 · 시술 목록 안에서 스크롤 · [의사 호출] 바닥 고정)
   Widget _tabletBody(AppState app, Board b, BoardCard c, int now) => Padding(
-        padding: const EdgeInsets.fromLTRB(24, 16, 24, 16),
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
         child: LayoutBuilder(builder: (context, box) {
-          final left = (box.maxWidth * 0.34).clamp(260.0, 380.0);
-          return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          final left = (box.maxWidth * 0.34).clamp(260.0, 380.0 * uiScale(MediaQuery.sizeOf(context)));
+          final tops = [..._callBoxes(app, b, c, now), if (c.canHome) _doneBox(app, c)];
+          return Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             SizedBox(
               width: left,
-              child: ListView(children: _gap([_memoBox(c), _anesBox(app, b, c, now)])),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                Expanded(child: _memoBox(c, fill: true)),
+                const SizedBox(height: 10),
+                _anesBox(app, b, c, now),
+              ]),
             ),
-            const SizedBox(width: 16),
+            const SizedBox(width: 12),
             Expanded(
-              child: ListView(children: _gap([
-                ..._callBoxes(app, b, c, now),
-                if (c.canHome) _doneBox(app, c),
-                _procBox(app, b, c, now),
-              ])),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                // 호출 상자가 여럿이면 위 절반까지만 · 넘치면 그 안에서 스크롤
+                if (tops.isNotEmpty) ...[
+                  ConstrainedBox(
+                    constraints: BoxConstraints(maxHeight: box.maxHeight * 0.5),
+                    child: SingleChildScrollView(child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: _gap(tops))),
+                  ),
+                  const SizedBox(height: 10),
+                ],
+                Expanded(child: _procBox(app, b, c, now, fill: true)),
+              ]),
             ),
           ]);
         }),
@@ -292,11 +361,13 @@ class _RoomScreenState extends State<RoomScreen> {
     );
   }
 
-  Widget _procBox(AppState app, Board b, BoardCard c, int now) {
+  // fill = 태블릿 — 열 높이를 채우고 시술 목록만 안에서 스크롤 · [의사 호출] 은 바닥
+  Widget _procBox(AppState app, Board b, BoardCard c, int now, {bool fill = false}) {
     final ps = orderedProcs(c);
     final done = ps.where((p) => p.state == 'done').length;
+    final rows = [for (final p in ps) ...[const SizedBox(height: 6), _procRow(app, b, c, p, now)]];
     return Boxed(
-      padding: const EdgeInsets.all(12),
+      padding: EdgeInsets.all(fill ? 16 : 12),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 2),
@@ -305,7 +376,10 @@ class _RoomScreenState extends State<RoomScreen> {
             TextSpan(text: '· 완료 $done', style: Typo.body400.copyWith(color: Ms.gray600)),
           ])),
         ),
-        for (final p in ps) ...[const SizedBox(height: 6), _procRow(app, b, c, p, now)],
+        if (fill)
+          Expanded(child: ListView(padding: EdgeInsets.zero, children: rows))
+        else
+          ...rows,
         const SizedBox(height: 10),
         MsButton(c.canCall ? '의사 호출' : '호출할 대기 시술 없음',
             variant: BtnVariant.outlined,
@@ -404,13 +478,18 @@ class _RoomScreenState extends State<RoomScreen> {
     );
   }
 
-  Widget _memoBox(BoardCard c) {
+  // 오더 메모(T3) — 모바일 = 본문 한 단계 위(16) · 태블릿 = 시안 heading 제목 + 본문 15(배율 곱해 아이패드 11" ≈ 18) · 줄 간격 1.6
+  //   fill = 태블릿 — 왼쪽 열 높이를 채우고 안에서 스크롤
+  Widget _memoBox(BoardCard c, {bool fill = false}) {
     final memo = (c.orderMemo ?? '').trim();
+    final body = (fill ? Typo.body400.copyWith(fontSize: 15) : Typo.headingMd400).copyWith(height: 1.6, color: memo.isEmpty ? Ms.gray600 : Ms.gray800);
+    final text = Text(memo.isEmpty ? '오더 메모 없음' : memo, style: body);
     return Boxed(
+      padding: fill ? const EdgeInsets.all(16) : const EdgeInsets.fromLTRB(14, 12, 14, 12),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Text('오더 메모', style: Typo.caption600.copyWith(color: Ms.gray700)),
-        const SizedBox(height: 6),
-        Text(memo.isEmpty ? '오더 메모 없음' : memo, style: Typo.body400.copyWith(color: memo.isEmpty ? Ms.gray600 : Ms.gray800)),
+        Text('오더 메모', style: fill ? Typo.headingMd500 : Typo.caption600.copyWith(color: Ms.gray700)),
+        SizedBox(height: fill ? 8 : 6),
+        if (fill) Expanded(child: SingleChildScrollView(child: text)) else text,
       ]),
     );
   }

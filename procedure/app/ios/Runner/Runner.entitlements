@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Push Notifications capability(SPEC-004 §5-1). App Store / TestFlight 내보내기 때 Xcode 가 production 으로 바꾼다 -->
+	<key>aps-environment</key>
+	<string>development</string>
+</dict>
+</plist>

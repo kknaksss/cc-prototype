@@ -1,0 +1,44 @@
+/* medikit 1.4.0 보정 — 원본 DS 반영 요청 목록
+
+   [Menu-1] logo 미지정 시에도 로고 영역(mt-42 + h-35)과 pt-42 여백을 확보해 메뉴가 아래로 밀림.
+   → 제안: logo 없으면 로고 영역 렌더하지 않음. */
+aside[data-state] > div > div.mt-\[42px\]:empty { display: none; }
+aside[data-state] > div > div.mt-\[42px\]:empty + div { padding-top: 0; }
+
+/* [Token-1] --ms-success 가 var(--ms-primary) 로 매핑되어 primary 와 구분 불가 (Badge success=primary 흡수도 동일).
+   → 제안: 독립된 success(green) 토큰 추가. 현재 현황판에서는 상담사 색을 yellow 로 대체. (CSS 보정 없음) */
+
+/* [Button-1] Button 라벨이 좁은 flex 컨테이너에서 줄바꿈되어 2줄로 깨짐 (white-space 미지정).
+   → 제안: Button 기본 클래스에 whitespace-nowrap, shrink-0 추가. */
+button.inline-flex.items-center.justify-center { white-space: nowrap; flex-shrink: 0; }
+
+/* [Tabs-1] 탭 라벨 버튼 pb-16px 고정 → 라벨과 하단 경계선 사이 여백 과다 (패널 등 좁은 영역에서 어색).
+   → 제안: size prop(sm: pb-8px / md: 기존 16px) 추가. 현재는 8px로 보정. */
+ul.gap-\[42px\] > li > button.pb-\[16px\] { padding-bottom: 8px; }
+
+/* [Tabs-2] 탭이 콘텐츠 너비로 좌측 정렬만 지원 → 패널 상단 탭에서 어색.
+   → 제안: fullWidth(균등 분할) prop 추가. 현재 aside 내부 탭만 균등 분할로 보정. */
+aside ul.gap-\[42px\] { gap: 0; }
+aside ul.gap-\[42px\] > li { flex: 1 1 0; min-width: 0; }
+
+/* [Button-2] Button에 fullWidth/className prop 없음 → 그리드 셀을 채울 수 없음.
+   → 제안: fullWidth prop 추가. 현재 [data-fill-buttons] 하위만 보정. */
+[data-fill-buttons] > * { display: flex; min-width: 0; }
+[data-fill-buttons] button { width: 100%; }
+
+/* [Button-3] 가장 작은 size(sm)도 h-33 · px-16 → 카드 안 인라인 버튼으로는 큼.
+   → 제안: xs size(h-26 · px-10 · 13px) 추가. 현재 [data-compact-buttons] 하위만 보정. */
+[data-compact-buttons] button.inline-flex { height: 26px; padding: 0 10px; font-size: 13px; line-height: 1; }
+
+/* [Badge-1] Badge 변형이 neutral·primary·warning·danger·purple 5개뿐 → 상태 6개 이상이면 구분 불가.
+   → 제안: outline 스타일 또는 색 변형 추가. 현재 [data-badge-call="true"] 하위만 파랑 외곽선으로 보정. */
+[data-badge-call="true"] > * > span.rounded-full,
+[data-badge-call="true"] span.rounded-full { background: #fff; box-shadow: inset 0 0 0 1px var(--ms-primary); }
+
+/* [Menu-2] 펼침 상태에서 접기(chevron) 버튼이 단독으로 한 줄을 차지함.
+   → 제안: 펼침 시 버튼을 첫 그룹 라벨과 같은 줄 우측에 배치. 접힘 상태는 기존 유지. */
+aside[data-state="open"] { position: relative; }
+aside[data-state="open"] > button:first-child {
+  position: absolute; top: 26px; right: 16px;
+  height: 24px; display: flex; align-items: center;
+}

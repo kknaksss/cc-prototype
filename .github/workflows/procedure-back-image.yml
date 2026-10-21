@@ -1,0 +1,47 @@
+# procedure/back 이미지 — arm64 빌드 → GHCR(DEC-003 D-06 · WORK-004 WP10). 태그 = 커밋 sha 만(latest · main 없음)
+# 비밀값(KOS · 계정 · 세션 키 · SONIOX · APNs)은 이미지에 없다 — 배포 Secret · 키 파일 마운트로만
+name: procedure-back image
+
+on:
+  push:
+    branches: [main]          # 배포는 main 에서만(DEC-003 D-06 보강)
+    paths:
+      - "procedure/back/**"
+      - ".github/workflows/procedure-back-image.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: procedure-back-image-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/kknaksss/procedure-back
+
+jobs:
+  build:
+    # GitHub 호스트 arm64 러너(공개 레포 무료) — 네이티브 arm64 빌드
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: procedure/back
+          file: procedure/back/Dockerfile
+          platforms: linux/arm64
+          push: true
+          tags: ${{ env.IMAGE }}:${{ github.sha }}
+          cache-from: type=gha,scope=procedure-back
+          cache-to: type=gha,mode=max,scope=procedure-back

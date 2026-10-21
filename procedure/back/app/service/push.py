@@ -1,0 +1,181 @@
+"""원장 호출 푸시(SPEC-004 §5-1.2) — 호출이 생긴 뒤(커밋 뒤) 비동기로 보낸다. 조작 응답 · SSE 를 기다리게 하지 않는다.
+
+받는 사람: 전체 호출 = active 의사 전원 + 관리자 · 지정 호출 = 지정 원장의 의사 계정 + 관리자 · 간호사 = 없음.
+누른 계정이 의사면 그 의사 자신은 뺀다(관리자는 빼지 않는다 — 간호 스테이션 · 의국이 같이 쓴다).
+발송 내역은 push_log 에 받는 기기마다 1행 쌓는다(sent · failed · skipped_no_key · token_removed).
+내용에 고객 이름 · 국적 · 시술 이름을 넣지 않는다(잠금 화면). 실패는 로그만(상태 · reason · 토큰 끝 6자리).
+의사 수신자 알림에만 `aps.category = "CALL"` — 알림(워치 포함)에서 바로 수락. 의사 수신자는 늘 그 호출을 수락할 수 있는
+원장이다(전체 호출 = 전원 · 지정 = 그 원장). 관리자 알림은 category 없음(앱을 열어 원장을 고른다).
+"""
+
+import asyncio
+import logging
+from dataclasses import dataclass
+from typing import Any
+
+from app.config import Settings
+from app.domain.clock import Clock
+from app.domain.models import Account
+from app.push.apns import ApnsClient, ApnsResult
+from app.repository.repo import Repository
+
+log = logging.getLogger("procedure.push")
+
+RETRY = (429,)  # + 5xx · 네트워크 오류 → 1회 재시도
+# 이 기기 토큰은 다시 쓸 수 없다 → device 행 삭제 · push_log token_removed. 410 은 늘, 400 은 이 reason 일 때만
+# (DeviceTokenNotForTopic = 번들 id 바꾸기 전에 등록된 옛 토큰 — 2026-10-21 실 APNs). 그 밖 400 은 failed
+DEAD_400 = ("BadDeviceToken", "DeviceTokenNotForTopic", "Unregistered")
+
+
+@dataclass(frozen=True)
+class Delivery:
+    """받는 사람 기기 하나에 보낼 것."""
+
+    call_id: int
+    visit_id: int
+    account_id: int
+    role: str
+    device_id: int
+    token: str
+    category: str | None
+    payload: dict[str, Any]
+
+
+def _tail(token: str) -> str:
+    return f"…{token[-6:]}"
+
+
+class PushService:
+    def __init__(self, repo: Repository, settings: Settings, client: ApnsClient | None = None, clock: Clock | None = None):
+        self.repo = repo
+        self.s = settings
+        self.clock = clock or Clock()
+        self.enabled = settings.apns_enabled
+        self.client = client if client is not None else (ApnsClient(settings) if self.enabled else None)
+        self.tasks: set[asyncio.Task] = set()
+        if not self.enabled:
+            log.warning("APNS_* 가 비어 원장 호출 푸시를 끈다(조작은 그대로)")
+        elif self.client is not None:
+            self.check_key()
+
+    def check_key(self) -> bool:
+        """서버 시작 때 JWT 를 한 번 서명해 본다 — 키 파일 · 형식 확인. 로그에 값 없음(env · 결과만)."""
+        try:
+            self.client.sign()  # type: ignore[union-attr]
+        except Exception as e:
+            log.error("APNs JWT 서명 실패(%s) — 키 파일 경로 · 형식 확인 · 발송은 실패로 기록", type(e).__name__)
+            return False
+        log.info("APNs JWT 서명 OK(env=%s)", self.s.apns_env)
+        return True
+
+    # ------------------------------------------------------------------ 받는 사람 · 내용
+    def message(self, call_id: int, actor_login: str) -> list[Delivery] | None:
+        """받는 사람 기기마다 하나. 호출이 없으면 None."""
+        with self.repo.tx() as tx:
+            w = tx.world()
+            call = w.calls.get(call_id)
+            if call is None:
+                return None
+            accounts = [a for a in tx.accounts() if a.active]
+            actor = tx.account(actor_login)
+            to: list[Account] = [a for a in accounts if a.role == "admin"]
+            if call.kind == "one":
+                to += [a for a in accounts if a.role == "doctor" and a.staff_id == call.target_staff_id]
+            else:
+                to += [a for a in accounts if a.role == "doctor"]
+            if actor is not None and actor.role == "doctor":
+                to = [a for a in to if a.id != actor.id]
+            role_of = {a.id: a.role for a in to}
+            devices = tx.devices_of([a.id for a in to])
+            v = w.visits.get(call.visit_id)
+            room = w.rooms.get(v.room_id) if v is not None and v.room_id is not None else None
+        kind = "전체 호출" if call.kind == "all" else "지정 호출"
+        body = f"{room.title if room else '방'} · 시술 {len(call.procedure_ids)}건 · {kind}"
+        aps = {"alert": {"title": "원장 호출", "body": body}, "sound": "default"}
+        out = []
+        for device_id, account_id, token in devices:
+            category = "CALL" if role_of[account_id] == "doctor" else None  # 의사만 알림에서 바로 수락
+            a = {**aps, "category": category} if category else aps
+            out.append(Delivery(call.id, call.visit_id, account_id, role_of[account_id], device_id, token, category,
+                                {"aps": a, "visitId": call.visit_id, "callId": call.id}))
+        return out
+
+    def _log(self, d: "Delivery", status: str, created_at, res: ApnsResult | None = None, attempts: int = 0) -> None:
+        with self.repo.tx() as tx:
+            tx.add_push_log(call_id=d.call_id, visit_id=d.visit_id, account_id=d.account_id, role=d.role,
+                            device_id=d.device_id, token_tail=d.token[-6:], category=d.category, status=status,
+                            apns_status=res.status if res else None, apns_reason=res.reason if res else None,
+                            apns_id=res.apns_id if res else None, attempts=attempts, created_at=created_at,
+                            sent_at=self.clock.now() if res is not None and res.status == 200 else None)
+
+    # ------------------------------------------------------------------ 발송
+    def schedule(self, call_id: int, actor_login: str) -> None:
+        """커밋 뒤 부른다 — 돌고 있는 이벤트 루프에 태스크로 띄운다. 키가 없으면 받는 사람마다 skipped_no_key 로 쌓기만."""
+        if not self.enabled:
+            self.skip(call_id, actor_login)
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            log.warning("원장 호출 푸시 건너뜀(이벤트 루프 없음) call=%d", call_id)
+            return
+        task = loop.create_task(self.notify(call_id, actor_login))
+        self.tasks.add(task)
+        task.add_done_callback(self.tasks.discard)
+
+    def skip(self, call_id: int, actor_login: str) -> int:
+        try:
+            msg = self.message(call_id, actor_login) or []
+            now = self.clock.now()
+            for d in msg:
+                self._log(d, "skipped_no_key", now)
+        except Exception as e:
+            log.error("원장 호출 푸시 내역 오류: %s", type(e).__name__)
+            return 0
+        log.info("원장 호출 푸시 건너뜀(APNS_* 없음) call=%d 받는 기기 %d", call_id, len(msg))
+        return len(msg)
+
+    async def notify(self, call_id: int, actor_login: str) -> dict[str, int]:
+        out = {"sent": 0, "failed": 0, "removed": 0}
+        if not self.enabled or self.client is None:
+            return out
+        created = self.clock.now()
+        try:
+            msg = self.message(call_id, actor_login)
+        except Exception as e:  # 발송 준비 실패로 조작에 영향 주지 않는다
+            log.error("원장 호출 푸시 준비 오류: %s", type(e).__name__)
+            return out
+        if not msg:
+            return out
+        for d in msg:
+            res, attempts = await self._send_with_retry(d.token, d.payload)
+            if res.status == 200:
+                out["sent"] += 1
+                self._log(d, "sent", created, res, attempts)
+                continue
+            out["failed"] += 1
+            log.warning("원장 호출 푸시 실패 call=%d token=%s status=%s reason=%s", call_id, _tail(d.token), res.status,
+                        res.reason)
+            if res.status == 410 or (res.status == 400 and res.reason in DEAD_400):  # 죽은 토큰 — 그 기기 행 삭제
+                with self.repo.tx() as tx:
+                    tx.delete_device(d.token)
+                out["removed"] += 1
+                self._log(d, "token_removed", created, res, attempts)
+            else:
+                self._log(d, "failed", created, res, attempts)
+        log.info("원장 호출 푸시 call=%d 보냄 %d · 실패 %d", call_id, out["sent"], out["failed"])
+        return out
+
+    async def _send_with_retry(self, token: str, payload: dict[str, Any]) -> tuple[ApnsResult, int]:
+        assert self.client is not None
+        res = await self._send(token, payload)
+        if res.status is None or res.status >= 500 or res.status in RETRY:  # 네트워크 · 5xx · 429 → 1회만 다시
+            return await self._send(token, payload), 2
+        return res, 1
+
+    async def _send(self, token: str, payload: dict[str, Any]) -> ApnsResult:
+        assert self.client is not None
+        try:
+            return await self.client.send(token, payload)
+        except Exception as e:  # 키 파일 · 서명 오류 등 — 메시지에 키가 섞일 수 있어 클래스 이름만
+            return ApnsResult(None, type(e).__name__)

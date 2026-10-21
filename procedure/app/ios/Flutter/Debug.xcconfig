@@ -1,0 +1,9 @@
+#include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig"
+#include "Generated.xcconfig"
+
+// 번들 id 자리 — 실제 값은 사용자가 App Store Connect 에서 정해 Signing.xcconfig 에 쓴다(SPEC-004 §2.4 · OQ-605)
+APP_BUNDLE_ID = com.example.procedureApp
+CODE_SIGN_STYLE = Automatic
+
+// 서명(팀 id · 번들 id) — gitignore. 없으면 서명 없이 시뮬레이터 빌드. 예시 = Signing.xcconfig.example
+#include? "Signing.xcconfig"

@@ -1,0 +1,47 @@
+# procedure/front 배포 이미지 — arm64 → GHCR(DEC-003 D-06 · WORK-004 WP10). 태그 = 커밋 sha(latest 없음).
+# 배포 주소(같은 출처 — ingress 가 /api → back · SSE /api/board/stream · 통역 WS /api/interpret 포함)는
+# 빌드 인자로 번들에 박는다. 주소가 바뀌면 다시 빌드한다. ArgoCD 첫 착지는 수동 sync.
+name: procedure-front image
+
+on:
+  push:
+    branches: [main]          # 배포는 main 에서만(DEC-003 D-06 보강)
+    paths:
+      - "procedure/front/**"
+      - ".github/workflows/procedure-front-image.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: procedure-front-image-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE: ghcr.io/kknaksss/procedure-front
+  API_BASE_URL: https://ccc.medisolveai.xyz   # 기존 주소 교체(DEC-005 D-03) · 같은 도메인 /api → back
+
+jobs:
+  build:
+    # GitHub 호스트 arm64 러너(공개 레포 무료) — 네이티브 arm64 빌드
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./procedure/front
+          file: ./procedure/front/Dockerfile
+          platforms: linux/arm64
+          push: true
+          build-args: |
+            NEXT_PUBLIC_API_BASE_URL=${{ env.API_BASE_URL }}
+          tags: ${{ env.IMAGE }}:${{ github.sha }}
+          cache-from: type=gha,scope=procedure-front-arm64
+          cache-to: type=gha,scope=procedure-front-arm64,mode=max

@@ -53,6 +53,10 @@ npm run dev                                                         # http://loc
 
 back(8700)이 먼저 떠 있어야 한다. `.env.local` 이 없으면 요청이 `localhost:3700/api/…` 로 가서 404 가 난다.
 
+### 데모 환자(KOS 데모 지점)
+
+데모 전 그날 4층 국적 칸마다 예약 채우기 · 보기 · 지우기 — `python3 procedure/tools/kos_demo_patients.py {create|list|delete} --date YYYY-MM-DD`(`--dry-run` 먼저). 데모 테넌트에서만 · 규칙은 스킬 `.claude/skills/kos-demo-patients/SKILL.md`.
+
 ## env 채우기
 
 값은 이 레포에 쓰지 않는다(public). **값을 이 README · 커밋 · 이슈에 붙이지 말 것.**

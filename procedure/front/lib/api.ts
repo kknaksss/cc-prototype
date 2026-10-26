@@ -1,6 +1,6 @@
 // back 호출은 이 모듈에서만 한다(rules: 컴포넌트에서 직접 fetch 금지). 주소는 env 로만(SPEC-003 §2.3)
 import { readSession } from './session';
-import type { CallTarget, LoginResult, Me } from './types';
+import type { BoardOrderResult, CallTarget, LoginResult, Me } from './types';
 
 // NEXT_PUBLIC_* 는 Next 가 빌드(또는 dev 시작) 때 번들에 박는다 — 값은 둘 중 하나로 들어온다
 //   · compose / docker build: 빌드 인자 NEXT_PUBLIC_API_BASE_URL(Dockerfile ARG → ENV)
@@ -21,7 +21,7 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: { method?: 'GET' | 'POST'; body?: unknown }): Promise<T> {
+async function request<T>(path: string, init?: { method?: 'GET' | 'POST' | 'PUT'; body?: unknown }): Promise<T> {
   if (CONFIG_ERROR) throw new ApiError(0, 'config', CONFIG_ERROR);
   const headers: Record<string, string> = {};
   const token = readSession()?.token;
@@ -67,3 +67,5 @@ export const startProcedure = (procedureId: number) =>
   post<{ ok: true; flowStepChanged: boolean }>(`/api/procedures/${procedureId}/start`);
 export const finishProcedure = (procedureId: number) => post<{ ok: true }>(`/api/procedures/${procedureId}/finish`);
 export const goHome = (visitId: number) => post<{ ok: true }>(`/api/visits/${visitId}/home`);
+// §7.3 카드 순서 — 귀가 대기 아닌 카드 전부의 새 순서(필터로 숨긴 카드 포함). 응답 visitIds = 거르기 뒤 저장된 목록
+export const putBoardOrder = (visitIds: number[]) => request<BoardOrderResult>('/api/board/order', { method: 'PUT', body: { visitIds } });

@@ -1,4 +1,4 @@
-// 화면 문구 · 색 · 정렬 — 스냅샷 값을 보여 주는 방법만. 규칙(pickable · canStart · canCall · need …)은 back 이 준 값을 쓴다(SPEC-003 §7.2)
+// 화면 문구 · 색 · 카드 순서 — 스냅샷 값을 보여 주는 방법만. 규칙(pickable · canStart · canCall · need …)은 back 이 준 값을 쓴다(SPEC-003 §7.2)
 import type { BadgeVariant } from '@medisolve-ai/medikit';
 import { hm, minutesSince, toMs } from '@/lib/time';
 import type { Board, Card, Need, OpenCall, Procedure, VisitState } from '@/lib/types';
@@ -14,15 +14,15 @@ export const LEGEND: { name: string; variant: BadgeVariant }[] = [
   { name: '귀가 대기', variant: 'neutral' },
 ];
 
-// 현황 탭 상태 수 6칸 = 카드 필터(SPEC-003 §6.4). 수는 스냅샷 counts
+// 현황 탭 상태 수 6칸 = 3 × 2 · 점 · 칸 바탕 없음 = 카드 필터(SPEC-003 §6.4 · 시안 M:945-955). 수는 스냅샷 counts
 export type FilterId = 'all' | 'need' | 'waiting' | 'anes' | 'call' | 'doing';
-export const FILTERS: { id: FilterId; name: string; cls: string }[] = [
-  { id: 'all', name: '전체', cls: 'bg-ms-white border-ms-gray-300 text-ms-gray-800' },
-  { id: 'need', name: '확인', cls: 'bg-red-100 border-red text-red' },
-  { id: 'waiting', name: '대기', cls: 'bg-yellow-100 border-ms-gray-400 text-ms-gray-800' },
-  { id: 'anes', name: '마취', cls: 'bg-purple-100 border-purple text-ms-gray-800' },
-  { id: 'call', name: '호출', cls: 'bg-ms-white border-primary text-primary' },
-  { id: 'doing', name: '진행', cls: 'bg-primary-100 border-primary text-ms-gray-800' },
+export const FILTERS: { id: FilterId; name: string; dot: string }[] = [
+  { id: 'all', name: '전체', dot: 'bg-ms-gray-300' },
+  { id: 'need', name: '확인', dot: 'bg-red' },
+  { id: 'waiting', name: '대기', dot: 'bg-yellow' },
+  { id: 'anes', name: '마취', dot: 'bg-purple' },
+  { id: 'call', name: '호출', dot: 'bg-primary-500' },
+  { id: 'doing', name: '진행', dot: 'bg-primary' },
 ];
 
 // 칸 정의(§6.4) — 스냅샷 필드로 고른다: 확인 = need · 마취 = 진행 중 마취 · 호출 = calls 에 그 고객이 있음
@@ -42,44 +42,52 @@ export const checkBox = (on: boolean) => (on ? 'bg-primary border-primary text-m
 export const docName = (board: Board, id: number | null | undefined) =>
   id == null ? '' : (board.doctors.find((d) => d.id === id)?.name ?? '');
 
-// 정렬 — 입실순 = 입실 시각 · 배치순 = 방 순서. 귀가 대기는 뒤에(귀가 대기 시각 순) — §6.3
-export type SortKey = 'in' | 'room';
-export function orderedCards(cards: Card[], sort: SortKey): Card[] {
-  const key = sort === 'room' ? (c: Card) => c.room.order : (c: Card) => toMs(c.inAt) ?? Infinity;
-  const live = cards.filter((c) => c.state !== 'home').sort((a, b) => key(a) - key(b));
-  const home = cards
-    .filter((c) => c.state === 'home')
-    .sort((a, b) => (toMs(a.homeAt) ?? Infinity) - (toMs(b.homeAt) ?? Infinity));
-  return [...live, ...home];
+// 카드 순서 = 스냅샷 cards[] 순서 그대로(back 이 정렬 · SPEC-003 §5.12 · §6.3). front 는 다시 정렬하지 않고,
+// 놓은 뒤 응답을 기다리는 동안만 로컬 순서(귀가 대기 아닌 카드 id 목록)를 덧씌운다(§5.12 「놓은 뒤 화면」 ①)
+//   · 로컬 목록 안의 카드 = 로컬 차례 → 로컬 목록에 없는 새 카드 = 스냅샷 차례로 그 뒤 → 귀가 대기 = 맨 뒤 스냅샷 차례
+//   · 그사이 귀가 대기가 된 카드는 귀가 대기 묶음으로 · 사라진 카드는 빠진다
+export function withLocalOrder(cards: Card[], local: number[] | null): Card[] {
+  if (!local) return cards;
+  const live = cards.filter((c) => c.state !== 'home');
+  const byId = new Map(live.map((c) => [c.visitId, c]));
+  const inLocal = local.map((id) => byId.get(id)).filter((c): c is Card => !!c);
+  const rest = live.filter((c) => !local.includes(c.visitId));
+  return [...inLocal, ...rest, ...cards.filter((c) => c.state === 'home')];
 }
 
-export const isEtc = (p: Procedure) => p.kind === 'etc';
+// 귀가 대기 아닌 카드 id 차례 — 드래그 · 저장 목록(필터로 숨긴 카드 포함)
+export const liveIds = (cards: Card[]) => cards.filter((c) => c.state !== 'home').map((c) => c.visitId);
 
-// etc 줄 상태 글자 — KOS 화면 말(대기중 · 준비중 · 호출함 · 진행중 · 완료 · 취소). kosStatus 가 없으면 state 로
-const KOS_STATUS: Record<string, string> = {
-  NOT_STARTED: '대기중',
-  READY: '준비중',
-  WAITING: '호출함',
-  IN_PROGRESS: '진행중',
-  PROGRESS: '진행중',
-  DONE: '완료',
-  COMPLETED: '완료',
-  CANCELED: '취소',
-  CANCELLED: '취소',
-};
-export function etcStatus(p: Procedure): string {
-  if (p.kosStatus && KOS_STATUS[p.kosStatus]) return KOS_STATUS[p.kosStatus];
-  return p.state === 'done' ? '완료' : p.state === 'doing' ? '진행중' : '대기중';
+// 방향 따라 끼우기(§5.12) — 앞 · 뒤 판정은 드래그 시작 때의 순서(ids) 기준. 앞이던 카드 → 대상 뒤 · 뒤이던 카드 → 대상 앞
+export function moveCard(ids: number[], from: number, target: number): number[] {
+  const fi = ids.indexOf(from);
+  const ti = ids.indexOf(target);
+  if (fi < 0 || ti < 0 || from === target) return ids;
+  const rest = ids.filter((id) => id !== from);
+  const at = rest.indexOf(target) + (fi < ti ? 1 : 0);
+  return [...rest.slice(0, at), from, ...rest.slice(at)];
 }
 
-// 시술 표시 순서 — ETCETERA 작업(sequence 순)을 맨 위에 따로, 그 아래 시술: 완료(완료 시각 순) → 진행 → 대기(sequence 순) — §5.9
+// 응답 뒤 「같음」(§5.12 ②) — 스냅샷 귀가 대기 아닌 카드 중 응답 visitIds 에 든 것의 차례 =
+// 응답 visitIds 중 그 스냅샷에서 귀가 대기 아닌 카드로 남은 것의 차례(새 카드 · 귀가 대기 · 사라진 카드는 비교에서 뺀다)
+export function sameOrder(cards: Card[], saved: number[]): boolean {
+  const live = liveIds(cards);
+  const a = live.filter((id) => saved.includes(id));
+  const b = saved.filter((id) => live.includes(id));
+  return a.length === b.length && a.every((id, i) => id === b[i]);
+}
+
+// 카드의 보이는 작업 = 「방 배정」만 뺀 전부(type 무관 · 2026-10-25). 작업 목록은 늘 이것으로 읽는다
+export const procsOf = (c: Card): Procedure[] => c.procedures.filter((p) => !p.isRoomTask);
+
+// 시술 표시 순서 — 진행 → 대기(sequence 순) → 완료(완료 시각 순) — §5.9 · 시안 M:1500.
+// KOS 작업 type(PROCEDURE · ETCETERA) 구분 없이 전부 같은 시술 줄 · 「방 배정」만 숨김(2026-10-25 사용자 결정)
 export function orderedProcs(c: Card): Procedure[] {
-  const etc = c.procedures.filter(isEtc).sort((a, b) => a.sequence - b.sequence);
-  const procs = c.procedures.filter((p) => !isEtc(p));
+  const procs = procsOf(c);
   const done = procs.filter((p) => p.state === 'done').sort((a, b) => (toMs(a.completedAt) ?? 0) - (toMs(b.completedAt) ?? 0));
   const doing = procs.filter((p) => p.state === 'doing');
   const wait = procs.filter((p) => p.state === 'wait').sort((a, b) => a.sequence - b.sequence);
-  return [...etc, ...done, ...doing, ...wait];
+  return [...doing, ...wait, ...done];
 }
 
 const callText = (board: Board, kind: 'all' | 'one', target: number | null) =>
@@ -112,7 +120,6 @@ export interface NeedView {
   state: string; // 상태 배지 자리 문구
   kind: string;
   min: number;
-  label: string; // 카드 머리 오른쪽 경과 글자
   hasLimit: boolean;
   limitText: string;
   overText: string;
@@ -133,7 +140,6 @@ export function needView(board: Board, c: Card, need: Need, now: number): NeedVi
     state,
     kind: need.why === 'anes' ? '마취' : need.why === 'call' ? '호출' : '귀가 대기',
     min,
-    label: (need.why === 'anes' ? '마취 ' : need.why === 'call' ? '호출 ' : '완료 뒤 ') + (min < 1 ? '1분 미만' : min + '분 경과'),
     hasLimit,
     limitText: hasLimit ? '기준 ' + limit + '분' : '',
     overText: hasLimit ? (over > 0 ? '+' + over + '분 초과' : '기준 도달') : '시술 완료 뒤 ' + min + '분',
@@ -141,11 +147,12 @@ export function needView(board: Board, c: Card, need: Need, now: number): NeedVi
   };
 }
 
-// 카드 강조 — 고른 카드 실선 · 나머지 흐림 0.45 · 귀가 대기 0.55
-export function cardLook(c: Card, focus: number | null): { outline: string; opacity: number } {
+// 카드 강조 — 고른 카드 실선. 불투명도 우선순위: 끄는 중 0.35 → 귀가 대기 0.55 → 강조 밖 0.45(§6.3 · 시안 M:1475)
+export function cardLook(c: Card, focus: number | null, dragging: boolean): { outline: string; opacity: number; shadow: string } {
   const on = focus != null && c.visitId === focus;
   return {
     outline: on ? '2px solid var(--ms-primary)' : 'none',
-    opacity: c.state === 'home' ? 0.55 : focus != null && !on ? 0.45 : 1,
+    opacity: dragging ? 0.35 : c.state === 'home' ? 0.55 : focus != null && !on ? 0.45 : 1,
+    shadow: dragging ? '0 0 0 2px var(--ms-primary)' : 'none',
   };
 }

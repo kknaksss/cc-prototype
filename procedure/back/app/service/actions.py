@@ -5,7 +5,7 @@
 
 from collections.abc import Callable
 
-from app.domain.clock import Clock
+from app.domain.clock import Clock, kst_day
 from app.domain.errors import BadRequest, Conflict, Forbidden, NotFound
 from app.domain.kos_ops import OpSpec, accept_op, call_ops, cancel_tasks_op, complete_op, flow_step_op, room_op
 from app.domain.models import FLOW_DOING, FLOW_DONE, FLOW_WAITING, TASK_DONE, TASK_READY, TASK_WAITING, Account, Call, Visit
@@ -196,7 +196,7 @@ class ActionService:
     # ------------------------------------------------------------------ [시작] · [종료] (D-29 ~ D-32)
     def _procedure(self, r: Rules, procedure_id: int):
         p = r.w.procedures.get(procedure_id)
-        if p is None or not p.present or p.kind != "procedure":  # etc(방 배정 등)는 조작 대상이 아니다
+        if p is None or not p.present or r.is_room_task(p):  # type 무관 조작 대상 · 「방 배정」만 아님(2026-10-25)
             raise NotFound()
         v = self._visit(r, p.visit_id)
         return v, p
@@ -240,13 +240,31 @@ class ActionService:
                 raise conflict("visit_home")
             if not r.all_done(v):
                 raise conflict("procedures_not_done")
-            # ① KOS 에서 끝나지 않은 비시술 작업(「방 배정」 등) 일괄 취소 → ② PROCEDURE_DONE(사용자 최종 결정 · E2E-3).
-            #    시술은 ccc 에서 전부 완료라(완료 반영 대기 중일 수 있어) 취소 대상에서 뺀다. 남은 게 없으면 ① 생략.
-            #    카드는 KOS 가 COMPLETED(데스크 귀가)가 되면 조회에서 빠진다(§5.1 조건 2)
-            proc_seqs = {p.kos_sequence for p in r.procedures(v)}
-            cancel = sorted(s for s in v.open_task_seqs if s not in proc_seqs)
+            # ① 안 끝난 「방 배정」 취소 → ② PROCEDURE_DONE(E2E-3). 다른 작업은 전부 완료여야 귀가 대기라 취소할 것이 없다
+            #    (2026-10-25). 「방 배정」이 없거나 이미 끝났으면 ① 생략. 카드는 KOS COMPLETED(데스크 귀가)면 조회에서 빠진다
+            cancel = sorted(p.kos_sequence for p in r.items(v) if r.is_room_task(p) and r.proc_state(p) != "done")
             ev = tx.add_event(now, actor, "home", v.id, {"cancelSequences": cancel})
             tx.update_visit(v.id, flow_step=FLOW_DONE, flow_step_at=now, home_requested_at=now)
             specs = [cancel_tasks_op(v.kos_id, cancel)] if cancel else []
             self._ops(tx, ev, v, [*specs, flow_step_op(v.kos_id, FLOW_DONE)])
         self._done()
+
+    # ------------------------------------------------------------------ 카드 순서(SPEC-003 0.4.0 §5.12 · KOS 없음)
+    def board_order(self, actor: str, visit_ids: list[int]) -> list[int]:
+        """오늘(KST) 순서를 통째로 바꾼다 → 거르기 뒤 저장된 목록. 역할 = 세 역할 모두(SPEC-004 §3.4).
+
+        같은 id 두 번만 400 — 지금 카드가 아닌 id(없는 visit · 사라진 카드 · 다른 날 · 귀가 대기)는 오류 없이 뺀다.
+        event_log(board_order) 1줄 · kos_op 0줄.
+        """
+        if len(set(visit_ids)) != len(visit_ids):
+            raise BadRequest("invalid_request", "visitIds: 같은 id 가 두 번 있어요")
+        now = self.clock.now()
+        day = kst_day(now)
+        with self.repo.tx() as tx:
+            r = Rules(tx.world(), now)
+            movable = {v.id for v in r.cards() if not r.is_home(v)}
+            kept = [vid for vid in visit_ids if vid in movable]
+            ev = tx.add_event(now, actor, "board_order", None, {"day": day, "visitIds": kept})
+            tx.put_board_order(day, kept, now, actor, ev)
+        self._done()
+        return kept

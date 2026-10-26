@@ -58,11 +58,12 @@ def test_schedule_upsert_card_and_body(env):
     assert len(snap.cards) == 1
     card = snap.cards[0]
     assert card.room.title == "A-룸1" and card.inAt == "2026-10-21T10:00:00+09:00"
-    # 방 배정(ETCETERA)도 보인다(E2E-4) — kind etc · 조작 불가
-    assert [(p.sequence, p.kind) for p in card.procedures] == [(1, "procedure"), (2, "procedure"), (3, "etc")]
-    etc = card.procedures[2]
-    assert etc.kosStatus == "READY" and card.procedures[0].kosStatus == "NOT_STARTED"
-    assert etc.title == "방 배정" and etc.state == "wait" and not (etc.pickable or etc.canStart or etc.canFinish)
+    # 작업은 type 무관 전부 실린다 — 「방 배정」(방 붙은 ETCETERA)도 싣고 isRoomTask(front 가 숨김 · 2026-10-25)
+    assert [(p.sequence, p.kind, p.isRoomTask) for p in card.procedures] == [
+        (1, "procedure", False), (2, "procedure", False), (3, "etc", True)]
+    room_row = card.procedures[2]
+    assert room_row.title == "방 배정" and room_row.kosStatus == "READY" and card.procedures[0].kosStatus == "NOT_STARTED"
+    assert room_row.state == "wait" and not (room_row.pickable or room_row.canStart or room_row.canFinish)
     assert card.customer.name == "고객1" and card.orderMemo == "메모"
     assert snap.sync.lastOkAt and snap.sync.inWindow
 
@@ -157,3 +158,68 @@ def test_tick_publishes(env):
     v = c.hub.version
     run(c.kos.tick())
     assert c.hub.version > v
+
+
+# ---- 방 판정(2026-10-25) — 카드 방 = type 무관 room 있는 작업 중 가장 늦은 배정
+def room(n):
+    return {"id": f"room-{n}", "zoneId": "zone-4", "title": f"A-룸{n}", "order": n}
+
+
+def test_room_on_procedure_only_makes_card(env):
+    """① 「방 배정」 없이 시술 작업에만 방 → 카드 방 · 입실 시각 = 그 작업 값."""
+    c, fake = env
+    sch = schedule(1, room=False, procs=2)
+    sch["tasks"][0].update(room=room(4), roomAssignedDateTimeUtc="2026-10-21T01:10:00Z")
+    sch["tasks"][1].update(room=room(4), roomAssignedDateTimeUtc="2026-10-21T01:05:00Z")
+    fake.schedules = [sch]
+    run(c.kos.startup())
+    run(c.kos.tick())
+    card = c.board.snapshot().cards[0]
+    assert card.room.title == "A-룸4" and card.inAt == "2026-10-21T10:10:00+09:00"
+    assert [(p.sequence, p.kind) for p in card.procedures] == [(1, "procedure"), (2, "procedure")]
+
+
+def test_room_latest_across_types(env):
+    """② ETCETERA 방 + PROCEDURE 방 → 배정이 가장 늦은 작업(type 무관)."""
+    c, fake = env
+    sch = fake.schedules[0]  # 「방 배정」 ETCETERA 3 = room-1 · 01:00
+    sch["tasks"][0].update(room=room(2), roomAssignedDateTimeUtc="2026-10-21T01:20:00Z")
+    run(c.kos.startup())
+    run(c.kos.tick())
+    card = c.board.snapshot().cards[0]
+    assert card.room.title == "A-룸2" and card.inAt == "2026-10-21T10:20:00+09:00"
+    sch["tasks"][2]["roomAssignedDateTimeUtc"] = "2026-10-21T01:30:00Z"  # 「방 배정」이 더 늦어지면 그 방
+    run(c.kos.tick())
+    assert c.board.snapshot().cards[0].room.title == "A-룸1"
+
+
+def test_room_tie_prefers_etcetera(env):
+    """배정 시각이 없거나 같으면(기본값) ETCETERA 먼저."""
+    c, fake = env
+    sch = fake.schedules[0]
+    sch["tasks"][2]["roomAssignedDateTimeUtc"] = None
+    sch["tasks"][0].update(room=room(2))
+    run(c.kos.startup())
+    run(c.kos.tick())
+    assert c.board.snapshot().cards[0].room.title == "A-룸1"
+
+
+def test_no_room_anywhere_no_card(env):
+    """③ 어느 작업에도 방 없음 → 카드 없음(라운지)."""
+    c, fake = env
+    fake.schedules = [schedule(1, room=False, procs=2)]
+    run(c.kos.startup())
+    run(c.kos.tick())
+    assert c.board.snapshot().cards == []
+
+
+def test_room_task_row_shown_but_excluded(env):
+    """④ 「방 배정」 줄은 실리되 isRoomTask · 판정에서 빠짐 — 시술 작업에 방이 붙어도 시술 줄은 isRoomTask 아님."""
+    c, fake = env
+    fake.rooms_on_procedures()
+    run(c.kos.startup())
+    run(c.kos.tick())
+    card = c.board.snapshot().cards[0]
+    assert card.room.title == "A-룸1"
+    assert [(p.sequence, p.isRoomTask, p.pickable) for p in card.procedures] == [(1, False, True), (2, False, True),
+                                                                                (3, True, False)]

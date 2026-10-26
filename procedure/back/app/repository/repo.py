@@ -170,6 +170,17 @@ class Tx:
     def update_visit(self, visit_id: int, **fields: Any) -> None:
         self._update("visit", visit_id, fields)
 
+    # ---------------------------------------------------------------- 카드 순서(SPEC-003 §5.12)
+    def board_order(self, day: str) -> list[int]:
+        """그날 순서 목록 — 행이 없으면 빈 목록(순서 없음 → 전부 입실순)."""
+        r = self.con.execute("SELECT visit_ids FROM board_order WHERE day = ?", (day,)).fetchone()
+        return [int(x) for x in json.loads(r["visit_ids"])] if r else []
+
+    def put_board_order(self, day: str, visit_ids: list[int], at: datetime, actor: str, event_id: int) -> None:
+        """그날 행을 통째로 바꾼다(마지막 쓰기가 이긴다)."""
+        self.con.execute("INSERT OR REPLACE INTO board_order (day, visit_ids, updated_at, updated_by, event_id) "
+                         "VALUES (?, ?, ?, ?, ?)", (day, _val(visit_ids), to_db(at), actor, event_id))
+
     # ---------------------------------------------------------------- KOS 반영 대기열
     def add_op(self, event_id: int | None, visit_id: int, api: str, path: str, body: dict[str, Any],
                expect: dict[str, Any], at: datetime, status: str = "pending") -> int:
@@ -334,3 +345,8 @@ class Repository:
     def world(self) -> World:
         with self.tx() as tx:
             return tx.world()
+
+    def world_and_order(self, day: str) -> tuple[World, list[int]]:
+        """스냅샷용 — 같은 트랜잭션에서 World 와 그날 카드 순서."""
+        with self.tx() as tx:
+            return tx.world(), tx.board_order(day)

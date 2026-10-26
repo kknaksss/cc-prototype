@@ -92,7 +92,7 @@ class Procedure:
     present: bool
     started_at: datetime | None
     room_kos_id: str | None = None
-    kind: str = "procedure"  # procedure | etc(ETCETERA — 표시만, 규칙 · 조작 대상 아님)
+    kind: str = "procedure"  # procedure | etc(ETCETERA) — 규칙은 type 무관 · etc + 방 = 「방 배정」만 예외(2026-10-25)
 
 
 @dataclass

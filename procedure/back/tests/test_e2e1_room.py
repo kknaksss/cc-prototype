@@ -77,26 +77,54 @@ def test_sync_keeps_local_room_while_pending(env):  # noqa: F811
         assert tx.procedures_of(vid)[1].room_kos_id == "room-1"
 
 
-def test_etc_items_shown_but_not_actionable(env):  # noqa: F811
-    """E2E-4 — 「방 배정」(ETCETERA)은 카드 목록에 kind etc 로 보이고 호출 · 시작 · 종료 · 전부 완료에서 빠진다."""
+def test_etc_items_are_procedures(env):  # noqa: F811
+    """① 2026-10-25 — 방 없는 ETCETERA(시트팩)는 일반 시술: 체크 · 호출 · 시작 · 종료 · 전부 완료에 같이 든다.
+
+    KOS 쓰기도 같은 API(change-tasks-room · assignees · call · complete) — type 으로 거르는 곳 없음.
+    ③ 「방 배정」(방 붙은 ETCETERA)은 스냅샷에 실리고 isRoomTask · 판정 · 조작에서 빠진다.
+    """
     c, fake = env
-    vid, procs = boot(c)
+    fake.schedules[0]["tasks"].append({**fake.schedules[0]["tasks"][0], "type": "ETCETERA", "sequence": 4, "order": 4,
+                                       "title": "시트팩", "status": "NOT_STARTED"})
+    run(c.kos.startup())
+    run(c.kos.tick())
     card = c.board.snapshot().cards[0]
-    etc = next(p for p in card.procedures if p.kind == "etc")
-    assert etc.state == "wait" and not (etc.pickable or etc.canStart or etc.canFinish) and etc.call is None
+    vid = card.visitId
+    assert [(p.sequence, p.kind, p.isRoomTask) for p in card.procedures] == [
+        (1, "procedure", False), (2, "procedure", False), (3, "etc", True), (4, "etc", False)]
+    room_row, pack = card.procedures[2], card.procedures[3]
+    assert room_row.title == "방 배정" and not (room_row.pickable or room_row.canStart or room_row.canFinish)
+    assert pack.state == "wait" and pack.pickable and not pack.canStart  # 담당의 없음 → [시작] 꺼짐(시술과 같은 규칙)
     import pytest
 
     from app.domain.errors import NotFound
 
     with pytest.raises(NotFound):
-        c.actions.start("t", etc.id)
+        c.actions.start("t", room_row.id)
     with pytest.raises(NotFound):
-        c.actions.create_call("t", vid, [etc.id], "all", None)
-    fake.schedules[0]["tasks"][0]["status"] = "DONE"
-    fake.schedules[0]["tasks"][1]["status"] = "DONE"  # 시술 둘 다 완료 · 방 배정은 READY 그대로
+        c.actions.create_call("t", vid, [room_row.id], "all", None)
+    c.actions.create_call("t", vid, [pack.id], "all", None)
+    run(c.kos.flush())
+    assert [n for n, b in writes(fake)] == ["change-tasks-room", "change-tasks-assignees", "call-tasks-doctors"]
+    assert all(b["sequences"] == [4] for _, b in writes(fake))
+    for _ in range(2):
+        run(c.kos.flush())
+        run(c.kos.tick())
+    from tests.helpers import admin
+
+    staff = {s.name: s.id for s in c.repo.world().staff.values()}
+    call = c.board.snapshot().calls[0].callId
+    c.actions.accept(admin(), call, staff["가 원장"])
+    c.actions.start("t", pack.id)
+    c.actions.finish("t", pack.id)
+    run(c.kos.flush())
+    assert writes(fake)[-1] == ("change-tasks-complete", {"scheduleId": "sch-1", "sequences": [4], "complete": True})
+    assert not c.board.snapshot().cards[0].canHome  # 시술 1 · 2 가 남음
+    for i in (0, 1):
+        fake.schedules[0]["tasks"][i]["status"] = "DONE"
     run(c.kos.tick())
     card = c.board.snapshot().cards[0]
-    assert card.canHome and not card.canCall  # etc 는 「전부 완료」 판정에서 빠진다
+    assert card.canHome and not card.canCall  # 「방 배정」(READY)은 「전부 완료」에서 기다리지 않는다
     fake.schedules[0]["tasks"][2]["status"] = "CANCELED"
     run(c.kos.tick())
-    assert [p.kind for p in c.board.snapshot().cards[0].procedures] == ["procedure", "procedure"]  # 취소된 etc 는 목록에서 빠진다
+    assert sorted(p.sequence for p in c.board.snapshot().cards[0].procedures) == [1, 2, 4]  # CANCELED 는 목록에서 빠진다

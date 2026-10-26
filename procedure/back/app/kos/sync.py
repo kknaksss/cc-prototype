@@ -35,13 +35,18 @@ def flatten_schedules(resp: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
-def _room_task(tasks: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """방 = ETCETERA 이고 room 있는 작업 — 여럿이면 roomAssignedDateTimeUtc 가 가장 늦은 것(OQ-511)."""
-    cands = [t for t in tasks if t.get("type") == "ETCETERA" and isinstance(t.get("room"), dict) and t["room"].get("id")]
+def _card_room_task(tasks: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """카드 방 = type 무관 room 있는 작업 중 roomAssignedDateTimeUtc 가 가장 늦은 것(2026-10-25 · OQ-511).
+
+    KOS 가 방을 「방 배정」(ETCETERA) 없이 시술(PROCEDURE) 작업에만 붙이기도 한다. 상태는 보지 않는다(취소된 「방 배정」의
+    방도 카드 방 — [귀가 대기] 뒤에도 방 그대로 · §5.7). 배정 시각이 같거나 없으면(기본값) ETCETERA 먼저 → 큰 sequence.
+    """
+    cands = [t for t in tasks if isinstance(t.get("room"), dict) and t["room"].get("id")]
     if not cands:
         return None
     floor = datetime.min.replace(tzinfo=UTC)
-    return max(cands, key=lambda t: parse(t.get("roomAssignedDateTimeUtc")) or floor)
+    return max(cands, key=lambda t: (parse(t.get("roomAssignedDateTimeUtc")) or floor, t.get("type") == "ETCETERA",
+                                     t.get("sequence") if isinstance(t.get("sequence"), int) else -1))
 
 
 def _ids(people: Any) -> list[str]:
@@ -88,7 +93,7 @@ class ScheduleApplier:
                     "nationality": visitor.get("nationality"), "is_new": bool(visitor.get("isNew")),
                     "chart_number": visitor.get("chartNumber"), "synced_at": now})
             tasks = [t for t in sch.get("tasks") or [] if isinstance(t, dict)]
-            rt = _room_task(tasks)
+            rt = _card_room_task(tasks)
             room_id = None
             if rt:
                 r = rt["room"]

@@ -1,8 +1,8 @@
 'use client';
 
-// 시술 현황판(SPEC-003 §6 · 시안 「Ceramique 시술현황판 v2」 r4). 틀은 cc 기능 front 의 desk 화면(사이드바 Menu · main 여백 · 제목 줄 · 토스트)
-import { useCallback, useEffect, useState } from 'react';
-import { Badge, Button, Menu } from '@medisolve-ai/medikit';
+// 시술 현황판(SPEC-003 §6 · 전체현황판 시안 「현황 › 시술 현황」 M:777-1098). 사이드바 없음 — main 여백 · 제목 줄 · 카드판 · 오른쪽 패널 · 토스트
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Badge } from '@medisolve-ai/medikit';
 import * as api from '@/lib/api';
 import { useBoardStream, useNow, useSession, useWide } from '@/lib/hooks';
 import { clearSession } from '@/lib/session';
@@ -12,16 +12,23 @@ import { HEADER_H } from '@/components/common/AppHeader';
 import { Aside, type TabId } from '@/components/procedures/Aside';
 import { CallPopover, placePopover, type CallDraft } from '@/components/procedures/CallPopover';
 import { OrderCard } from '@/components/procedures/OrderCard';
-import { LEGEND, filterFn, orderedCards, type FilterId, type SortKey } from '@/components/procedures/view';
+import { LEGEND, filterFn, liveIds, procsOf, moveCard, sameOrder, withLocalOrder, type FilterId } from '@/components/procedures/view';
 
-const PATH = '/procedures/live';
-const icon = (d: string) => (
-  <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-    <path d={d} />
-  </svg>
-);
-// 사이드바 — 묶음 · 항목 모두 「시술 현황」(§6.2)
-const MENUS = [{ name: '시술 현황', href: '/procedures', menus: [{ name: '시술 현황', href: PATH, icon: icon('M3 12h4l3-8 4 16 3-8h4') }] }];
+// 놓은 뒤 응답을 받고 이만큼 안에 「같음」 스냅샷이 없으면 그냥 스냅샷을 따른다(§5.12 ③)
+const SETTLE_MS = 3000;
+
+// 놓은 뒤 로컬 순서(§5.12 「놓은 뒤 화면」) — req = 마지막 요청 번호 · ids = 로컬 순서 · saved = 성공 응답 visitIds(받기 전엔 null)
+interface LocalOrder {
+  req: number;
+  ids: number[];
+  saved: number[] | null;
+}
+// 끄는 중 — from = 끄는 카드 · start = 드래그 시작 때의 전체 순서(앞 · 뒤 판정 기준) · over = 지금 올라간 카드
+interface Drag {
+  from: number;
+  start: number[];
+  over: number | null;
+}
 
 export default function ProceduresLivePage() {
   const session = useSession();
@@ -30,7 +37,9 @@ export default function ProceduresLivePage() {
   const now = useNow() + live.skew;
   const wide = useWide();
 
-  const [sort, setSort] = useState<SortKey>('in');
+  const [local, setLocal] = useState<LocalOrder | null>(null);
+  const [drag, setDrag] = useState<Drag | null>(null);
+  const reqNo = useRef(0);
   const [tab, setTab] = useState<TabId>('status');
   const [filter, setFilter] = useState<FilterId>('all');
   const [focus, setFocus] = useState<number | null>(null);
@@ -65,6 +74,30 @@ export default function ProceduresLivePage() {
     [flash],
   );
 
+  // 응답 뒤 「같음」이 성립하는 첫 스냅샷부터 서버 순서(§5.12 ②) — 렌더 중에 확인해 로컬 순서를 놓는다
+  if (local?.saved && board && sameOrder(board.cards, local.saved)) setLocal(null);
+
+  // 놓기 → 로컬 순서 → PUT(전체 순서 · 필터로 숨긴 카드 포함). 마지막 요청만 본다 · 앞선 요청의 응답 · 실패는 무시
+  const saveOrder = async (ids: number[]) => {
+    const req = ++reqNo.current;
+    setLocal({ req, ids, saved: null });
+    try {
+      const res = await api.putBoardOrder(ids);
+      if (req !== reqNo.current) return;
+      setLocal({ req, ids, saved: res.visitIds });
+      setTimeout(() => setLocal((l) => (l && l.req === req ? null : l)), SETTLE_MS);
+    } catch (e) {
+      if (req !== reqNo.current) return;
+      // 실패(가짜 보드 403 fake_board 포함 · 예외 없음) = 오류 토스트 + 바로 스냅샷 순서(§5.12 ④ · §6.3)
+      setLocal(null);
+      if (e instanceof api.ApiError && e.status === 401) {
+        clearSession();
+        return;
+      }
+      flash(e instanceof Error ? e.message : '요청을 처리하지 못했어요');
+    }
+  };
+
   if (!session) return null;
 
   const selectTab = (t: TabId) => {
@@ -85,7 +118,7 @@ export default function ProceduresLivePage() {
     onFinish: (_c: Card, p: Procedure) => void run(() => api.finishProcedure(p.id)),
     onHome: (c: Card) => void run(() => api.goHome(c.visitId), c.room.title + ' ' + c.customer.name + ' 귀가 대기'),
     onOpenCall: (c: Card, rect: DOMRect | null) => {
-      const ids = (picks[c.visitId] ?? []).filter((id) => c.procedures.some((p) => p.id === id && p.pickable));
+      const ids = (picks[c.visitId] ?? []).filter((id) => procsOf(c).some((p) => p.id === id && p.pickable));
       if (!ids.length) return;
       setDraft({ visitId: c.visitId, procedureIds: ids, ...placePopover(rect) });
     },
@@ -104,12 +137,35 @@ export default function ProceduresLivePage() {
   const reassign = (k: OpenCall) => void run(() => api.reassignAll(k.callId));
 
   const draftCard = draft && board ? board.cards.find((c) => c.visitId === draft.visitId) : undefined;
-  const cards = board ? orderedCards(board.cards, sort).filter(filterFn(filter, board)) : [];
-  const sortBtn = (k: SortKey, name: string) => (
-    <Button variant={sort === k ? 'solid' : 'outlined'} color={sort === k ? 'blue' : 'gray'} size="sm" onClick={() => setSort(k)}>
-      {name}
-    </Button>
-  );
+  // 카드 순서 = 스냅샷 cards[] 그대로 + 놓은 뒤 응답까지 로컬 순서(§5.12) · 끄는 동안 미리보기(드래그 시작 순서 기준 방향 따라)
+  const ordered = board ? withLocalOrder(board.cards, local?.ids ?? null) : [];
+  // 미리보기는 DOM 순서를 그대로 두고 격자 order 로만 옮겨 그린다 — 끄는 동안 카드 노드를 옮기지 않는다
+  const preview = drag && drag.over != null ? withLocalOrder(ordered, moveCard(drag.start, drag.from, drag.over)) : ordered;
+  const slot = new Map(preview.map((c, i) => [c.visitId, i]));
+  const cards = board ? ordered.filter(filterFn(filter, board)) : [];
+  const dragOf = (c: Card) => {
+    const order = slot.get(c.visitId) ?? 0;
+    if (c.state === 'home') return { dragging: false, order }; // 귀가 대기 = 끌기 · 놓기 모두 없음(§5.12)
+    return {
+      dragging: drag?.from === c.visitId,
+      order,
+      onStart: () => setDrag({ from: c.visitId, start: liveIds(ordered), over: null }),
+      onOver: () => {
+        if (drag && drag.from !== c.visitId && drag.over !== c.visitId) setDrag({ ...drag, over: c.visitId });
+      },
+      onDrop: () => {
+        if (!drag) return;
+        const target = drag.over ?? c.visitId;
+        setDrag(null);
+        if (target === drag.from) return;
+        const ids = moveCard(drag.start, drag.from, target);
+        if (ids.every((id, i) => id === drag.start[i])) return;
+        void saveOrder(ids);
+      },
+      // 놓지 않고 끝남(판 밖 · 취소) = 원래 순서
+      onEnd: () => setDrag(null),
+    };
+  };
 
   return (
     <div
@@ -117,7 +173,6 @@ export default function ProceduresLivePage() {
       style={{ display: 'flex', flexDirection: 'column', height: `calc(100vh - ${HEADER_H}px)`, background: 'var(--ms-gray-100, #f5f6f8)' }}
     >
       <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
-        {wide && <Menu menus={MENUS} currentPath={PATH} onMenuClick={(_href: string, e: React.MouseEvent) => e?.preventDefault()} />}
         <main
           style={{
             flex: 1,
@@ -130,16 +185,15 @@ export default function ProceduresLivePage() {
             overflow: 'hidden',
           }}
         >
-          {/* 제목 줄 — 시술 현황 · 마지막 KOS 동기화 · 범례 · [입실순 | 배치순] */}
+          {/* 제목 줄 — 시술 현황 · 마지막 KOS 동기화 · 조회 시간 밖 · 동기화 실패 · 범례 5(§6.2 · 시안 M:781-800) */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px 24px', flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
               <h1 className="text-typo-title-md-600 text-ms-gray-800" style={{ margin: 0, whiteSpace: 'nowrap' }}>
                 시술 현황
               </h1>
               <span className="text-typo-body-400 text-ms-gray-600" style={{ whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
-                명동점 · 마지막 KOS 동기화 {board?.sync.lastOkAt ? hms(board.sync.lastOkAt) : '—'}
+                마지막 KOS 동기화 {board?.sync.lastOkAt ? hms(board.sync.lastOkAt) : '—'}
               </span>
-              {/* 조회 시간 밖 · 동기화 실패 — 시안에 없음(§6.2 기본값) */}
               {board && !board.sync.inWindow && (
                 <span className="text-typo-caption-md-500 text-ms-gray-500" style={{ whiteSpace: 'nowrap' }}>
                   조회 시간 밖
@@ -158,11 +212,6 @@ export default function ProceduresLivePage() {
                     {k.name}
                   </Badge>
                 ))}
-              </div>
-              <span className="bg-ms-gray-300" style={{ width: 1, height: 14 }} />
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                {sortBtn('in', '입실순')}
-                {sortBtn('room', '배치순')}
               </div>
             </div>
           </div>
@@ -212,6 +261,7 @@ export default function ProceduresLivePage() {
                       picks={picks[c.visitId] ?? []}
                       focus={focus}
                       act={{ ...act, onPick: act.onPick(c) }}
+                      drag={dragOf(c)}
                     />
                   ))}
                   {!cards.length && (
@@ -230,7 +280,7 @@ export default function ProceduresLivePage() {
               <Aside
                 board={board}
                 now={now}
-                sort={sort}
+                ordered={ordered}
                 tab={tab}
                 onTab={selectTab}
                 filter={filter}

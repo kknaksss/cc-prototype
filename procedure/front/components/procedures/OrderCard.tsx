@@ -1,11 +1,12 @@
 'use client';
 
-// 가운데 오더지 카드 1장(SPEC-003 §6.3 · 시안 v2 r4). 버튼이 보이는 · 켜지는 조건은 스냅샷 값(§5.11) 그대로
+// 가운데 오더지 카드 1장(SPEC-003 §6.3 · 전체현황판 시안 M:808-905). 버튼이 보이는 · 켜지는 조건은 스냅샷 값(§5.11) 그대로
+import { Fragment } from 'react';
 import { Badge, Button } from '@medisolve-ai/medikit';
 import { MemoCard } from '@/lib/memo';
 import { hm, minutesSince, pad } from '@/lib/time';
 import type { Board, Card, Procedure } from '@/lib/types';
-import { STATE_BADGE, STATE_NAME, cardLook, checkBox, etcStatus, isEtc, needView, orderedProcs, procLine, visitCls } from './view';
+import { STATE_BADGE, STATE_NAME, cardLook, checkBox, needView, orderedProcs, procsOf, procLine, visitCls } from './view';
 
 export interface CardActions {
   onPick: (ids: number[]) => void; // 고른 시술 id 전체(바꾼 뒤)
@@ -16,6 +17,16 @@ export interface CardActions {
   onOpenCall: (c: Card, rect: DOMRect | null) => void;
 }
 
+// 카드 드래그(SPEC-003 §5.12 · §6.3) — 귀가 대기 카드는 끌 수 없고 놓을 곳도 아니다(handlers 없음)
+export interface CardDrag {
+  dragging: boolean; // 이 카드를 끄는 중
+  order: number; // 격자 안 그리는 자리(미리보기 포함)
+  onStart?: () => void;
+  onOver?: () => void;
+  onDrop?: () => void;
+  onEnd?: () => void;
+}
+
 export function OrderCard({
   board,
   card: c,
@@ -23,6 +34,7 @@ export function OrderCard({
   picks,
   focus,
   act,
+  drag,
 }: {
   board: Board;
   card: Card;
@@ -30,56 +42,35 @@ export function OrderCard({
   picks: number[];
   focus: number | null;
   act: CardActions;
+  drag: CardDrag;
 }) {
   const home = c.state === 'home';
   const need = c.need ? needView(board, c, c.need, now) : null;
   const anesOn = !!c.anesthesia.runningSince;
-  const look = cardLook(c, focus);
+  const look = cardLook(c, focus, drag.dragging);
   const badgeVariant = need ? 'danger' : home ? 'neutral' : anesOn ? 'purple' : STATE_BADGE[c.state];
   const badgeText = need ? need.state : !home && anesOn ? '마취 중' : STATE_NAME[c.state];
-  // 마취 길어짐은 마취 줄에서 빨갛게 보이므로 머리 오른쪽 글자는 뺀다(시안 hasLabel)
-  const label = need && c.need?.why !== 'anes' ? need.label : home ? '귀가 대기 ' + hm(c.homeAt) : '';
-  const labelCls = need ? 'text-typo-caption-md-600 text-red' : 'text-typo-caption-md-400 text-ms-gray-700';
 
-  const pickable = c.procedures.filter((p) => p.pickable && !isEtc(p));
+  const pickable = procsOf(c).filter((p) => p.pickable);
   const sel = picks.filter((id) => pickable.some((p) => p.id === id));
   const all = pickable.length > 0 && sel.length === pickable.length;
   const some = sel.length > 0;
-  const kos = c.kos.status === 'pending' ? 'KOS 반영 중' : c.kos.status === 'failed' ? 'KOS 반영 실패' : '';
-  const kosTitle = c.kos.failed.map((f) => f.op + (f.error ? ' — ' + f.error : '')).join('\n');
 
   const headEl = (
     <>
-      {/* 1. 머리 — 방 · 입실 / 상태 배지 · 경과 / 고객 줄 */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+      {/* 1. 머리 한 줄 — 방 · 상태 배지 / 입실. 경과 글자 · 반영 상태 줄은 그리지 않는다(SPEC-003 §6.3 · §6.7 #8 · #11) */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
           <span className="text-typo-title-lg-600 text-ms-gray-800" style={{ whiteSpace: 'nowrap' }}>
             {c.room.title}
           </span>
-          <span className="text-typo-caption-md-400 text-ms-gray-600" style={{ whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
-            {c.inAt ? '입실 ' + hm(c.inAt) : ''}
-          </span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, paddingTop: 2 }}>
           <Badge variant={badgeVariant} size="sm" dot>
             {badgeText}
           </Badge>
-          {label && (
-            <span className={labelCls} style={{ whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
-              {label}
-            </span>
-          )}
         </div>
-        {/* KOS 반영 상태 — 시안에 없는 자리(SPEC-003 §6.3 · §6.7 #8 기본값): 경과 글자 아래 작은 글자 */}
-        {kos && (
-          <span
-            title={kosTitle || undefined}
-            className={c.kos.status === 'failed' ? 'text-typo-caption-md-500 text-red' : 'text-typo-caption-md-400 text-ms-gray-500'}
-            style={{ alignSelf: 'flex-end', whiteSpace: 'nowrap' }}
-          >
-            {kos}
-          </span>
-        )}
+        <span className="text-typo-caption-md-400 text-ms-gray-600" style={{ whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
+          {c.inAt ? '입실 ' + hm(c.inAt) : ''}
+        </span>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'nowrap', minWidth: 0 }}>
         <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: '#3e3e3e' }} />
@@ -101,7 +92,7 @@ export function OrderCard({
         <span className={visitCls(c.customer.isNew)} style={{ flexShrink: 0, padding: '1px 6px', borderRadius: 4, whiteSpace: 'nowrap' }}>
           {c.customer.isNew ? '첫내원' : '재내원'}
         </span>
-        {/* 수납 필요 — 시안에 없음(§6.7 #7 기본값): 고객 줄 끝 Badge warning sm */}
+        {/* 수납 필요 — 고객 줄 끝 Badge warning sm(§6.7 #7 · 시안 M:825-827) */}
         {c.paymentRequired && (
           <span style={{ flexShrink: 0, display: 'inline-flex' }}>
             <Badge variant="warning" size="sm">
@@ -191,98 +182,86 @@ export function OrderCard({
             </span>
           </div>
         )}
-        {orderedProcs(c).map((p) => {
-          // ETCETERA 작업(방 배정 등) — 같은 줄 상자 안에 제목 + KOS 상태 글자만(체크 · 버튼 · 호출 배지 없음)
-          if (isEtc(p))
-            return (
-              <div
-                key={p.id}
-                data-etc="true"
-                className="bg-ms-white border-ms-gray-200"
-                style={{ borderWidth: 1, borderStyle: 'solid', borderRadius: 8, padding: '8px 10px', display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}
-              >
-                <span className="text-typo-body-500 text-ms-gray-600" style={{ minWidth: 0, wordBreak: 'keep-all', overflowWrap: 'anywhere' }}>
-                  {p.title}
-                </span>
-                <span className="text-typo-caption-md-400 text-ms-gray-500" style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>
-                  {etcStatus(p)}
-                </span>
-              </div>
-            );
+        {orderedProcs(c).map((p, i, arr) => {
           const on = sel.includes(p.id);
           const line = procLine(board, p);
           const waitingCall = p.state === 'wait' && !!p.call && p.call.acceptedBy == null;
+          // 완료 묶음 앞 점선 — 위에 진행 · 대기 시술이 있을 때만(§5.9 · 시안 cut)
+          const prev = arr[i - 1];
+          const cut = p.state === 'done' && !!prev && prev.state !== 'done';
           return (
-            <div
-              key={p.id}
-              className={p.state === 'doing' ? 'bg-primary-100 border-primary' : on ? 'bg-ms-white border-primary' : 'bg-ms-white border-ms-gray-200'}
-              style={{
-                borderWidth: 1,
-                borderStyle: 'solid',
-                borderRadius: 8,
-                padding: '8px 10px',
-                display: 'grid',
-                gridTemplateColumns: '20px minmax(0,1fr) auto',
-                gap: '4px 8px',
-                alignItems: 'center',
-              }}
-            >
-              <span
-                role="checkbox"
-                aria-checked={on}
-                onClick={p.pickable ? () => act.onPick(on ? sel.filter((id) => id !== p.id) : [...sel, p.id]) : undefined}
-                className={
-                  p.state === 'done'
-                    ? 'bg-ms-gray-300 border-ms-gray-300 text-ms-white'
-                    : p.pickable
-                      ? checkBox(on)
-                      : 'bg-ms-gray-100 border-ms-gray-200 text-ms-gray-100'
-                }
-                style={{ ...BOX, cursor: p.pickable ? 'pointer' : 'default' }}
+            <Fragment key={p.id}>
+              {cut && <div className="border-ms-gray-300" style={{ margin: '4px 0', borderTopWidth: 1, borderTopStyle: 'dashed' }} />}
+              <div
+                className={p.state === 'doing' ? 'bg-primary-100 border-primary' : on ? 'bg-ms-white border-primary' : 'bg-ms-white border-ms-gray-200'}
+                style={{
+                  borderWidth: 1,
+                  borderStyle: 'solid',
+                  borderRadius: 8,
+                  padding: '8px 10px',
+                  display: 'grid',
+                  gridTemplateColumns: '20px minmax(0,1fr) auto',
+                  gap: '4px 8px',
+                  alignItems: 'center',
+                }}
               >
-                ✓
-              </span>
-              <span
-                className={
-                  p.state === 'done'
-                    ? 'text-typo-heading-sm-400 text-ms-gray-500'
-                    : p.state === 'doing'
-                      ? 'text-typo-title-sm-600 text-primary'
-                      : 'text-typo-heading-md-500 text-ms-gray-800'
-                }
-                style={{ minWidth: 0, wordBreak: 'keep-all', overflowWrap: 'anywhere' }}
-              >
-                {p.title}
-              </span>
-              <div data-compact-buttons="true" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                {/* 「호출함」은 누르지 못한다 — 수락은 호출 탭에서만(§6.7 #4) */}
-                {waitingCall && (
-                  <span data-badge-call="true" style={{ display: 'inline-flex' }}>
-                    <Badge variant="primary" size="sm">
-                      호출함
+                <span
+                  role="checkbox"
+                  aria-checked={on}
+                  onClick={p.pickable ? () => act.onPick(on ? sel.filter((id) => id !== p.id) : [...sel, p.id]) : undefined}
+                  className={
+                    p.state === 'done'
+                      ? 'bg-ms-gray-300 border-ms-gray-300 text-ms-white'
+                      : p.pickable
+                        ? checkBox(on)
+                        : 'bg-ms-gray-100 border-ms-gray-200 text-ms-gray-100'
+                  }
+                  style={{ ...BOX, cursor: p.pickable ? 'pointer' : 'default' }}
+                >
+                  ✓
+                </span>
+                <span
+                  className={
+                    p.state === 'done'
+                      ? 'text-typo-heading-sm-400 text-ms-gray-500'
+                      : p.state === 'doing'
+                        ? 'text-typo-title-sm-600 text-primary'
+                        : 'text-typo-heading-md-500 text-ms-gray-800'
+                  }
+                  style={{ minWidth: 0, wordBreak: 'keep-all', overflowWrap: 'anywhere' }}
+                >
+                  {p.title}
+                </span>
+                <div data-compact-buttons="true" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {/* 「호출함」은 누르지 못한다 — 수락은 호출 탭에서만(§6.7 #4) */}
+                  {waitingCall && (
+                    <span data-badge-call="true" style={{ display: 'inline-flex' }}>
+                      <Badge variant="primary" size="sm">
+                        호출함
+                      </Badge>
+                    </span>
+                  )}
+                  {!home && p.state === 'wait' && (
+                    <Button variant="outlined" color="blue" size="sm" disabled={!p.canStart} onClick={() => act.onStart(c, p)}>
+                      시작
+                    </Button>
+                  )}
+                  {!home && p.state === 'doing' && (
+                    <Button variant="solid" color="blue" size="sm" disabled={!p.canFinish} onClick={() => act.onFinish(c, p)}>
+                      종료
+                    </Button>
+                  )}
+                  {p.state === 'done' && (
+                    <Badge variant="neutral" size="sm">
+                      완료
                     </Badge>
-                  </span>
-                )}
-                {!home && p.state === 'wait' && (
-                  <Button variant="outlined" color="blue" size="sm" disabled={!p.canStart} onClick={() => act.onStart(c, p)}>
-                    시작
-                  </Button>
-                )}
-                {!home && p.state === 'doing' && (
-                  <Button variant="solid" color="blue" size="sm" disabled={!p.canFinish} onClick={() => act.onFinish(c, p)}>
-                    종료
-                  </Button>
-                )}
-                {p.state === 'done' && (
-                  <Badge variant="neutral" size="sm">
-                    완료
-                  </Badge>
-                )}
+                  )}
+                </div>
+                <span className={line.cls} style={{ gridColumn: '2 / -1', fontVariantNumeric: 'tabular-nums' }}>
+                  {line.text}
+                </span>
               </div>
-              <span className={line.cls} style={{ gridColumn: '2 / -1', fontVariantNumeric: 'tabular-nums' }}>
-                {line.text}
-              </span>
-            </div>
+            </Fragment>
           );
         })}
       </div>
@@ -316,6 +295,36 @@ export function OrderCard({
   return (
     <div
       data-visit={c.visitId}
+      draggable={!!drag.onStart}
+      onDragStart={
+        drag.onStart
+          ? (e: React.DragEvent<HTMLDivElement>) => {
+              e.dataTransfer.effectAllowed = 'move';
+              e.dataTransfer.setData('text/plain', String(c.visitId));
+              drag.onStart?.();
+            }
+          : undefined
+      }
+      // 놓을 곳 = dragenter · dragover 를 모두 막아야 한다(dragenter 를 안 막으면 미리보기로 옮겨 온 카드 위에서 drop 이 안 온다)
+      onDragEnter={drag.onOver ? (e: React.DragEvent<HTMLDivElement>) => e.preventDefault() : undefined}
+      onDragOver={
+        drag.onOver
+          ? (e: React.DragEvent<HTMLDivElement>) => {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = 'move';
+              drag.onOver?.();
+            }
+          : undefined
+      }
+      onDrop={
+        drag.onDrop
+          ? (e: React.DragEvent<HTMLDivElement>) => {
+              e.preventDefault();
+              drag.onDrop?.();
+            }
+          : undefined
+      }
+      onDragEnd={drag.onEnd}
       className={'cc-room ' + (c.need ? 'bg-ms-white border-red text-ms-gray-800' : 'bg-ms-white border-ms-gray-300 text-ms-gray-800')}
       style={{
         minWidth: 0,
@@ -330,6 +339,9 @@ export function OrderCard({
         outline: look.outline,
         outlineOffset: 2,
         opacity: look.opacity,
+        boxShadow: look.shadow,
+        order: drag.order,
+        cursor: drag.onStart ? 'grab' : undefined,
         transition: 'opacity 160ms ease, box-shadow 160ms ease',
       }}
     >

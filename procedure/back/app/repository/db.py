@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS procedure (
     present INTEGER NOT NULL DEFAULT 1,          -- KOS 작업 목록에 있나(빠지면 0 · 행은 남김)
     started_at TEXT, started_event_id INTEGER,   -- ccc 열
     room_kos_id TEXT,                            -- 작업에 들어간 방(KOS tasks[].room.id) — 호출 전 방 넣기 판단
-    kind TEXT NOT NULL DEFAULT 'procedure',      -- procedure(KOS PROCEDURE) | etc(ETCETERA — 「방 배정」 등 · 표시만)
+    kind TEXT NOT NULL DEFAULT 'procedure',      -- procedure(KOS PROCEDURE) | etc(ETCETERA) — etc + 방 = 「방 배정」
     UNIQUE (visit_id, kos_sequence)
 );
 -- ccc 원천
@@ -93,6 +93,11 @@ CREATE TABLE IF NOT EXISTS kos_token (
 );
 CREATE TABLE IF NOT EXISTS sync_state (
     key TEXT PRIMARY KEY, last_ok_at TEXT, last_error TEXT
+);
+CREATE TABLE IF NOT EXISTS board_order (     -- 카드 드래그 순서 · 하루 1행(SPEC-003 0.4.0 §3.2 · §5.12) · 전날 행은 안 읽는다
+    day TEXT PRIMARY KEY,                    -- KST 날짜 YYYY-MM-DD
+    visit_ids TEXT NOT NULL DEFAULT '[]',    -- 귀가 대기 아닌 카드의 visit id(앞에서부터)
+    updated_at TEXT NOT NULL, updated_by TEXT NOT NULL, event_id INTEGER
 );
 """
 

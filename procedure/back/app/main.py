@@ -76,7 +76,7 @@ def create_app(settings: Settings | None = None, container: Container | None = N
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[settings.proc_front_origin],
-        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_methods=["GET", "POST", "PUT", "OPTIONS"],  # PUT = 카드 순서(§7.3)
         allow_headers=["*"],
     )
 

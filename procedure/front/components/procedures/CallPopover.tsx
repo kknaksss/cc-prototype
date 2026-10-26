@@ -4,6 +4,7 @@
 import { useState } from 'react';
 import { Button } from '@medisolve-ai/medikit';
 import type { Board, Card, CallTarget } from '@/lib/types';
+import { procsOf } from './view';
 
 export interface CallDraft {
   visitId: number;
@@ -72,7 +73,7 @@ export function CallPopover({
   const text = q.replace(/\s+/g, '');
   const recs = rows.filter((r) => !text || r.name.replace(/\s+/g, '').includes(text));
   const picked = rows.filter((r) => r.on);
-  const procs = card.procedures.slice().sort((a, b) => a.sequence - b.sequence).filter((p) => draft.procedureIds.includes(p.id));
+  const procs = procsOf(card).sort((a, b) => a.sequence - b.sequence).filter((p) => draft.procedureIds.includes(p.id));
   const doctorName = pick?.kind === 'one' ? (board.doctors.find((d) => d.id === pick.doctorId)?.name ?? '') : '';
   const cta = !pick ? '의사를 선택하세요' : pick.kind === 'one' ? doctorName + ' 호출' : '모든 의사 호출';
   const off = !pick || !procs.length;

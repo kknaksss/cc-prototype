@@ -52,7 +52,7 @@ def fake_snapshot(now: datetime) -> BoardSnapshot:
             "completedAt": ago(completed) if completed is not None else None,
             "doctor": doctor, "call": call,
             "pickable": state == "wait" and not home,
-            "canStart": can_start, "canFinish": state == "doing",
+            "canStart": can_start, "canFinish": state == "doing", "isRoomTask": False,
         }
 
     def call(cid: int, kind: str, created: float, target: int | None = None, by: int | None = None,
@@ -76,9 +76,9 @@ def fake_snapshot(now: datetime) -> BoardSnapshot:
                 proc(1001, 1, "레이저 토닝", "wait", call=c_all),
                 proc(1002, 2, "슈링크 300샷", "wait", call=c_all),
                 proc(1003, 3, "진정관리", "wait"),
-                {"id": 1004, "kind": "etc", "sequence": 4, "title": "방 배정", "state": "wait", "kosStatus": "READY",
-                 "startedAt": None,
-                 "completedAt": None, "doctor": None, "call": None, "pickable": False, "canStart": False, "canFinish": False},
+                {**proc(1004, 4, "시트팩", "wait"), "kind": "etc"},  # 방 없는 ETCETERA = 같은 시술 줄(2026-10-25)
+                {**proc(1005, 5, "방 배정", "wait"), "kind": "etc", "kosStatus": "READY", "pickable": False,
+                 "canStart": False, "isRoomTask": True},  # 「방 배정」 — 실리지만 front 가 숨긴다
             ],
             "canCall": True, "canHome": False,
             "need": {"why": "call", "since": c_all["createdAt"], "limitMin": 5},

@@ -27,7 +27,7 @@ class OpSpec:
 
 
 def room_op(schedule_id: str, sequences: list[int], room_kos_id: str) -> OpSpec:
-    """고른 시술 작업에 카드 방(「방 배정」 ETCETERA 작업의 방)을 넣는다 — 방 없는 작업은 호출이 400 roomId NotFound."""
+    """고른 작업(type 무관)에 카드 방을 넣는다 — 방 없는 작업은 호출이 400 roomId NotFound."""
     return OpSpec("internal", PATH_ROOM, {"scheduleId": schedule_id, "sequences": sequences, "roomId": room_kos_id},
                   {"tasks": sequences, "roomId": room_kos_id})
 

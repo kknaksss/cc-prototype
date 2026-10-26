@@ -32,3 +32,15 @@ def test_rejected_action_does_not_publish(client, auth, ctr):
     assert ctr.hub.version == before
     assert client.post(f"/api/visits/{v['visit']}/anesthesia/start", headers=auth).status_code == 200
     assert ctr.hub.version == before + 1
+
+
+def test_board_order_publishes_board(client, auth, ctr):
+    """WP-BE2 — 순서 저장 직후 board 1개(§7.5 ①) · 거절(400)은 발행 없음."""
+    seed_staff(ctr.repo)
+    a, b = seed_visit(ctr.repo, 1)["visit"], seed_visit(ctr.repo, 2)["visit"]
+    before = ctr.hub.version
+    assert client.put("/api/board/order", json={"visitIds": [a, a]}, headers=auth).status_code == 400
+    assert ctr.hub.version == before
+    assert client.put("/api/board/order", json={"visitIds": [b, a]}, headers=auth).status_code == 200
+    assert ctr.hub.version == before + 1
+    assert [c["visitId"] for c in ctr.hub.event().model_dump()["cards"]] == [b, a]

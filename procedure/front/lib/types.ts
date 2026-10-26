@@ -63,13 +63,14 @@ export interface ProcCall {
   acceptedAt: string | null;
 }
 
-// procedure = KOS PROCEDURE 작업 · etc = 「방 배정」 같은 ETCETERA 작업(보기만 — 버튼 · 체크 · 호출 없음)
+// procedure = KOS PROCEDURE 작업 · etc = ETCETERA 작업. 화면은 둘을 가르지 않는다(전부 같은 시술 줄 — 2026-10-25) · 스냅샷 모양 유지용
 export type ProcKind = 'procedure' | 'etc';
 
 export interface Procedure {
   id: number;
   kind?: ProcKind; // 없으면 procedure(back 반영 전 스냅샷 호환)
-  kosStatus?: string | null; // KOS 작업 status 원문(NOT_STARTED · READY · WAITING · IN_PROGRESS · DONE · CANCELED) — etc 줄 상태 글자
+  isRoomTask: boolean; // 「방 배정」(방이 붙은 ETCETERA) — 화면에 그리지 않는다(2026-10-25 · 판정도 back 이 뺀다)
+  kosStatus?: string | null; // KOS 작업 status 원문(NOT_STARTED · READY · WAITING · IN_PROGRESS · DONE · CANCELED) (화면에서 쓰지 않음)
   sequence: number;
   title: string;
   state: ProcState;
@@ -172,3 +173,9 @@ export interface Me {
 }
 
 export type CallTarget = { kind: 'all' } | { kind: 'one'; doctorId: number };
+
+// PUT /api/board/order(SPEC-003 §7.3) — 요청 {visitIds} · 응답 = 거르기 뒤 저장된 목록
+export interface BoardOrderResult {
+  ok: true;
+  visitIds: number[];
+}

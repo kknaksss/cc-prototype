@@ -82,7 +82,7 @@ class ProcCall(BaseModel):
 
 class Procedure(BaseModel):
     id: int
-    kind: Literal["procedure", "etc"]  # etc = KOS ETCETERA(「방 배정」 등) — 표시만, pickable · canStart · canFinish 모두 false
+    kind: Literal["procedure", "etc"]  # etc = KOS ETCETERA — 규칙은 type 무관(「방 배정」은 isRoomTask)
     sequence: int
     title: str
     state: ProcState
@@ -95,6 +95,7 @@ class Procedure(BaseModel):
     pickable: bool
     canStart: bool
     canFinish: bool
+    isRoomTask: bool  # 「방 배정」(방 붙은 ETCETERA) — front 는 그리지 않는다 · 판정에서 빠짐(2026-10-25)
 
 
 class Need(BaseModel):

@@ -1,4 +1,4 @@
-"""SPEC-004 WP1 — 계정 · 권한(§3 · §8.1): 역할 행렬(3 × 8) · 수락 규칙 · 토큰 · 계정 · actor."""
+"""SPEC-004 WP1 — 계정 · 권한(§3 · §8.1): 역할 행렬(3 × 8 + 순서) · 수락 규칙 · 토큰 · 계정 · actor."""
 
 import json
 
@@ -82,6 +82,12 @@ def test_role_matrix(env, role):
             assert r.status_code == 200, (role, op, r.json())
     # 조회 · SSE 도 세 역할 모두
     assert client.get("/api/board", headers=auth).status_code == 200
+    # 카드 순서(PUT /api/board/order · SPEC-004 §3.4 표 줄) — 세 역할 모두 · actor = 로그인 아이디
+    ids = [x["visitId"] for x in client.get("/api/board", headers=auth).json()["cards"] if x["state"] != "home"]
+    r = client.put("/api/board/order", json={"visitIds": ids[::-1]}, headers=auth)
+    assert r.status_code == 200 and r.json() == {"ok": True, "visitIds": ids[::-1]}, (role, r.json())
+    with c.repo.tx() as tx:
+        assert tx.events("board_order")[-1]["actor"] == IDS[role]
 
 
 def test_forbidden_before_conflict_and_not_found(env):

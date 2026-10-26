@@ -149,6 +149,28 @@ class Rules:
             return None if self.accept_of(call, p) else "call_not_accepted"
         return None if self.has_doctor(p) else "no_doctor"
 
+    # ---- 되돌리기(§5.13) — 409 코드 또는 None. 귀가 대기가 먼저
+    def undo_start_block(self, v: Visit, p: Procedure) -> str | None:
+        if self.is_home(v):
+            return "visit_home"
+        if self.is_room_task(p) or self.proc_state(p) != "doing":
+            return "procedure_not_doing"
+        return None
+
+    def undo_finish_block(self, v: Visit, p: Procedure) -> str | None:
+        if self.is_home(v):
+            return "visit_home"
+        if self.is_room_task(p) or self.proc_state(p) != "done":
+            return "procedure_not_done"
+        if p.started_at is None:  # KOS 에서만 완료 — 「시술 중」 기준인 ccc [시작] 시각이 없다
+            return "procedure_not_started"
+        return None
+
+    def back_to_waiting(self, v: Visit, p: Procedure) -> bool:
+        """[시작] 되돌리기 뒤 고객을 시술 대기로 돌리나 — 고객이 진행이고, p 를 뺀 시술(「방 배정」 제외) 중 진행 · 완료가 0."""
+        return v.flow_step == FLOW_DOING and not any(
+            self.proc_state(q) in ("doing", "done") for q in self.procedures(v) if q.id != p.id)
+
     # ---- 호출 · 수락(§5.4 · §5.5)
     def receivable(self, call: Call) -> list[Procedure]:
         """그 호출이 유효 호출인 시술 중 아직 수락 안 된 대기 시술(D-27)."""

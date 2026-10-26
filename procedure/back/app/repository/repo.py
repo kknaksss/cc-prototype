@@ -164,6 +164,10 @@ class Tx:
         return self._insert("call_accept", {"call_id": call_id, "procedure_id": procedure_id, "doctor_staff_id": doctor_id,
                                             "accepted_at": at, "event_id": event_id})
 
+    def started_event_id(self, procedure_id: int) -> int | None:
+        r = self.con.execute("SELECT started_event_id FROM procedure WHERE id = ?", (procedure_id,)).fetchone()
+        return r["started_event_id"] if r else None
+
     def update_procedure(self, procedure_id: int, **fields: Any) -> None:
         self._update("procedure", procedure_id, fields)
 

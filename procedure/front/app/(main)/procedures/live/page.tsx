@@ -2,7 +2,7 @@
 
 // 시술 현황판(SPEC-003 §6 · 전체현황판 시안 「현황 › 시술 현황」 M:777-1098). 사이드바 없음 — main 여백 · 제목 줄 · 카드판 · 오른쪽 패널 · 토스트
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Badge } from '@medisolve-ai/medikit';
+import { Badge, TooltipProvider } from '@medisolve-ai/medikit';
 import * as api from '@/lib/api';
 import { useBoardStream, useNow, useSession, useWide } from '@/lib/hooks';
 import { clearSession } from '@/lib/session';
@@ -12,10 +12,17 @@ import { HEADER_H } from '@/components/common/AppHeader';
 import { Aside, type TabId } from '@/components/procedures/Aside';
 import { CallPopover, placePopover, type CallDraft } from '@/components/procedures/CallPopover';
 import { OrderCard } from '@/components/procedures/OrderCard';
+import { UndoConfirm, type UndoKind, type UndoTarget } from '@/components/procedures/UndoConfirm';
 import { LEGEND, filterFn, liveIds, procsOf, moveCard, sameOrder, withLocalOrder, type FilterId } from '@/components/procedures/view';
 
 // 놓은 뒤 응답을 받고 이만큼 안에 「같음」 스냅샷이 없으면 그냥 스냅샷을 따른다(§5.12 ③)
 const SETTLE_MS = 3000;
+// 토스트 시간 — 읽기용 2.6초(시안 M:1369) · [되돌리기] 가 있는 토스트만 5초(§5.13)
+const TOAST_MS = 2600;
+const UNDO_TOAST_MS = 5000;
+
+// 되돌리기 성공 토스트 문구(§6.3)
+const UNDONE: Record<UndoKind, string> = { start: ' 시술 대기로 되돌림', finish: ' 시술 중으로 되돌림' };
 
 // 놓은 뒤 로컬 순서(§5.12 「놓은 뒤 화면」) — req = 마지막 요청 번호 · ids = 로컬 순서 · saved = 성공 응답 visitIds(받기 전엔 null)
 interface LocalOrder {
@@ -46,21 +53,24 @@ export default function ProceduresLivePage() {
   // 카드에서 고른 호출할 시술 — 카드(visitId)마다 procedure id
   const [picks, setPicks] = useState<Record<number, number[]>>({});
   const [draft, setDraft] = useState<CallDraft | null>(null);
-  // 토스트 — 시안 문구 · 2.6초 · 되돌리기 없음(D-28). n 이 바뀌면 타이머를 다시 건다
-  const [toast, setToast] = useState<{ text: string; n: number } | null>(null);
-  const flash = useCallback((text: string) => setToast((t) => ({ text, n: (t?.n ?? 0) + 1 })), []);
+  // 토스트 — 시안 문구 · 2.6초. [시작] · [종료] 성공 토스트만 [되돌리기](undo) + 5초(§5.13 — 호출 · 수락 · 마취 · 귀가 대기는 되돌리기 없음 그대로 · D-28)
+  // 새 토스트가 앞 토스트(와 그 [되돌리기])를 바꾼다 = 토스트 되돌리기는 이 화면의 마지막 [시작] · [종료] 하나만. n 이 바뀌면 타이머를 다시 건다
+  const [toast, setToast] = useState<{ text: string; n: number; undo?: UndoTarget } | null>(null);
+  const flash = useCallback((text: string, undo?: UndoTarget) => setToast((t) => ({ text, n: (t?.n ?? 0) + 1, undo })), []);
   useEffect(() => {
     if (!toast) return;
-    const t = setTimeout(() => setToast(null), 2600);
+    const t = setTimeout(() => setToast(null), toast.undo ? UNDO_TOAST_MS : TOAST_MS);
     return () => clearTimeout(t);
   }, [toast]);
+  // 줄 아이콘으로 연 되돌리기 확인 모달(§5.13 ②)
+  const [confirm, setConfirm] = useState<UndoTarget | null>(null);
 
-  // 조작 → 응답 {ok…} 만 · 화면은 뒤따르는 board 이벤트로 바뀐다(§7.5). 되돌리기 없음(D-28)
+  // 조작 → 응답 {ok…} 만 · 화면은 뒤따르는 board 이벤트로 바뀐다(§7.5). undo 가 있으면 성공 토스트에 [되돌리기]
   const run = useCallback(
-    async (fn: () => Promise<unknown>, msg?: string) => {
+    async (fn: () => Promise<unknown>, msg?: string, undo?: UndoTarget) => {
       try {
         await fn();
-        if (msg) flash(msg);
+        if (msg) flash(msg, undo);
         return true;
       } catch (e) {
         if (e instanceof api.ApiError && e.status === 401) {
@@ -100,6 +110,19 @@ export default function ProceduresLivePage() {
 
   if (!session) return null;
 
+  const undoOf = (c: Card, p: Procedure, kind: UndoKind): UndoTarget => ({ kind, procedureId: p.id, room: c.room.title, title: p.title });
+  // 되돌리기 API — 토스트 [되돌리기](모달 없음)와 확인 모달 [되돌리기] 가 같이 쓴다. 실패 = back message 오류 토스트(가짜 보드 403 fake_board 포함)
+  const undo = (t: UndoTarget) =>
+    void run(() => (t.kind === 'start' ? api.undoStart(t.procedureId) : api.undoFinish(t.procedureId)), t.room + ' · ' + t.title + UNDONE[t.kind]);
+  const undoFromToast = (t: UndoTarget) => {
+    setToast(null);
+    undo(t);
+  };
+  const undoFromModal = (t: UndoTarget) => {
+    setConfirm(null);
+    undo(t);
+  };
+
   const selectTab = (t: TabId) => {
     // 탭을 옮기면 필터 · 고른 카드 모두 풀림(r3 #20)
     setTab(t);
@@ -114,8 +137,9 @@ export default function ProceduresLivePage() {
         () => (c.anesthesia.canEnd ? api.anesEnd(c.visitId) : api.anesStart(c.visitId)),
         c.room.title + (c.anesthesia.canEnd ? ' 마취 종료' : ' 마취 시작'),
       ),
-    onStart: (_c: Card, p: Procedure) => void run(() => api.startProcedure(p.id)),
-    onFinish: (_c: Card, p: Procedure) => void run(() => api.finishProcedure(p.id)),
+    onStart: (c: Card, p: Procedure) => void run(() => api.startProcedure(p.id), c.room.title + ' · ' + p.title + ' 시작', undoOf(c, p, 'start')),
+    onFinish: (c: Card, p: Procedure) => void run(() => api.finishProcedure(p.id), c.room.title + ' · ' + p.title + ' 종료', undoOf(c, p, 'finish')),
+    onUndo: (c: Card, p: Procedure, kind: UndoKind) => setConfirm(undoOf(c, p, kind)),
     onHome: (c: Card) => void run(() => api.goHome(c.visitId), c.room.title + ' ' + c.customer.name + ' 귀가 대기'),
     onOpenCall: (c: Card, rect: DOMRect | null) => {
       const ids = (picks[c.visitId] ?? []).filter((id) => procsOf(c).some((p) => p.id === id && p.pickable));
@@ -252,18 +276,21 @@ export default function ProceduresLivePage() {
                     alignContent: 'start',
                   }}
                 >
-                  {cards.map((c) => (
-                    <OrderCard
-                      key={c.visitId}
-                      board={board}
-                      card={c}
-                      now={now}
-                      picks={picks[c.visitId] ?? []}
-                      focus={focus}
-                      act={{ ...act, onPick: act.onPick(c) }}
-                      drag={dragOf(c)}
-                    />
-                  ))}
+                  {/* 줄 되돌리기 아이콘 툴팁(§6.3) — TooltipProvider 는 페이지에 하나 */}
+                  <TooltipProvider>
+                    {cards.map((c) => (
+                      <OrderCard
+                        key={c.visitId}
+                        board={board}
+                        card={c}
+                        now={now}
+                        picks={picks[c.visitId] ?? []}
+                        focus={focus}
+                        act={{ ...act, onPick: act.onPick(c) }}
+                        drag={dragOf(c)}
+                      />
+                    ))}
+                  </TooltipProvider>
                   {!cards.length && (
                     <span className="text-typo-body-400 text-ms-gray-500" style={{ padding: 12 }}>
                       {board.cards.length ? '조건에 맞는 고객 없음' : '시술 대기 중인 고객 없음'}
@@ -313,6 +340,16 @@ export default function ProceduresLivePage() {
               <span className="text-typo-body-500" style={{ whiteSpace: 'nowrap' }}>
                 {toast.text}
               </span>
+              {toast.undo && (
+                <button
+                  type="button"
+                  onClick={() => toast.undo && undoFromToast(toast.undo)}
+                  className="text-typo-body-600 text-primary-300"
+                  style={{ padding: 0, border: 'none', background: 'transparent', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                >
+                  되돌리기
+                </button>
+              )}
             </div>
           )}
         </main>
@@ -321,6 +358,7 @@ export default function ProceduresLivePage() {
       {board && draft && draftCard && (
         <CallPopover key={draft.visitId} board={board} card={draftCard} draft={draft} onClose={() => setDraft(null)} onSubmit={(t, l) => void sendCall(t, l)} />
       )}
+      <UndoConfirm target={confirm} onClose={() => setConfirm(null)} onConfirm={undoFromModal} />
     </div>
   );
 }

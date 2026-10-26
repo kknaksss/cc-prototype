@@ -53,6 +53,9 @@ def fake_snapshot(now: datetime) -> BoardSnapshot:
             "doctor": doctor, "call": call,
             "pickable": state == "wait" and not home,
             "canStart": can_start, "canFinish": state == "doing", "isRoomTask": False,
+            # 되돌리기 아이콘 예시(지어낸 값 · §5.13) — 진행 줄 · ccc [시작] 있는 완료 줄 · 귀가 대기 카드는 false
+            "canUndoStart": state == "doing" and not home,
+            "canUndoFinish": state == "done" and started is not None and not home,
         }
 
     def call(cid: int, kind: str, created: float, target: int | None = None, by: int | None = None,

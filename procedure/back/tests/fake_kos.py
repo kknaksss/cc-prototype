@@ -144,6 +144,9 @@ class FakeKos:
             elif name == "change-tasks-doctors":
                 t["doctors"] = [{"id": i, "name": ""} for i in body["doctorIds"]]
                 t["status"] = "READY"
+            elif name == "change-tasks-complete" and body.get("complete") is False:  # 완료 풀기 — 실 KOS = READY(WP-KOS K2)
+                t["status"] = "READY"
+                t["completedDateTimeUtc"] = None
             elif name == "change-tasks-complete":
                 t["status"] = "DONE"
                 t["completedDateTimeUtc"] = "2026-10-21T02:30:00Z"

@@ -66,6 +66,10 @@ export const reassignAll = (callId: number) => post<{ callId: number }>(`/api/ca
 export const startProcedure = (procedureId: number) =>
   post<{ ok: true; flowStepChanged: boolean }>(`/api/procedures/${procedureId}/start`);
 export const finishProcedure = (procedureId: number) => post<{ ok: true }>(`/api/procedures/${procedureId}/finish`);
+// §7.3 되돌리기(§5.13) — 본문 없음. undo-start 의 flowStepChanged = 고객을 시술 대기로 돌렸나
+export const undoStart = (procedureId: number) =>
+  post<{ ok: true; flowStepChanged: boolean }>(`/api/procedures/${procedureId}/undo-start`);
+export const undoFinish = (procedureId: number) => post<{ ok: true }>(`/api/procedures/${procedureId}/undo-finish`);
 export const goHome = (visitId: number) => post<{ ok: true }>(`/api/visits/${visitId}/home`);
 // §7.3 카드 순서 — 귀가 대기 아닌 카드 전부의 새 순서(필터로 숨긴 카드 포함). 응답 visitIds = 거르기 뒤 저장된 목록
 export const putBoardOrder = (visitIds: number[]) => request<BoardOrderResult>('/api/board/order', { method: 'PUT', body: { visitIds } });

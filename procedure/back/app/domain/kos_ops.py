@@ -52,6 +52,12 @@ def complete_op(schedule_id: str, sequence: int) -> OpSpec:
                   {"tasks": [sequence], "status": "DONE"})
 
 
+def uncomplete_op(schedule_id: str, sequence: int) -> OpSpec:
+    """[종료] 되돌리기(SPEC-003 §5.13 · §8) — 완료 풀기. 확인 = DONE 이 아님(실 KOS 는 READY 로 감 · WP-KOS K2)."""
+    return OpSpec("internal", PATH_COMPLETE, {"scheduleId": schedule_id, "sequences": [sequence], "complete": False},
+                  {"tasks": [sequence], "statusNot": "DONE"})
+
+
 def cancel_tasks_op(schedule_id: str, sequences: list[int]) -> OpSpec:
     """[귀가 대기] ① 남은 비시술 작업(「방 배정」 등) 일괄 취소 — 방 빼기는 시술 현황에서 한다(사용자 결정 · 1차 HAR)."""
     return OpSpec("internal", PATH_CANCEL, {"scheduleId": schedule_id, "sequences": sequences, "reason": "CANCEL"},

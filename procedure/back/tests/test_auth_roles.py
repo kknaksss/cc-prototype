@@ -1,4 +1,4 @@
-"""SPEC-004 WP1 — 계정 · 권한(§3 · §8.1): 역할 행렬(3 × 8 + 순서) · 수락 규칙 · 토큰 · 계정 · actor."""
+"""SPEC-004 WP1 — 계정 · 권한(§3 · §8.1): 역할 행렬(3 × 10 + 순서) · 수락 규칙 · 토큰 · 계정 · actor."""
 
 import json
 
@@ -35,8 +35,8 @@ def counts(c):
         return len(tx.events()), len(tx.ops()), len(tx.world().calls), len(tx.world().accepts)
 
 
-# ------------------------------------------------------------------ 역할 행렬(3 × 8)
-OPS = ["anes_start", "anes_end", "call", "reassign", "accept", "start", "finish", "home"]
+# ------------------------------------------------------------------ 역할 행렬(3 × 10)
+OPS = ["anes_start", "anes_end", "call", "reassign", "accept", "start", "finish", "home", "undo_start", "undo_finish"]
 
 
 def prepare(c, staff, n, op):
@@ -62,8 +62,13 @@ def prepare(c, staff, n, op):
     if op == "finish":
         a.start("setup", pid)
         return f"/api/procedures/{pid}/finish", None
+    if op == "undo_start":  # 되돌리기(SPEC-003 §5.13 · SPEC-004 §3.4) — 세 역할 모두
+        a.start("setup", pid)
+        return f"/api/procedures/{pid}/undo-start", None
     a.start("setup", pid)
     a.finish("setup", pid)
+    if op == "undo_finish":
+        return f"/api/procedures/{pid}/undo-finish", None
     return f"/api/visits/{vid}/home", None
 
 

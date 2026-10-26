@@ -126,4 +126,6 @@ CONFLICT_CODES = (
     "no_doctor",
     "procedure_not_started",
     "procedures_not_done",
+    "procedure_not_doing",
+    "procedure_not_done",
 )

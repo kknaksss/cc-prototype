@@ -102,6 +102,7 @@ class BoardService:
             doctor=s.DoctorRef(id=doc.id, name=doc.name) if doc else None, call=pc,
             pickable=r.pickable(v, p), canStart=r.start_block(v, p) is None,
             canFinish=not r.is_room_task(p) and state == "doing", isRoomTask=r.is_room_task(p),
+            canUndoStart=r.undo_start_block(v, p) is None, canUndoFinish=r.undo_finish_block(v, p) is None,
         )
 
     def _card(self, r: Rules, v: Visit) -> s.Card:

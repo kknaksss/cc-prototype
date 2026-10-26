@@ -5,9 +5,18 @@
 
 from collections.abc import Callable
 
-from app.domain.clock import Clock, kst_day
+from app.domain.clock import Clock, iso, kst_day
 from app.domain.errors import BadRequest, Conflict, Forbidden, NotFound
-from app.domain.kos_ops import OpSpec, accept_op, call_ops, cancel_tasks_op, complete_op, flow_step_op, room_op
+from app.domain.kos_ops import (
+    OpSpec,
+    accept_op,
+    call_ops,
+    cancel_tasks_op,
+    complete_op,
+    flow_step_op,
+    room_op,
+    uncomplete_op,
+)
 from app.domain.models import FLOW_DOING, FLOW_DONE, FLOW_WAITING, TASK_DONE, TASK_READY, TASK_WAITING, Account, Call, Visit
 from app.domain.rules import Rules
 from app.repository.repo import Repository, Tx
@@ -26,6 +35,8 @@ MESSAGES = {
     "no_doctor": "담당의가 없어요",
     "procedure_not_started": "시작하지 않은 시술이에요",
     "procedures_not_done": "끝나지 않은 시술이 있어요",
+    "procedure_not_doing": "진행 중인 시술이 아니에요",
+    "procedure_not_done": "완료된 시술이 아니에요",
 }
 
 
@@ -228,6 +239,44 @@ class ActionService:
             ev = tx.add_event(now, actor, "proc_finish", v.id, {"procedureId": p.id})
             tx.update_procedure(p.id, kos_status=TASK_DONE, completed_at=now)
             self._ops(tx, ev, v, [complete_op(v.kos_id, p.kos_sequence)])
+        self._done()
+
+    # ------------------------------------------------------------------ 되돌리기(§5.13 — D-28 을 [시작] · [종료]에 한해 뒤집음)
+    def undo_start(self, actor: str, procedure_id: int) -> bool:
+        """진행 → 시술 대기. 호출 · 수락 · 집도의는 그대로. 진행 · 완료가 0 이 되면 고객도 시술 대기 + flow-step op(항상).
+
+        → 고객을 시술 대기로 돌렸나(flowStepChanged).
+        """
+        now = self.clock.now()
+        with self.repo.tx() as tx:
+            r = Rules(tx.world(), now)
+            v, p = self._procedure(r, procedure_id)
+            block = r.undo_start_block(v, p)
+            if block:
+                raise conflict(block)
+            back = r.back_to_waiting(v, p)
+            ev = tx.add_event(now, actor, "proc_undo_start", v.id,
+                              {"procedureId": p.id, "startedAt": iso(p.started_at),
+                               "startedEventId": tx.started_event_id(p.id), "flowStepChanged": back})
+            tx.update_procedure(p.id, started_at=None, started_event_id=None)
+            if back:  # 첫 [시작]의 거울 — KOS 값을 따로 읽지 않고 늘 만든다(400 이면 같은 단계 규칙 · §8)
+                tx.update_visit(v.id, flow_step=FLOW_WAITING, flow_step_at=now)
+                self._ops(tx, ev, v, [flow_step_op(v.kos_id, FLOW_WAITING)])
+        self._done()
+        return back
+
+    def undo_finish(self, actor: str, procedure_id: int) -> None:
+        """완료 → 시술 중(옛 [시작] 시각 그대로). kos_status 즉시 값 = READY(WP-KOS K2). 고객 상태는 그대로."""
+        now = self.clock.now()
+        with self.repo.tx() as tx:
+            r = Rules(tx.world(), now)
+            v, p = self._procedure(r, procedure_id)
+            block = r.undo_finish_block(v, p)
+            if block:
+                raise conflict(block)
+            ev = tx.add_event(now, actor, "proc_undo_finish", v.id, {"procedureId": p.id, "completedAt": iso(p.completed_at)})
+            tx.update_procedure(p.id, completed_at=None, kos_status=TASK_READY)
+            self._ops(tx, ev, v, [uncomplete_op(v.kos_id, p.kos_sequence)])
         self._done()
 
     # ------------------------------------------------------------------ [귀가 대기] (D-33)

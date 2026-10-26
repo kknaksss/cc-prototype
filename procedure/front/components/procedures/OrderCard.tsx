@@ -2,10 +2,11 @@
 
 // 가운데 오더지 카드 1장(SPEC-003 §6.3 · 전체현황판 시안 M:808-905). 버튼이 보이는 · 켜지는 조건은 스냅샷 값(§5.11) 그대로
 import { Fragment } from 'react';
-import { Badge, Button } from '@medisolve-ai/medikit';
+import { Badge, Button, ResetIcon, Tooltip, TooltipContent, TooltipTrigger } from '@medisolve-ai/medikit';
 import { MemoCard } from '@/lib/memo';
 import { hm, minutesSince, pad } from '@/lib/time';
 import type { Board, Card, Procedure } from '@/lib/types';
+import type { UndoKind } from './UndoConfirm';
 import { STATE_BADGE, STATE_NAME, cardLook, checkBox, needView, orderedProcs, procsOf, procLine, visitCls } from './view';
 
 export interface CardActions {
@@ -13,6 +14,7 @@ export interface CardActions {
   onAnes: (c: Card) => void;
   onStart: (c: Card, p: Procedure) => void;
   onFinish: (c: Card, p: Procedure) => void;
+  onUndo: (c: Card, p: Procedure, kind: UndoKind) => void; // 줄 되돌리기 아이콘 → 확인 모달(§5.13)
   onHome: (c: Card) => void;
   onOpenCall: (c: Card, rect: DOMRect | null) => void;
 }
@@ -246,6 +248,9 @@ export function OrderCard({
                       시작
                     </Button>
                   )}
+                  {/* 되돌리기 아이콘 — 진행 줄 [종료] 왼쪽 · 완료 줄 「완료」 왼쪽. 조건은 스냅샷 canUndo* 만(§5.13) */}
+                  {p.state === 'doing' && p.canUndoStart && <UndoIcon onClick={() => act.onUndo(c, p, 'start')} />}
+                  {p.state === 'done' && p.canUndoFinish && <UndoIcon onClick={() => act.onUndo(c, p, 'finish')} />}
                   {!home && p.state === 'doing' && (
                     <Button variant="solid" color="blue" size="sm" disabled={!p.canFinish} onClick={() => act.onFinish(c, p)}>
                       종료
@@ -354,6 +359,43 @@ export function OrderCard({
     </div>
   );
 }
+
+// 26 × 26 아이콘 버튼(줄 버튼 26px 높이와 맞춤) · 테두리 없음 · gray-500 → 호버 primary · 호버 툴팁 「되돌리기」(§6.3)
+// medikit ResetIcon 은 시계 방향 새로고침 화살표라 좌우로 뒤집어 반시계(되돌리기) 방향으로 그린다
+function UndoIcon({ onClick }: { onClick: () => void }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          aria-label="되돌리기"
+          onClick={onClick}
+          className="text-ms-gray-500 hover:text-primary"
+          style={ICON_BTN}
+        >
+          <span style={{ display: 'inline-flex', transform: 'scaleX(-1)' }}>
+            <ResetIcon size="sm" />
+          </span>
+        </button>
+      </TooltipTrigger>
+      <TooltipContent>되돌리기</TooltipContent>
+    </Tooltip>
+  );
+}
+
+const ICON_BTN: React.CSSProperties = {
+  width: 26,
+  height: 26,
+  padding: 0,
+  border: 'none',
+  borderRadius: 6,
+  background: 'transparent',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  flexShrink: 0,
+  cursor: 'pointer',
+};
 
 const BOX: React.CSSProperties = {
   width: 20,

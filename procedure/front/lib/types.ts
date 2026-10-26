@@ -81,6 +81,9 @@ export interface Procedure {
   pickable: boolean;
   canStart: boolean;
   canFinish: boolean;
+  // 되돌리기 아이콘(SPEC-003 §5.13) — back 이 계산 · front 는 이 값으로만 그린다. 없으면 false(back 반영 전 스냅샷 호환)
+  canUndoStart?: boolean;
+  canUndoFinish?: boolean;
 }
 
 export interface Need {

@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.api import actions, auth, board, devices, interpret
+from app.api import actions, auth, board, devices, interpret, reservations
 from app.config import Settings, get_settings
 from app.container import Container, build_container
 from app.domain.errors import DomainError
@@ -45,8 +45,8 @@ def install_log_filters() -> None:
             logger.addFilter(DropQueryString())
 
 
-def _error(status: int, code: str, message: str) -> JSONResponse:
-    return JSONResponse(status_code=status, content={"error": {"code": code, "message": message}})
+def _error(status: int, code: str, message: str, extra: dict | None = None) -> JSONResponse:
+    return JSONResponse(status_code=status, content={"error": {"code": code, "message": message, **(extra or {})}})
 
 
 def create_app(settings: Settings | None = None, container: Container | None = None) -> FastAPI:
@@ -82,7 +82,7 @@ def create_app(settings: Settings | None = None, container: Container | None = N
 
     @app.exception_handler(DomainError)
     async def domain_error(_: Request, exc: DomainError) -> JSONResponse:
-        return _error(exc.status, exc.code, exc.message)
+        return _error(exc.status, exc.code, exc.message, exc.extra)
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
@@ -94,7 +94,7 @@ def create_app(settings: Settings | None = None, container: Container | None = N
     async def http_error(_: Request, exc: StarletteHTTPException) -> JSONResponse:
         return _error(exc.status_code, "not_found" if exc.status_code == 404 else "http_error", str(exc.detail))
 
-    for r in (auth.router, board.router, actions.router, interpret.router, devices.router):
+    for r in (auth.router, board.router, actions.router, interpret.router, devices.router, reservations.router):
         app.include_router(r)
 
     @app.get("/api/health", response_model=HealthResponse)

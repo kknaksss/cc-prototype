@@ -113,7 +113,9 @@ def test_out_of_window_no_queries(env):
     c, fake = env
     c.clock.set(OUT)
     run(c.kos.startup())  # 서버 시작 직원 · 방 1회는 시간과 상관없이(W8)
-    assert fake.paths() == ["exchange-token", "sign-in", "get-user-account", "get-accounts", "get-rooms"]
+    assert fake.paths()[:5] == ["exchange-token", "sign-in", "get-user-account", "get-accounts", "get-rooms"]
+    # 뒤이어 예약 목록(SPEC-005 §4.2 — 조회 시간 무관): 구역 · 그룹 · 다른 구역 방 · 유입 · 기타 작업
+    assert fake.paths()[5:] == ["get-zones", "get-reservation-groups", "get-rooms", "get-codes", "get-etcetera-tasks"]
     assert len(c.board.snapshot().doctors) == 2
     run(c.kos.master_once())  # 시작 뒤 1시간 루프는 조회 시간 안에서만
     assert fake.paths().count("get-accounts") == 1

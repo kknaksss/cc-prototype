@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import 'pretendard/dist/web/variable/pretendardvariable.css';
 import '@medisolve-ai/medikit/styles';
+import 'flag-icons/css/flag-icons.min.css';
 import './styles/ceramique-theme.css';
 import './styles/medikit-patches.css';
 import './globals.css';

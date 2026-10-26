@@ -1,4 +1,5 @@
-"""계정 만들기(SPEC-004 §3.1) — admin · nurse 는 env 로 1행, doctor 는 원장 목록(SPEC-003 §4.6) 한 명당 1행.
+"""계정 만들기(SPEC-004 §3.1) — admin · nurse · coordinator(SPEC-005 §3.4) 는 env 로 1행,
+doctor 는 원장 목록(SPEC-003 §4.6) 한 명당 1행.
 
 - env 값이 비면 그 계정 · 카드를 만들지 않는다(이미 있던 행은 비활성 — 아무도 못 들어오는 쪽이 기본)
 - 의사 카드 = `CCC_DOCTOR_KOS_ACCOUNT_ID` 원장 1명(login_id = `CCC_DOCTOR_ID`). 나머지 원장 = 내부 login_id · 카드 없음
@@ -29,6 +30,7 @@ class AccountService:
         with self.repo.tx() as tx:
             self._fixed(tx, "admin", self.s.ccc_admin_id, "관리자")
             self._fixed(tx, "nurse", self.s.ccc_nurse_id, self.s.ccc_nurse_name or "간호사")
+            self._fixed(tx, "coordinator", self.s.ccc_coord_id, self.s.ccc_coord_name or "코디")  # SPEC-005 §3.4
             self._doctors(tx)
             self._passwords(tx)
 
@@ -42,6 +44,7 @@ class AccountService:
         now = self.clock.now()
         source = {"admin": (self.s.ccc_admin_id, self.s.ccc_admin_password),
                   "nurse": (self.s.ccc_nurse_id, self.s.ccc_nurse_password),
+                  "coordinator": (self.s.ccc_coord_id, self.s.ccc_coord_password),
                   "doctor": (self.s.ccc_doctor_id, self.s.ccc_doctor_password)}
         for a in tx.accounts():
             login_id, password = source.get(a.role, ("", ""))

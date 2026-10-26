@@ -1,0 +1,576 @@
+"""front 계약 — 예약 현황(SPEC-005 §7). 필드 이름은 계약 그대로(camelCase).
+
+이 모양을 바꾸려면 SPEC-005 §7 부터 고친다. 시각 = ISO(KST 오프셋 +09:00) · 날짜 = `YYYY-MM-DD` · id = ccc 정수 id.
+"""
+
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt
+
+# §5.1 상태 2계층
+Main = Literal["reserved", "reception", "consultation", "procedure", "home", "canceled", "noshow"]
+Sub = Literal["waiting", "doing", "done"]
+Money = int | float
+
+
+class _Req(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class State(BaseModel):
+    main: Main
+    sub: Sub | None
+
+
+# ------------------------------------------------------------------ §7.2 스케줄 표
+class SyncInfo(BaseModel):
+    lastOkAt: str | None
+    lastError: str | None
+
+
+class Axis(BaseModel):
+    start: str  # "HH:MM"
+    end: str
+
+
+class Zone(BaseModel):
+    zoneId: int
+    title: str
+    order: int
+    isDefault: bool
+
+
+class ZoneCapacity(BaseModel):
+    zoneId: int
+    capacity: int
+
+
+class Span(BaseModel):
+    start: str  # "HH:MM"
+    end: str
+
+
+class Column(BaseModel):
+    groupId: int | None  # null = 「그룹 없음」 칸(§5.2)
+    title: str
+    order: int
+    intervalMinutes: int
+    count: int
+    capacities: list[ZoneCapacity]
+    open: list[Span]
+
+
+class CardCustomer(BaseModel):
+    customerId: int | None
+    name: str
+    phoneticName: str | None
+    gender: str | None
+    nationality: str | None
+    isNew: bool
+
+
+class BoardCard(BaseModel):
+    reservationId: int
+    resourceIndex: int
+    groupId: int | None
+    zoneId: int | None
+    start: str
+    end: str
+    customer: CardCustomer
+    state: State
+    paymentRequiredCount: int
+    draggable: bool
+
+
+class Slot(BaseModel):
+    groupId: int
+    zoneId: int
+    start: str
+    end: str
+    capacity: int | None  # 슬롯 사본이 없으면 null
+    count: int | None
+    full: bool
+
+
+class PlusRow(BaseModel):
+    groupId: int
+    start: str
+    plusAllowed: bool
+
+
+class BoardCounts(BaseModel):
+    total: int
+    reserved: int
+    reception: int
+    consultation: int
+    procedure: int
+    home: int
+    canceled: int
+    noshow: int
+
+
+class Notice(BaseModel):
+    id: int
+    content: str
+    releasedAt: str | None
+
+
+class Amount(BaseModel):
+    total: Money | None
+    paid: Money | None
+    currency: str | None
+
+
+class ClinicCustomer(BaseModel):
+    name: str
+    phoneticName: str | None
+    nationality: str | None
+
+
+class ClinicItem(BaseModel):
+    reservationId: int
+    zoneId: int | None
+    customer: ClinicCustomer
+    state: State
+    receptionAt: str | None
+    paymentRequiredCount: int
+    amount: Amount | None
+
+
+class ClinicCounts(BaseModel):
+    all: int
+    reception: int
+    consultation: int
+    procedure: int
+    home: int
+
+
+class Clinic(BaseModel):
+    counts: ClinicCounts
+    items: list[ClinicItem]
+
+
+class ReservationBoard(BaseModel):
+    date: str
+    isToday: bool
+    now: str
+    sync: SyncInfo
+    axis: Axis | None
+    zones: list[Zone]
+    columns: list[Column]
+    cards: list[BoardCard]
+    slots: list[Slot]
+    rows: list[PlusRow]
+    counts: BoardCounts
+    notices: list[Notice]
+    requests: list[dict]  # D-07 자리만 — 늘 빈 배열
+    clinic: Clinic | None
+
+
+# ------------------------------------------------------------------ §7.3 예약 상세
+class Phone(BaseModel):
+    countryCode: str | None
+    number: str | None
+
+
+class Sns(BaseModel):
+    type: str | None
+    accountId: str | None
+
+
+class Address(BaseModel):
+    address: str | None
+    detailed: str | None
+    zipCode: str | None
+
+
+class Personal(BaseModel):
+    name: str | None
+    phoneticName: str | None
+    gender: str | None
+    dateOfBirth: str | None  # yyyy-MM-dd
+    registrationNumber: str | None
+    passportNumber: str | None
+    passportSurname: str | None
+    passportGivenNames: str | None
+    passportExpiryDate: str | None  # yyyy-MM-dd
+    foreignRegistrationNumber: str | None
+    nationality: str | None
+    language: str | None
+    phone: Phone | None
+    additionalPhone: Phone | None
+    email: str | None
+    sns: Sns | None
+    address: Address | None
+
+
+class IdentityField(BaseModel):
+    key: str
+    label: str
+    filled: bool
+
+
+class Identity(BaseModel):
+    status: Literal["confirmed", "unconfirmed"]
+    checkedAt: str | None
+    checkedBy: str | None
+    method: str | None
+    kind: Literal["foreign", "domestic"]
+    fields: list[IdentityField]
+    complete: bool
+
+
+class DetailCustomer(BaseModel):
+    customerId: int
+    name: str
+    phoneticName: str | None
+    gender: str | None
+    nationality: str | None
+    isNew: bool
+    chartNumber: str | None
+    age: int | None
+    personal: Personal | None
+    personalError: str | None
+    remark: str | None
+    identity: Identity
+
+
+class Funnel(BaseModel):
+    name: str | None
+    detail: str | None
+
+
+class StaffRef(BaseModel):
+    staffId: int | None
+    name: str
+
+
+class NameRef(BaseModel):
+    name: str
+
+
+class ReservationInfo(BaseModel):
+    consultationRequired: bool
+    sedationRequired: bool
+    memo: str | None
+    funnel: Funnel | None
+    connectedChannel: str | None
+    counselor: StaffRef | None
+    assignee: NameRef | None
+    doctors: list[NameRef]
+    desiredDischargeAt: str | None
+
+
+class HealthItem(BaseModel):
+    title: str
+    answer: str | None
+    memo: str | None
+    needsCheck: bool
+    empty: bool
+
+
+class Health(BaseModel):
+    state: Literal["none", "ok", "error"]
+    submittedAt: str | None
+    needCount: int
+    items: list[HealthItem]
+
+
+class PrevProcedure(BaseModel):
+    title: str
+    status: str | None
+    doctors: list[str]
+
+
+class PreviousVisit(BaseModel):
+    date: str
+    start: str | None
+    result: Literal["completed", "noshow", "canceled", "other"]
+    resultRaw: str | None
+    zoneTitle: str | None
+    groupTitle: str | None
+    reservationMemo: str | None
+    consultationMemo: str | None
+    procedures: list[PrevProcedure]
+
+
+class Consultation(BaseModel):
+    state: Literal["none", "waiting", "doing", "done"]
+    counselor: StaffRef | None
+    since: str | None
+    calledAt: str | None
+    calledBy: str | None
+
+
+class Stages(BaseModel):
+    procedure: Literal["none", "waiting", "doing", "done"]
+    home: Literal["none", "waiting", "done"]
+
+
+class Flow(BaseModel):
+    receptionAt: str | None
+    roomTitle: str | None
+    receptionBy: str | None
+    consultation: Consultation | None
+    stages: Stages
+
+
+class Links(BaseModel):
+    purchase: str
+    prescription: str
+
+
+class Settlement(BaseModel):
+    paymentRequiredCount: int
+    amount: Amount | None
+    prescriptionCount: int
+    links: Links | None
+
+
+class RoomItem(BaseModel):
+    roomId: int
+    title: str
+    busy: bool
+    selected: bool
+
+
+class CounselorItem(BaseModel):
+    staffId: int
+    name: str
+    busyRoom: str | None
+
+
+class Can(BaseModel):
+    cancel: bool
+    editRoute: bool
+    receive: bool
+    callCounselor: bool
+    discharge: bool
+    editMemo: bool
+    editPersonal: bool
+    editRemark: bool
+    confirmIdentity: bool
+    unconfirmIdentity: bool
+
+
+class ReservationDetail(BaseModel):
+    reservationId: int
+    day: str
+    start: str | None
+    end: str | None
+    groupTitle: str | None
+    zoneId: int | None
+    zoneTitle: str | None
+    state: State
+    customer: DetailCustomer
+    reservation: ReservationInfo
+    health: Health
+    previousVisits: list[PreviousVisit]
+    flow: Flow | None
+    settlement: Settlement | None
+    rooms: list[RoomItem]
+    roomLocked: bool
+    receiveMode: Literal["new", "resume"] | None
+    counselors: list[CounselorItem]
+    can: Can
+
+
+# ------------------------------------------------------------------ §7.4 등록 모달 · 고객 검색
+class StaffItem(BaseModel):
+    staffId: int
+    name: str
+
+
+class FunnelItem(BaseModel):
+    funnelId: int
+    name: str
+
+
+class FormZone(BaseModel):
+    zoneId: int
+    title: str
+    available: bool
+
+
+class ReservationForm(BaseModel):
+    staff: list[StaffItem]
+    defaultAssigneeStaffId: int | None
+    doctors: list[StaffItem]
+    counselors: list[StaffItem]
+    funnels: list[FunnelItem]
+    zones: list[FormZone]
+    defaultZoneId: int | None
+
+
+class SearchItem(BaseModel):
+    customerId: int
+    chartNumber: str | None
+    name: str
+    phoneticName: str | None
+    dateOfBirth: str | None
+    nationality: str | None
+    isNew: bool
+
+
+class CustomerSearch(BaseModel):
+    items: list[SearchItem]
+    total: int
+    page: int
+    pageSize: int
+
+
+# ------------------------------------------------------------------ §7.5 조작 요청 · 응답
+class PhoneIn(_Req):
+    countryCode: str
+    number: str
+
+
+class SnsIn(_Req):
+    type: str
+    accountId: str
+
+
+class NewCustomer(_Req):
+    name: str
+    phoneticName: str | None = None
+    gender: str | None = None
+    dateOfBirth: str | None = None  # yyyy-MM-dd
+    nationality: str | None = None
+    phone: PhoneIn | None = None
+    email: str | None = None
+    sns: SnsIn | None = None
+    passportNumber: str | None = None
+
+
+class ExistingCustomerRef(_Req):
+    customerId: StrictInt
+
+
+class NewCustomerRef(_Req):
+    new: NewCustomer
+
+
+class CreateReservationRequest(_Req):
+    groupId: StrictInt
+    zoneId: StrictInt | None = None  # 생략 = §5.5 기본 구역
+    start: str
+    customer: ExistingCustomerRef | NewCustomerRef
+    consultationRequired: StrictBool
+    sedationRequired: StrictBool
+    assigneeStaffId: StrictInt | None = None
+    doctorStaffIds: list[StrictInt]
+    counselorStaffId: StrictInt | None = None
+    funnelId: StrictInt | None = None
+    funnelDetail: str | None = None
+    memo: str | None = None
+    desiredDischargeTime: str | None = None  # "HH:MM"
+
+
+class CreateReservationResponse(BaseModel):
+    reservationId: int
+    customerId: int
+
+
+class MoveRequest(_Req):
+    resourceIndex: StrictInt
+    groupId: StrictInt
+    start: str
+
+
+class CancelRequest(_Req):
+    reason: Literal["CANCELED", "NO_SHOW"]
+
+
+class MemoRequest(_Req):
+    memo: str
+
+
+class RouteRequest(_Req):
+    consultationRequired: StrictBool
+
+
+class ReceptionRequest(_Req):
+    roomId: StrictInt
+
+
+class ReceptionResponse(BaseModel):
+    ok: Literal[True] = True
+    flowStep: str | None
+
+
+class CounselorCallRequest(_Req):
+    staffId: StrictInt
+
+
+class AddressIn(_Req):
+    address: str | None = None
+    detailed: str | None = None
+    zipCode: str | None = None
+
+
+class PhoneOpt(_Req):
+    countryCode: str | None = None
+    number: str | None = None
+
+
+class SnsOpt(_Req):
+    type: str | None = None
+    accountId: str | None = None
+
+
+class PersonalIn(_Req):
+    """§7.3 personal 와 같은 키 — 보낸 키만 바꾼다(`model_fields_set`)."""
+
+    name: str | None = None
+    phoneticName: str | None = None
+    gender: str | None = None
+    dateOfBirth: str | None = None
+    registrationNumber: str | None = None
+    passportNumber: str | None = None
+    passportSurname: str | None = None
+    passportGivenNames: str | None = None
+    passportExpiryDate: str | None = None
+    foreignRegistrationNumber: str | None = None
+    nationality: str | None = None
+    language: str | None = None
+    phone: PhoneOpt | None = None
+    additionalPhone: PhoneOpt | None = None
+    email: str | None = None
+    sns: SnsOpt | None = None
+    address: AddressIn | None = None
+
+
+class PersonalRequest(_Req):
+    personal: PersonalIn
+
+
+class RemarkRequest(_Req):
+    memo: str
+
+
+class IdentityRequest(_Req):
+    status: Literal["confirmed", "unconfirmed"]
+
+
+# 409 코드(도메인 예외) — §7.5 표 · §5.14
+RESV_CONFLICT_CODES = (
+    "not_identifiable",
+    "duplicated_visitor",
+    "slot_full",
+    "not_movable",
+    "not_cancelable",
+    "reservation_closed",
+    "route_locked",
+    "not_receivable",
+    "identity_incomplete",
+    "room_busy",
+    "room_locked",
+    "room_task_missing",
+    "kos_slow",
+    "not_consultation",
+    "not_counselor",
+    "not_home_waiting",
+    "payment_required",
+    "identity_locked",
+    "kos_rejected",
+)

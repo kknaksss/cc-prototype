@@ -167,13 +167,14 @@ class ActionService:
     def accept(self, actor: Account, call_id: int, doctor_id: int | None, source: str = "app") -> list[int]:
         """수락(SPEC-004 §3.4) — 검사 순서: 역할 403(요청만 보고) → 404 → not_your_call 403 → 409.
 
-        doctor = 자기 원장으로만(doctorId 생략 또는 자기와 같음) · admin = 원장을 골라 doctorId 필수 · nurse = 못 함.
+        doctor = 자기 원장으로만(doctorId 생략 또는 자기와 같음) · admin · coordinator = 원장을 골라 doctorId 필수 ·
+        nurse = 못 함.
         """
         if actor.role == "doctor":
             if doctor_id is not None and doctor_id != actor.staff_id:
                 raise Forbidden("doctor_forbidden", "본인 이름으로만 수락할 수 있어요")
             doctor_id = actor.staff_id
-        elif actor.role == "admin":
+        elif actor.role in ("admin", "coordinator"):  # 코디 = 관리자와 같다(SPEC-005 §3.4 · r1 F2)
             if doctor_id is None:
                 raise BadRequest("invalid_request", "doctorId: 원장을 골라 주세요")
         else:

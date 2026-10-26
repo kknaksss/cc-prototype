@@ -133,3 +133,16 @@ a:hover {
 .cc-text:focus {
   border-color: #2498bd;
 }
+/* 예약 현황 상담 색 — DS 에 없는 초록(시안 M:24 인라인 클래스 그대로 · SPEC-005 §5.1) */
+.bg-cons {
+  background-color: #15803d !important;
+}
+.bg-cons-100 {
+  background-color: #e7f4ec !important;
+}
+.text-cons {
+  color: #15803d !important;
+}
+.border-cons {
+  border-color: #15803d !important;
+}

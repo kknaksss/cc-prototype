@@ -15,6 +15,7 @@ from app.config import Settings
 from app.domain.clock import Clock
 from app.kos.client import KosClient, KosError
 from app.kos.ops import OpSender
+from app.kos.reservation_sync import ReservationSync
 from app.kos.sync import KosSync
 from app.repository.repo import Repository
 
@@ -30,6 +31,7 @@ class KosRuntime:
         self.client = client or KosClient(settings, repo, clock)
         self.sync = KosSync(settings, repo, self.client, clock)
         self.sender = OpSender(repo, self.client, clock)
+        self.resv = ReservationSync(settings, repo, self.client, clock)  # 예약 현황(SPEC-005 §4.2)
         self.on_change = on_change
         self.on_staff: Callable[[], None] = lambda: None  # 직원 · 방 조회 뒤 — 계정(doctor) 맞추기(SPEC-004 §3.1)
         self._kick = asyncio.Event()
@@ -53,6 +55,11 @@ class KosRuntime:
             if await self.sync.sync_master(force=force):
                 self.on_staff()
                 self.on_change()
+        # 예약 목록(구역 · 그룹 · 다른 구역 방 · 유입 · 기타 작업) — 조회 시간과 상관없이 같은 주기(SPEC-005 §4.2)
+        try:
+            await self.resv.master()
+        except Exception as e:
+            log.error("KOS 예약 목록 오류: %s", type(e).__name__)
 
     async def tick(self) -> dict | None:
         """일정 조회 1번 + 대기 op 보내기 1번."""

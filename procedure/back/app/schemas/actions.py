@@ -15,7 +15,7 @@ class LoginRequest(_Req):
     password: str
 
 
-Role = Literal["admin", "doctor", "nurse"]
+Role = Literal["admin", "doctor", "nurse", "coordinator"]  # coordinator = SPEC-005 §3.4
 
 
 class LoginResponse(BaseModel):

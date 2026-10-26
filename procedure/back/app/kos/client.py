@@ -31,20 +31,31 @@ REFRESH_BEFORE = timedelta(minutes=10)
 class KosError(Exception):
     """KOS 호출 실패 — message 에 비밀값 · 응답 본문을 넣지 않는다."""
 
-    def __init__(self, message: str, status: int | None = None):
+    def __init__(self, message: str, status: int | None = None, name: str = "",
+                 error_properties: list[dict[str, str]] | None = None):
         super().__init__(message)
         self.status = status
+        self.name = name  # KOS 오류 이름(className 끝) — 없으면 빈 문자열
+        # 거절 이유(SPEC-005 §4.4) — [{key, reason}] 만 · 값은 싣지 않는다
+        self.error_properties = error_properties or []
+
+    def has(self, key: str, reason: str) -> bool:
+        return any(p.get("key") == key and p.get("reason") == reason for p in self.error_properties)
 
 
 def _error_of(resp: httpx.Response) -> KosError:
     name = ""
+    props: list[dict[str, str]] = []
     try:
         body = resp.json()
         if isinstance(body, dict):
             name = str(body.get("className") or body.get("code") or "").rsplit(".", 1)[-1][:60]
+            for p in body.get("errorProperties") or []:
+                if isinstance(p, dict) and (p.get("key") or p.get("reason")):
+                    props.append({"key": str(p.get("key") or "")[:80], "reason": str(p.get("reason") or "")[:60]})
     except ValueError:
         pass
-    return KosError(f"HTTP {resp.status_code}" + (f" {name}" if name else ""), resp.status_code)
+    return KosError(f"HTTP {resp.status_code}" + (f" {name}" if name else ""), resp.status_code, name, props)
 
 
 class KosClient:

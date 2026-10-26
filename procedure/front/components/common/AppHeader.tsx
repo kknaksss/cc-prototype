@@ -10,8 +10,19 @@ import { hm } from '@/lib/time';
 // 공통 헤더 높이 — 아래 화면은 100vh 에서 이만큼 뺀다
 export const HEADER_H = 57;
 
-// 상단 메뉴 = 「현황」 하나 + 호버 드롭다운(SPEC-003 §6.2 · 시안 M:67-81). 항목 = 「시술 현황」 하나(예약 현황 · 원내 현황은 없음 — OQ-520)
-const NAVS = [{ id: 'live', name: '현황', base: '/procedures', items: [{ name: '시술 현황', href: '/procedures/live' }] }];
+// 상단 메뉴 = 「현황」 하나 + 호버 드롭다운(SPEC-003 §6.2 · 시안 M:67-81). 항목 = 「시술 현황」 · 「예약 현황」(SPEC-005 §6.1 · D-49 — 뒤에 하나 더함)
+// 「현황」 글자 = 첫 항목(시술 현황) · 부모 활성 = 두 경로 중 하나(r1 W9) · 원내 현황은 없음(OQ-520)
+const NAVS = [
+  {
+    id: 'live',
+    name: '현황',
+    bases: ['/procedures', '/reservations'],
+    items: [
+      { name: '시술 현황', href: '/procedures/live' },
+      { name: '예약 현황', href: '/reservations/live' },
+    ],
+  },
+];
 
 export function AppHeader() {
   const session = useSession();
@@ -64,8 +75,8 @@ export function AppHeader() {
               <Link
                 href={n.items[0].href}
                 onClick={() => setHover(null)}
-                aria-current={isActive(n.base) ? 'page' : undefined}
-                className={'text-typo-heading-md-500 ' + (isActive(n.base) ? 'text-primary' : 'text-ms-gray-700')}
+                aria-current={n.bases.some(isActive) ? 'page' : undefined}
+                className={'text-typo-heading-md-500 ' + (n.bases.some(isActive) ? 'text-primary' : 'text-ms-gray-700')}
                 style={{ whiteSpace: 'nowrap', display: 'flex', alignItems: 'center' }}
               >
                 {n.name}

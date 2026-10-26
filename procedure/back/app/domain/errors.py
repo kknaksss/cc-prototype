@@ -4,10 +4,12 @@
 class DomainError(Exception):
     status = 400
 
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, **extra):
         super().__init__(message)
         self.code = code
         self.message = message
+        # 오류 본문에 더 싣는 키(SPEC-005 §7.1 — step · candidate · fields). None 은 싣지 않는다
+        self.extra = {k: v for k, v in extra.items() if v is not None}
 
 
 class BadRequest(DomainError):
@@ -31,3 +33,8 @@ class NotFound(DomainError):
 
 class Conflict(DomainError):
     status = 409
+
+
+class BadGateway(DomainError):
+    status = 502
+

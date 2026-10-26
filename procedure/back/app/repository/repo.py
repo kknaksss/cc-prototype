@@ -18,12 +18,19 @@ from app.domain.models import (
     Anesthesia,
     Call,
     Customer,
+    FunnelCode,
+    IdentityCheck,
     KosOp,
+    Notice,
     Procedure,
+    Reservation,
+    ResvGroup,
+    ResvSlot,
     Room,
     Staff,
     Visit,
     World,
+    Zone,
 )
 from app.repository.db import Database
 
@@ -50,7 +57,7 @@ def _room(r: sqlite3.Row) -> Room:
 
 def _customer(r: sqlite3.Row) -> Customer:
     return Customer(r["id"], r["kos_id"], r["name"], r["phonetic_name"], r["nationality"], bool(r["is_new"]),
-                    r["chart_number"])
+                    r["chart_number"], r["gender"])
 
 
 def _visit(r: sqlite3.Row) -> Visit:
@@ -74,6 +81,24 @@ def _account(r: sqlite3.Row) -> Account:
 def _op(r: sqlite3.Row) -> KosOp:
     return KosOp(r["id"], r["event_id"], r["visit_id"], r["seq"], r["api"], r["path"], json.loads(r["body"]),
                  json.loads(r["expect"]), r["status"], r["attempts"], r["checks"], r["last_error"])
+
+
+def _json(v: str | None, default: Any) -> Any:
+    return json.loads(v) if v else default
+
+
+def _reservation(r: sqlite3.Row) -> Reservation:
+    return Reservation(
+        r["id"], r["kos_id"], r["customer_id"], r["day"], r["zone_kos_id"], r["status"], r["flow_step"],
+        parse(r["flow_step_at"]), parse(r["reception_at"]), _json(r["resources"], []), bool(r["consultation_required"]),
+        bool(r["sedation_required"]), _json(r["counselor"], None), _json(r["assignee"], None), r["memo"],
+        _json(r["funnel"], None), r["connected_channel"], parse(r["desired_discharge_at"]), _json(r["purchase_ids"], []),
+        _json(r["prescription_ids"], []), _json(r["tasks"], []), r["room_kos_id"], r["room_title"], bool(r["present"]))
+
+
+def _group(r: sqlite3.Row) -> ResvGroup:
+    return ResvGroup(r["id"], r["kos_id"], r["title"], r["order"], r["interval_minutes"], _json(r["capacities"], []),
+                     _json(r["timetable"], {}), bool(r["present"]))
 
 
 class Tx:
@@ -335,6 +360,129 @@ class Tx:
         prev_ok, _ = self.sync_state(key)
         self.con.execute("INSERT OR REPLACE INTO sync_state (key, last_ok_at, last_error) VALUES (?, ?, ?)",
                          (key, to_db(ok_at or prev_ok), error))
+
+    # ---------------------------------------------------------------- 예약 현황 사본(SPEC-005 §3.2)
+    def called_sequences(self) -> dict[str, set[int]]:
+        """visit.kos_id → ccc 가 호출한 procedure 의 kos_sequence(`Rules._called` 와 같은 원천 — §5.9 잇는 키)."""
+        out: dict[str, set[int]] = {}
+        rows = self.con.execute("SELECT DISTINCT v.kos_id, p.kos_sequence FROM doctor_call_item i "
+                                "JOIN procedure p ON p.id = i.procedure_id JOIN visit v ON v.id = p.visit_id")
+        for r in rows:
+            out.setdefault(r["kos_id"], set()).add(int(r["kos_sequence"]))
+        return out
+
+    def zones(self, present_only: bool = True) -> list[Zone]:
+        sql = "SELECT * FROM zone" + (" WHERE present = 1" if present_only else "") + ' ORDER BY "order", id'
+        return [Zone(r["id"], r["kos_id"], r["title"], r["order"], bool(r["is_default"]), bool(r["present"]))
+                for r in self.con.execute(sql)]
+
+    def resv_groups(self, present_only: bool = True) -> list[ResvGroup]:
+        sql = "SELECT * FROM reservation_group" + (" WHERE present = 1" if present_only else "") + ' ORDER BY "order", id'
+        return [_group(r) for r in self.con.execute(sql)]
+
+    def mark_absent_kos(self, table: str, keep_kos_ids: set[str]) -> None:
+        """1시간 목록(zone · reservation_group)에서 빠진 행 — present = 0(행은 남김)."""
+        for r in self.con.execute(f"SELECT id, kos_id FROM {table} WHERE present = 1").fetchall():
+            if r["kos_id"] not in keep_kos_ids:
+                self._update(table, r["id"], {"present": 0})
+
+    def reservations(self, day: str | None = None, present_only: bool = True) -> list[Reservation]:
+        sql, args = "SELECT * FROM reservation WHERE 1 = 1", []
+        if day is not None:
+            sql, args = sql + " AND day = ?", [day]
+        if present_only:
+            sql += " AND present = 1"
+        return [_reservation(r) for r in self.con.execute(sql + " ORDER BY id", args)]
+
+    def reservation(self, reservation_id: int) -> Reservation | None:
+        r = self.con.execute("SELECT * FROM reservation WHERE id = ?", (reservation_id,)).fetchone()
+        return _reservation(r) if r else None
+
+    def reservation_id_of(self, kos_id: str) -> int | None:
+        r = self.con.execute("SELECT id FROM reservation WHERE kos_id = ?", (kos_id,)).fetchone()
+        return int(r["id"]) if r else None
+
+    def mark_absent_reservations(self, day: str, keep_ids: set[int]) -> None:
+        for r in self.con.execute("SELECT id FROM reservation WHERE day = ? AND present = 1", (day,)).fetchall():
+            if r["id"] not in keep_ids:
+                self._update("reservation", r["id"], {"present": 0})
+
+    def replace_slots(self, start: datetime, end: datetime, rows: list[dict[str, Any]], at: datetime) -> None:
+        """그 날짜 슬롯 사본을 통째로 바꾼다."""
+        self.con.execute("DELETE FROM reservation_slot WHERE start_at >= ? AND start_at < ?", (to_db(start), to_db(end)))
+        for row in rows:
+            self.con.execute("INSERT OR REPLACE INTO reservation_slot (group_kos_id, zone_kos_id, start_at, end_at, capacity, "
+                             "reservation_count, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                             (row["group"], row["zone"], to_db(row["start"]), to_db(row["end"]), row["capacity"],
+                              row["count"], to_db(at)))
+
+    def slots(self, start: datetime, end: datetime) -> list[ResvSlot]:
+        rows = self.con.execute("SELECT * FROM reservation_slot WHERE start_at >= ? AND start_at < ?", (to_db(start), to_db(end)))
+        return [ResvSlot(r["group_kos_id"], r["zone_kos_id"], parse(r["start_at"]), parse(r["end_at"]), r["capacity"],
+                         r["reservation_count"]) for r in rows]
+
+    def replace_notices(self, start: datetime, end: datetime, rows: list[dict[str, Any]], at: datetime) -> None:
+        keep = set()
+        for row in rows:
+            keep.add(row["kos_id"])
+            self.upsert("notice", row["kos_id"], {"content": row["content"], "released_at": row["released_at"], "deleted": False,
+                                                  "synced_at": at})
+        for r in self.con.execute("SELECT id, kos_id FROM notice WHERE deleted = 0 AND released_at >= ? AND released_at < ?",
+                                  (to_db(start), to_db(end))).fetchall():
+            if r["kos_id"] not in keep:
+                self._update("notice", r["id"], {"deleted": 1})
+
+    def notices(self, start: datetime, end: datetime) -> list[Notice]:
+        rows = self.con.execute("SELECT * FROM notice WHERE deleted = 0 AND released_at >= ? AND released_at < ? "
+                                "ORDER BY released_at, id", (to_db(start), to_db(end)))
+        return [Notice(r["id"], r["kos_id"], r["content"], parse(r["released_at"])) for r in rows]
+
+    def funnel_codes(self) -> list[FunnelCode]:
+        return [FunnelCode(r["id"], r["kos_id"], r["name"], r["order"], bool(r["closed"]), bool(r["is_default"]))
+                for r in self.con.execute('SELECT * FROM funnel_code ORDER BY "order", id')]
+
+    def etc_task_defs(self) -> list[tuple[str, str, bool]]:
+        """[(kos_id, title, deleted)]."""
+        return [(r["kos_id"], r["title"], bool(r["deleted"])) for r in self.con.execute("SELECT * FROM etc_task_def ORDER BY id")]
+
+    def customer(self, customer_id: int) -> Customer | None:
+        r = self.con.execute("SELECT * FROM customer WHERE id = ?", (customer_id,)).fetchone()
+        return _customer(r) if r else None
+
+    def customers(self, ids: set[int] | None = None) -> dict[int, Customer]:
+        out = {r["id"]: _customer(r) for r in self.con.execute("SELECT * FROM customer")}
+        return out if ids is None else {k: v for k, v in out.items() if k in ids}
+
+    def rooms(self) -> list[Room]:
+        return [_room(r) for r in self.con.execute('SELECT * FROM room ORDER BY "order", title, id')]
+
+    def staff(self) -> list[Staff]:
+        return [_staff(r) for r in self.con.execute("SELECT * FROM staff ORDER BY name, id")]
+
+    def add_identity_check(self, customer_id: int, status: str, at: datetime, actor: str, event_id: int) -> int:
+        return self._insert("identity_check", {"customer_id": customer_id, "status": status, "method": "web_manual",
+                                               "device": None, "checked_at": at, "actor": actor, "event_id": event_id})
+
+    def last_identity_check(self, customer_id: int) -> IdentityCheck | None:
+        r = self.con.execute("SELECT * FROM identity_check WHERE customer_id = ? ORDER BY id DESC LIMIT 1",
+                             (customer_id,)).fetchone()
+        return IdentityCheck(r["customer_id"], r["status"], r["method"], parse(r["checked_at"]), r["actor"]) if r else None
+
+    def last_questionnaire_at(self, customer_id: int) -> str | None:
+        r = self.con.execute("SELECT kos_submitted_at FROM questionnaire_history WHERE customer_id = ? ORDER BY id DESC LIMIT 1",
+                             (customer_id,)).fetchone()
+        return r["kos_submitted_at"] if r else None
+
+    def add_questionnaire(self, customer_id: int, reservation_id: int | None, submitted_at: str, answers: list,
+                          at: datetime) -> bool:
+        cur = self.con.execute("INSERT OR IGNORE INTO questionnaire_history (customer_id, reservation_id, kos_submitted_at, "
+                               "answers, fetched_at) VALUES (?, ?, ?, ?, ?)",
+                               (customer_id, reservation_id, submitted_at, _val(answers), to_db(at)))
+        return cur.rowcount > 0
+
+    def questionnaire_history(self, customer_id: int) -> list[dict[str, Any]]:
+        return [dict(r) for r in self.con.execute("SELECT * FROM questionnaire_history WHERE customer_id = ? ORDER BY id",
+                                                  (customer_id,))]
 
 
 class Repository:

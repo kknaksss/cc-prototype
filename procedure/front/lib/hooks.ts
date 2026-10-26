@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useRouter } from 'next/navigation';
 import * as api from './api';
 import { clearSession, parseSession, readSessionRaw, type Session } from './session';
-import type { Board, BoardEvent } from './types';
+import type { Board, BoardEvent, ResvBoard } from './types';
 
 // 폰 · 탭 경계 760px — cc 기능 front 의 hooks.ts 와 같은 기준. 서버 렌더는 넓은 쪽
 const WIDE = '(min-width: 760px)';
@@ -111,4 +111,81 @@ export function useBoardStream(token: string | null): Live {
   }, [token]);
 
   return live;
+}
+
+// ─── 예약 현황 스케줄 표(SPEC-005 §6.7) — 열려 있는 동안 10초마다 GET board?date= · SSE 안 씀
+// date = null 이면 오늘(back 이 KST 로 정함) — 첫 응답의 date 로 화면 날짜가 정해진다
+// refresh() = 조작 성공 직후 1번 + 2초 뒤 1번(반영 지연 · §4.3) — 부른 쪽이 refreshSoon() 을 쓴다
+const RESV_POLL_MS = 10_000;
+const RESV_SETTLE_MS = 2_000;
+
+export interface ResvLive {
+  board: ResvBoard | null;
+  skew: number; // 서버 now - 브라우저 시각(ms)
+  loading: boolean;
+  error: string | null; // 마지막 GET 실패 문구(사본은 그대로 보인다)
+  refresh: () => void;
+  refreshSoon: () => void;
+}
+
+export function useResvBoard(token: string | null, date: string | null): ResvLive {
+  const [state, setState] = useState<{ board: ResvBoard | null; skew: number; error: string | null; forDate: string | null | undefined }>({
+    board: null,
+    skew: 0,
+    error: api.CONFIG_ERROR,
+    forDate: undefined,
+  });
+  // 요청 번호 — 날짜가 바뀐 뒤 늦게 온 앞 날짜 응답은 버린다
+  const seq = useRef(0);
+
+  const load = useCallback(
+    (d: string | null) => {
+      if (!token || api.CONFIG_ERROR) return;
+      const n = ++seq.current;
+      api
+        .reservationBoard(d ?? undefined)
+        .then((b) => {
+          if (n !== seq.current) return;
+          const server = Date.parse(b.now);
+          setState({ board: b, skew: Number.isFinite(server) ? server - Date.now() : 0, error: null, forDate: d });
+        })
+        .catch((e: unknown) => {
+          if (n !== seq.current) return;
+          if (e instanceof api.ApiError && e.status === 401) {
+            clearSession();
+            return;
+          }
+          setState((s) => ({ ...s, forDate: d, error: e instanceof Error ? e.message : '불러오지 못했어요' }));
+        });
+    },
+    [token],
+  );
+
+  // 날짜가 바뀌면 바로 부르고 그 뒤 10초마다
+  useEffect(() => {
+    if (!token || api.CONFIG_ERROR) return;
+    load(date);
+    const t = setInterval(() => load(date), RESV_POLL_MS);
+    return () => clearInterval(t);
+  }, [token, date, load]);
+
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    [],
+  );
+  const refresh = useCallback(() => load(date), [load, date]);
+  const refreshSoon = useCallback(() => {
+    load(date);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => load(date), RESV_SETTLE_MS);
+  }, [load, date]);
+
+  // 그 날짜 응답만 보인다(다른 날짜 사본은 숨김) — 받기 전 = 불러오는 중
+  const b = state.board;
+  const board = b && (date === null ? state.forDate === null || b.isToday : b.date === date) ? b : null;
+  const settled = state.forDate === date;
+  return { board, skew: state.skew, loading: !board && !(settled && state.error), error: settled ? state.error : api.CONFIG_ERROR, refresh, refreshSoon };
 }

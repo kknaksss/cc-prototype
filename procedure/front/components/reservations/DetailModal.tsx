@@ -504,19 +504,14 @@ function Body({
       <div className="border-ms-gray-200" style={{ position: 'relative', padding: '12px 20px', display: 'flex', alignItems: 'center', gap: 8, borderTopWidth: 1, borderTopStyle: 'solid', flexWrap: 'wrap' }}>
         {d.can.cancel && (
           <div style={{ position: 'relative' }}>
-            <button
-              type="button"
-              onClick={() => s.setCancelOpen(!s.cancelOpen)}
-              disabled={busy !== null}
-              className="bg-ms-white border-red text-red text-typo-body-500"
-              style={{ height: 40, padding: '0 14px', borderWidth: 1, borderStyle: 'solid', borderRadius: 8, cursor: 'pointer', whiteSpace: 'nowrap' }}
-            >
+            {/* 바닥 줄 버튼 = DS Button 기본 높이(50 — [접수 완료]와 같음 · E2E b5 #2) */}
+            <Button variant="outlined" color="red" disabled={busy !== null} onClick={() => s.setCancelOpen(!s.cancelOpen)}>
               {busy === 'cancel' ? '취소 중…' : '예약 취소'}
-            </button>
+            </Button>
             {s.cancelOpen && (
               <div
                 className="bg-ms-white border-ms-gray-200"
-                style={{ position: 'absolute', left: 0, bottom: 48, zIndex: 3, borderWidth: 1, borderStyle: 'solid', borderRadius: 10, boxShadow: '0 8px 28px rgba(0,0,0,0.14)', padding: 10, display: 'flex', flexDirection: 'column', gap: 6, minWidth: 160 }}
+                style={{ position: 'absolute', left: 0, bottom: 58, zIndex: 3, borderWidth: 1, borderStyle: 'solid', borderRadius: 10, boxShadow: '0 8px 28px rgba(0,0,0,0.14)', padding: 10, display: 'flex', flexDirection: 'column', gap: 6, minWidth: 160 }}
               >
                 {(
                   [
@@ -553,23 +548,21 @@ function Body({
         {showRoute && <RouteRadio on={d.can.editRoute && busy === null} value={s.route} onChange={s.setRoute} />}
         {d.receiveMode !== null && (
           <>
-            <button
-              type="button"
+            <Button
+              variant="outlined"
+              color={roomId === null ? 'red' : d.roomLocked ? 'gray' : 'blue'}
               onClick={() => !d.roomLocked && s.setRoomOpen(!s.roomOpen)}
               aria-expanded={s.roomOpen}
               title={d.roomLocked ? '이미 배정된 방이에요' : undefined}
-              className={
-                (roomId === null ? 'border-red text-red' : d.roomLocked ? 'border-ms-gray-300 text-ms-gray-600 bg-ms-gray-100' : 'border-primary text-primary') + (d.roomLocked ? '' : ' bg-ms-white')
-              }
-              style={{ height: 40, padding: '0 14px', borderWidth: 1, borderStyle: 'solid', borderRadius: 8, cursor: d.roomLocked ? 'default' : 'pointer', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'inherit' }}
+              rightIcon={d.roomLocked ? undefined : <span style={{ fontSize: 11 }}>▴</span>}
+              style={{ cursor: d.roomLocked ? 'default' : 'pointer', whiteSpace: 'nowrap' }}
             >
-              <span className="text-typo-body-500">{roomTitle ? '시술실 · ' + roomTitle : '시술실 선택'}</span>
-              {!d.roomLocked && <span style={{ fontSize: 11 }}>▴</span>}
-            </button>
+              {roomTitle ? '시술실 · ' + roomTitle : '시술실 선택'}
+            </Button>
             {s.roomOpen && !d.roomLocked && (
               <div
                 className="bg-ms-white border-ms-gray-200"
-                style={{ position: 'absolute', right: 20, bottom: 60, zIndex: 3, width: 'min(420px, calc(100% - 40px))', borderWidth: 1, borderStyle: 'solid', borderRadius: 10, boxShadow: '0 8px 28px rgba(0,0,0,0.14)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+                style={{ position: 'absolute', right: 20, bottom: 70, zIndex: 3, width: 'min(420px, calc(100% - 40px))', borderWidth: 1, borderStyle: 'solid', borderRadius: 10, boxShadow: '0 8px 28px rgba(0,0,0,0.14)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
               >
                 <div className="border-ms-gray-200" style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, padding: '12px 16px', borderBottomWidth: 1, borderBottomStyle: 'solid' }}>
                   <span className="text-typo-heading-md-500 text-ms-gray-800">시술실 배정</span>
@@ -888,7 +881,7 @@ function RouteRadio({ on, value, onChange }: { on: boolean; value: ReceiveRoute;
     { v: 'direct', name: '바로 시술' },
   ];
   return (
-    <div role="radiogroup" aria-label="진행 경로" className="bg-ms-gray-100" style={{ display: 'flex', gap: 2, padding: 3, borderRadius: 8, height: 40, boxSizing: 'border-box' }}>
+    <div role="radiogroup" aria-label="진행 경로" className="bg-ms-gray-100" style={{ display: 'flex', gap: 2, padding: 4, borderRadius: 8, height: 50, boxSizing: 'border-box' }}>
       {opts.map((o) => {
         const sel = o.v === value;
         return (

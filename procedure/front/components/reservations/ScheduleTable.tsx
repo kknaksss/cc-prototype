@@ -252,7 +252,11 @@ export function ScheduleTable({
                       alignContent: 'flex-start',
                       minWidth: 0,
                     }}
-                    onMouseEnter={() => setHover(key)}
+                    // [+] = 카드 없는 빈 공간에 호버할 때만(카드 위 = 카드 자체 동작만 — E2E b5 #3)
+                    onMouseOver={(e) => {
+                      const onCard = !!(e.target as HTMLElement).closest('[data-resv]');
+                      setHover((h) => (onCard ? (h === key ? null : h) : key));
+                    }}
                     onMouseLeave={() => setHover((h) => (h === key ? null : h))}
                     onDragOver={(e) => {
                       if (!drag) return;
@@ -297,30 +301,23 @@ export function ScheduleTable({
                       );
                     })}
                     {drag && previewAt === gid + '|' + m && <CardView key="preview" card={drag} preview />}
-                    {/* 빈 자리 호버 [+] — 카드 뒤 같은 흐름 · 폭 196 · 최소 높이 50 · 위 검은 툴팁(시안 M:151-156) */}
+                    {/* 빈 자리 호버 [+] — 카드 뒤 같은 흐름 · 폭 196 · 최소 높이 50 · 시각은 상자 안에(떠 있는 툴팁이 카드를 가려 뺌 — E2E b5 #3) */}
                     {showAdd && (
-                      <div style={{ position: 'relative', flex: '0 0 196px', minHeight: 50 }}>
-                        <button
-                          type="button"
-                          aria-label="예약 추가"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onAdd(col, m);
-                          }}
-                          className="bg-ms-gray-100 border-ms-gray-400 text-ms-gray-700"
-                          style={{ width: '100%', height: '100%', minHeight: 50, boxSizing: 'border-box', borderWidth: 1, borderStyle: 'dashed', borderRadius: 6, fontSize: 24, lineHeight: 1, cursor: 'pointer', fontFamily: 'inherit' }}
-                        >
-                          +
-                        </button>
-                        <span
-                          className="bg-ms-gray-800 text-ms-white text-typo-body-500"
-                          style={{ position: 'absolute', left: '50%', bottom: 'calc(100% + 6px)', transform: 'translateX(-50%)', zIndex: 4, whiteSpace: 'nowrap', padding: '6px 12px', borderRadius: 8, pointerEvents: 'none', display: 'flex', alignItems: 'center', gap: 8 }}
-                        >
-                          {col.title}
-                          <span style={{ opacity: 0.4 }}>|</span>
+                      <button
+                        type="button"
+                        aria-label={'예약 추가 · ' + col.title + ' ' + minToHm(m) + ' ~ ' + minToHm(m + STEP)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onAdd(col, m);
+                        }}
+                        className="bg-ms-gray-100 border-ms-gray-400 text-ms-gray-700"
+                        style={{ flex: '0 0 196px', minHeight: 50, boxSizing: 'border-box', borderWidth: 1, borderStyle: 'dashed', borderRadius: 6, cursor: 'pointer', fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                      >
+                        <span style={{ fontSize: 20, lineHeight: 1 }}>+</span>
+                        <span className="text-typo-body-500" style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
                           {minToHm(m)} ~ {minToHm(m + STEP)}
                         </span>
-                      </div>
+                      </button>
                     )}
                   </div>
                 );

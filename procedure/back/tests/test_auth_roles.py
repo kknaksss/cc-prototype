@@ -1,4 +1,4 @@
-"""SPEC-004 WP1 — 계정 · 권한(§3 · §8.1): 역할 행렬(3 × 8) · 수락 규칙 · 토큰 · 계정 · actor."""
+"""SPEC-004 WP1 — 계정 · 권한(§3 · §8.1): 역할 행렬(3 × 10 + 순서) · 수락 규칙 · 토큰 · 계정 · actor."""
 
 import json
 
@@ -10,13 +10,13 @@ from app.service.auth import _b64, _unb64
 from tests.conftest import PW, make_settings
 from tests.helpers import T0, seed_staff, seed_visit
 
-IDS = {"admin": "admin1", "doctor": "doctor1", "nurse": "nurse1"}
+IDS = {"admin": "admin1", "doctor": "doctor1", "nurse": "nurse1", "coordinator": "coord1"}
 
 
 @pytest.fixture
 def env(tmp_path):
     s = make_settings(tmp_path, ccc_admin_id=IDS["admin"], ccc_doctor_id=IDS["doctor"], ccc_doctor_kos_account_id="doc-a",
-                      ccc_nurse_id=IDS["nurse"], ccc_nurse_name="간호 A")
+                      ccc_nurse_id=IDS["nurse"], ccc_nurse_name="간호 A", ccc_coord_id=IDS["coordinator"])
     with TestClient(create_app(s)) as client:
         c = client.app.state.container
         c.clock.set(T0)
@@ -35,8 +35,8 @@ def counts(c):
         return len(tx.events()), len(tx.ops()), len(tx.world().calls), len(tx.world().accepts)
 
 
-# ------------------------------------------------------------------ 역할 행렬(3 × 8)
-OPS = ["anes_start", "anes_end", "call", "reassign", "accept", "start", "finish", "home"]
+# ------------------------------------------------------------------ 역할 행렬(3 × 10)
+OPS = ["anes_start", "anes_end", "call", "reassign", "accept", "start", "finish", "home", "undo_start", "undo_finish"]
 
 
 def prepare(c, staff, n, op):
@@ -62,12 +62,17 @@ def prepare(c, staff, n, op):
     if op == "finish":
         a.start("setup", pid)
         return f"/api/procedures/{pid}/finish", None
+    if op == "undo_start":  # 되돌리기(SPEC-003 §5.13 · SPEC-004 §3.4) — 세 역할 모두
+        a.start("setup", pid)
+        return f"/api/procedures/{pid}/undo-start", None
     a.start("setup", pid)
     a.finish("setup", pid)
+    if op == "undo_finish":
+        return f"/api/procedures/{pid}/undo-finish", None
     return f"/api/visits/{vid}/home", None
 
 
-@pytest.mark.parametrize("role", ["admin", "doctor", "nurse"])
+@pytest.mark.parametrize("role", ["admin", "doctor", "nurse", "coordinator"])
 def test_role_matrix(env, role):
     client, c, staff = env
     auth, _ = login(client, role)
@@ -82,6 +87,12 @@ def test_role_matrix(env, role):
             assert r.status_code == 200, (role, op, r.json())
     # 조회 · SSE 도 세 역할 모두
     assert client.get("/api/board", headers=auth).status_code == 200
+    # 카드 순서(PUT /api/board/order · SPEC-004 §3.4 표 줄) — 세 역할 모두 · actor = 로그인 아이디
+    ids = [x["visitId"] for x in client.get("/api/board", headers=auth).json()["cards"] if x["state"] != "home"]
+    r = client.put("/api/board/order", json={"visitIds": ids[::-1]}, headers=auth)
+    assert r.status_code == 200 and r.json() == {"ok": True, "visitIds": ids[::-1]}, (role, r.json())
+    with c.repo.tx() as tx:
+        assert tx.events("board_order")[-1]["actor"] == IDS[role]
 
 
 def test_forbidden_before_conflict_and_not_found(env):
@@ -140,6 +151,29 @@ def test_accept_rules(env):
     with c.repo.tx() as tx:
         tx.con.execute("UPDATE staff SET is_doctor = 0 WHERE id = ?", (staff["A"],))
     assert code(client.post(f"/api/calls/{call}/accept", json={}, headers=doctor)) == (409, "doctor_not_listed")
+
+
+def test_coordinator_account_and_accept(env):
+    """코디(SPEC-005 §3.4) — env 로 1행 · 이름 기본 「코디」 · 수락 = 관리자 규칙(doctorId 필수 · 없으면 400 · r1 F2)."""
+    client, c, staff = env
+    coord, body = login(client, "coordinator")
+    assert (body["role"], body["name"], body["staffId"]) == ("coordinator", "코디", None)
+    v = seed_visit(c.repo, 1, procs=1)
+    call = c.actions.create_call("setup", v["visit"], [v["procs"][0]], "all", None)
+    assert code(client.post(f"/api/calls/{call}/accept", json={}, headers=coord)) == (400, "invalid_request")
+    r = client.post(f"/api/calls/{call}/accept", json={"doctorId": staff["A"]}, headers=coord)
+    assert r.json() == {"acceptedProcedureIds": [v["procs"][0]]}
+    with c.repo.tx() as tx:
+        ev = tx.events("call_accept")[-1]
+    assert ev["actor"] == IDS["coordinator"] and ev["payload"]["byRole"] == "coordinator"
+
+
+def test_coordinator_absent_without_env(tmp_path):
+    with TestClient(create_app(make_settings(tmp_path))) as client:
+        c = client.app.state.container
+        with c.repo.tx() as tx:
+            assert not [a for a in tx.accounts() if a.role == "coordinator"]
+        assert client.post("/api/auth/login", json={"id": "", "password": PW["coordinator"]}).status_code in (400, 401)
 
 
 # ------------------------------------------------------------------ 토큰(§3.2)

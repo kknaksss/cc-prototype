@@ -42,3 +42,7 @@ aside[data-state="open"] > button:first-child {
   position: absolute; top: 26px; right: 16px;
   height: 24px; display: flex; align-items: center;
 }
+
+/* [Popover-1] PopoverContent 가 z-50 고정 → 모달(z 50 · 60) 안의 ComboBox · DatePicker 펼침이 모달 뒤로 숨음(E2E #2 · #9).
+   → 제안: PopoverContent 에 z-index 지정 prop 또는 모달보다 높은 기본값. 현재 popper 감싸개만 올림. */
+[data-radix-popper-content-wrapper] { z-index: 1000 !important; }

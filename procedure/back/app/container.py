@@ -19,6 +19,8 @@ from app.service.board_service import BoardService
 from app.service.fake_board import fake_snapshot
 from app.service.interpret.soniox import SonioxStt, SonioxTts, SttConn, TtsConn
 from app.service.push import PushService
+from app.service.reception import ReceptionService
+from app.service.reservations import ReservationService
 from app.service.stream import StreamHub
 
 
@@ -33,6 +35,8 @@ class Container:
     accounts: AccountService
     push: PushService
     hub: StreamHub = field(init=False)
+    resv: Any = None  # ReservationService — 예약 현황(SPEC-005)
+    reception: Any = None  # ReceptionService
     kos: Any = None  # app.kos.runtime.KosRuntime — KOS env 가 있을 때만
     # 통역 — Soniox 연결 팩토리(시험에서 가짜로 바꾼다 · SPEC-004 §4.1)
     open_stt: Callable[[str, str], Awaitable[SttConn]] = field(default=SonioxStt.open)
@@ -87,6 +91,8 @@ def build_container(settings: Settings, clock: Clock | None = None) -> Container
                   board=BoardService(repo, clock, settings.poll_window), actions=actions, accounts=accounts,
                   push=PushService(repo, settings, clock=clock))
     actions.on_change = c.changed
+    c.resv = ReservationService(settings, repo, clock, lambda: c.kos)
+    c.reception = ReceptionService(c.resv)
     actions.on_call = c.push.schedule  # 호출이 생긴 뒤(커밋 뒤) 원장 호출 푸시
     if settings.kos_enabled:
         from app.kos.runtime import KosRuntime

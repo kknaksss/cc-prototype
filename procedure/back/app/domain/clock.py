@@ -53,6 +53,11 @@ def today_range_kst(now: datetime) -> tuple[datetime, datetime]:
     return start, start + timedelta(days=1)
 
 
+def kst_day(now: datetime) -> str:
+    """오늘(KST) 날짜 `YYYY-MM-DD` — 카드 순서(board_order)의 하루 단위."""
+    return now.astimezone(KST).date().isoformat()
+
+
 def in_window(now: datetime, window: tuple[time, time]) -> bool:
     """조회 시간(KST) 안인가 — 시작 포함 · 끝 제외(D-08)."""
     t = now.astimezone(KST).time()

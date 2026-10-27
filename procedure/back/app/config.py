@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     kos_poll_schedule_sec: float = 10
     kos_poll_master_sec: float = 3600
     kos_poll_window: str = "09:00-21:00"
+    # 예약 현황(SPEC-005 §2.3)
+    kos_web_base: str = ""  # KOS 웹 주소(딥링크) — 비면 [수납하기 ›] · [처방전 출력] 끔
+    kos_room_task_id: str = ""  # 「방 배정」 기타 작업 id — 비면 get-etcetera-tasks 의 제목 「방 배정」
+    kos_resv_cache_sec: float = 10  # 날짜별 예약 조회 캐시(초)
 
     # ccc 계정(SPEC-004 §2.3) — 비면 그 계정 · 카드를 만들지 않는다
     ccc_admin_id: str = ""
@@ -36,6 +40,9 @@ class Settings(BaseSettings):
     ccc_doctor_kos_account_id: str = ""  # PoC 의사 카드에 연결할 KOS 데모 지점 실제 원장(getAccounts id)
     ccc_nurse_id: str = ""
     ccc_nurse_name: str = ""
+    ccc_coord_id: str = ""  # 코디 계정(SPEC-005 §3.4) — 비면 만들지 않는다
+    ccc_coord_password: str = ""
+    ccc_coord_name: str = ""
     # 원장 호출 푸시(SPEC-004 §5-1 · APNs 직접) — 하나라도 비면 발송을 끈다. 키 파일은 레포 밖
     apns_key_path: str = ""
     apns_key_id: str = ""

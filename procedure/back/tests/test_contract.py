@@ -65,6 +65,8 @@ def test_board_snapshot_shape(tmp_path):
     assert set(card) >= {"visitId", "room", "inAt", "homeAt", "customer", "state", "paymentRequired", "orderMemo",
                          "anesthesia", "procedures", "canCall", "canHome", "need", "kos"}
     assert body["now"].endswith("+09:00")
+    proc = card["procedures"][0]  # 되돌리기 두 필드(SPEC-003 §7.2 · §5.13) — bool
+    assert isinstance(proc["canUndoStart"], bool) and isinstance(proc["canUndoFinish"], bool)
 
 
 def test_stream_requires_token(client):

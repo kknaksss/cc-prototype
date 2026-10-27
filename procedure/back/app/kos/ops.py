@@ -43,6 +43,8 @@ def expect_met(expect: dict[str, Any], schedule: dict[str, Any] | None) -> bool:
                 return False
             if "status" in expect and t.get("status") != expect["status"]:
                 return False
+            if "statusNot" in expect and t.get("status") == expect["statusNot"]:
+                return False
             if "roomId" in expect and str((t.get("room") or {}).get("id")) != expect["roomId"]:
                 return False
             for key, field in (("assigneesContain", "assignees"), ("doctorsContain", "doctors")):
@@ -64,7 +66,8 @@ def _fail_or_retry(tx: Tx, op: KosOp, now: datetime, error: str) -> str:
     return "pending"
 
 
-SUPERSEDABLE = ("flowStep", "status")
+# 같은 필드를 바꾸는 확인 키 묶음 — status 와 statusNot(되돌리기)은 같은 작업 status 필드(SPEC-003 §8 대체 규칙)
+SUPERSEDABLE = (("flowStep",), ("status", "statusNot"))
 
 
 def superseded(op: KosOp, later: list[KosOp]) -> bool:
@@ -76,9 +79,9 @@ def superseded(op: KosOp, later: list[KosOp]) -> bool:
     for o in later:
         if o.seq <= op.seq or o.status not in ("sent", "confirmed"):
             continue
-        for key in SUPERSEDABLE:
-            if key in op.expect and key in o.expect:
-                if key == "flowStep" or set(op.expect.get("tasks", [])) & set(o.expect.get("tasks", [])):
+        for keys in SUPERSEDABLE:
+            if any(k in op.expect for k in keys) and any(k in o.expect for k in keys):
+                if keys == ("flowStep",) or set(op.expect.get("tasks", [])) & set(o.expect.get("tasks", [])):
                     return True
     return False
 

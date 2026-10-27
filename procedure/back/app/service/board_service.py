@@ -2,7 +2,7 @@
 
 from datetime import datetime, time
 
-from app.domain.clock import Clock, in_window, iso
+from app.domain.clock import Clock, in_window, iso, kst_day
 from app.domain.models import Procedure, Visit
 from app.domain.rules import ANES_LIMIT_MIN, CALL_LIMIT_MIN, Rules
 from app.repository.repo import Repository
@@ -20,7 +20,8 @@ class BoardService:
 
     def snapshot(self) -> s.BoardSnapshot:
         now = self.clock.now()
-        r = Rules(self.repo.world(), now)
+        world, order = self.repo.world_and_order(kst_day(now))
+        r = Rules(world, now)
         w = r.w
 
         doctors = []
@@ -32,11 +33,19 @@ class BoardService:
         cards = [self._card(r, v) for v in r.cards()]
         far = datetime.max.replace(tzinfo=now.tzinfo)
         visits = {v.id: v for v in r.cards()}
-        # 입실순 · 귀가 대기는 맨 뒤(귀가 대기 시각 순) — front 가 배치순으로 바꿔 그릴 수 있다
-        cards.sort(key=lambda c: (c.state == "home",
-                                  (visits[c.visitId].flow_step_at or far) if c.state == "home"
-                                  else (visits[c.visitId].room_assigned_at or far),
-                                  c.visitId))
+        # cards[] 배열 순서 = 화면 순서(§5.12 · §7.2): ① 오늘 순서 목록에 있는 카드(목록 자리 순) → ② 목록 밖 카드(입실순)
+        # → ③ 귀가 대기(귀가 대기 시각 순 · 목록 자리는 무시). 목록에 있어도 사라진 카드는 그냥 건너뛴다
+        pos = {vid: i for i, vid in enumerate(order)}
+
+        def rank(c: s.Card) -> tuple:
+            v = visits[c.visitId]
+            if c.state == "home":
+                return (2, 0, v.flow_step_at or far, c.visitId)
+            if c.visitId in pos:
+                return (0, pos[c.visitId], far, c.visitId)
+            return (1, 0, v.room_assigned_at or far, c.visitId)
+
+        cards.sort(key=rank)
 
         calls = []
         for c in r.open_calls():
@@ -92,7 +101,8 @@ class BoardService:
             startedAt=iso(p.started_at), completedAt=iso(p.completed_at) if state == "done" else None,
             doctor=s.DoctorRef(id=doc.id, name=doc.name) if doc else None, call=pc,
             pickable=r.pickable(v, p), canStart=r.start_block(v, p) is None,
-            canFinish=p.kind == "procedure" and state == "doing",
+            canFinish=not r.is_room_task(p) and state == "doing", isRoomTask=r.is_room_task(p),
+            canUndoStart=r.undo_start_block(v, p) is None, canUndoFinish=r.undo_finish_block(v, p) is None,
         )
 
     def _card(self, r: Rules, v: Visit) -> s.Card:
@@ -118,7 +128,7 @@ class BoardService:
                                     lastMinutes=r.last_anes_minutes(v), long=r.anes_long(v),
                                     canStart=not home and running is None, canEnd=not home and running is not None),
             procedures=[self._proc(r, v, p) for p in r.ordered_procedures(v)],
-            # T6: 호출할 수 있는(pickable) 시술이 1개 이상일 때만 — 기타 작업만 있는 카드는 [의사 호출] 꺼짐
+            # T6: 호출할 수 있는(pickable) 작업이 1개 이상일 때만
             canCall=not home and not all_done and any(r.pickable(v, p) for p in r.procedures(v)),
             canHome=not home and all_done,
             need=s.Need(why=need[0], since=iso(need[1]), limitMin=need[2]) if need else None,

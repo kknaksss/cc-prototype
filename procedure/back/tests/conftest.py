@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from app.config import Settings
 from app.main import create_app
 
-PW = {"admin": "pw-admin", "doctor": "pw-doctor", "nurse": "pw-nurse"}  # 시험 전용 비밀번호
+PW = {"admin": "pw-admin", "doctor": "pw-doctor", "nurse": "pw-nurse", "coordinator": "pw-coord"}  # 시험 전용 비밀번호
 ADMIN = {"id": "tester", "password": PW["admin"]}
 
 
@@ -20,7 +20,7 @@ def _clean_env(monkeypatch):
 
 def make_settings(tmp_path, **kw) -> Settings:
     base = dict(_env_file=None, ccc_admin_id=ADMIN["id"], ccc_admin_password=PW["admin"], ccc_doctor_password=PW["doctor"],
-                ccc_nurse_password=PW["nurse"], proc_bcrypt_rounds=4,
+                ccc_nurse_password=PW["nurse"], ccc_coord_password=PW["coordinator"], proc_bcrypt_rounds=4,
                 proc_session_secret="test-secret", proc_db_path=str(tmp_path / "t.db"))
     base.update(kw)
     return Settings(**base)

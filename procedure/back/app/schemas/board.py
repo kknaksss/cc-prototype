@@ -82,7 +82,7 @@ class ProcCall(BaseModel):
 
 class Procedure(BaseModel):
     id: int
-    kind: Literal["procedure", "etc"]  # etc = KOS ETCETERA(「방 배정」 등) — 표시만, pickable · canStart · canFinish 모두 false
+    kind: Literal["procedure", "etc"]  # etc = KOS ETCETERA — 규칙은 type 무관(「방 배정」은 isRoomTask)
     sequence: int
     title: str
     state: ProcState
@@ -95,6 +95,10 @@ class Procedure(BaseModel):
     pickable: bool
     canStart: bool
     canFinish: bool
+    isRoomTask: bool  # 「방 배정」(방 붙은 ETCETERA) — front 는 그리지 않는다 · 판정에서 빠짐(2026-10-25)
+    # 되돌리기 아이콘(SPEC-003 §5.13) — back 이 계산 · 「방 배정」 · 귀가 대기 카드는 늘 false(기본값 false — 가짜 보드 예시용)
+    canUndoStart: bool = False
+    canUndoFinish: bool = False
 
 
 class Need(BaseModel):

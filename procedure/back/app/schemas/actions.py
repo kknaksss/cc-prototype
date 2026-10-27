@@ -2,7 +2,7 @@
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 
 class _Req(BaseModel):
@@ -15,7 +15,7 @@ class LoginRequest(_Req):
     password: str
 
 
-Role = Literal["admin", "doctor", "nurse"]
+Role = Literal["admin", "doctor", "nurse", "coordinator"]  # coordinator = SPEC-005 §3.4
 
 
 class LoginResponse(BaseModel):
@@ -55,12 +55,25 @@ class AcceptRequest(_Req):
     doctorId: int | None = None
 
 
+class BoardOrderRequest(_Req):
+    """카드 드래그 순서(SPEC-003 0.4.0 §7.3) — 귀가 대기 아닌 카드 전부의 새 순서 · 빈 배열 = 오늘 순서 지움.
+
+    StrictInt — 문자열 `"3"` · 실수 `3.0` · 불리언 `true` 도 400(같은 id 두 번은 service 가 400).
+    """
+
+    visitIds: list[StrictInt]
+
+
 class OkResponse(BaseModel):
     ok: Literal[True] = True
 
 
 class StartResponse(OkResponse):
     flowStepChanged: bool
+
+
+class BoardOrderResponse(OkResponse):
+    visitIds: list[int]  # 거르기 뒤 저장된 목록
 
 
 class CallCreatedResponse(BaseModel):
@@ -113,4 +126,6 @@ CONFLICT_CODES = (
     "no_doctor",
     "procedure_not_started",
     "procedures_not_done",
+    "procedure_not_doing",
+    "procedure_not_done",
 )

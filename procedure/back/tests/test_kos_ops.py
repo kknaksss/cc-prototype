@@ -146,3 +146,32 @@ def test_expect_met():
     assert not expect_met({"tasks": [1], "assigneesContain": "s"}, sch)
     assert not expect_met({"tasks": [2], "status": "READY"}, sch)
     assert not expect_met({"flowStep": "PROCEDURE"}, None)
+
+
+def test_expect_met_status_not():
+    """[종료] 되돌리기 확인 = 그 작업 status 가 DONE 이 아님(§8)."""
+    sch = {"tasks": [{"sequence": 1, "status": "READY"}, {"sequence": 2, "status": "DONE"}]}
+    assert expect_met({"tasks": [1], "statusNot": "DONE"}, sch)
+    assert not expect_met({"tasks": [2], "statusNot": "DONE"}, sch)
+    assert not expect_met({"tasks": [3], "statusNot": "DONE"}, sch)
+
+
+def test_superseded_status_and_status_not_same_field():
+    """[종료](status DONE) ↔ 되돌리기(statusNot DONE)는 같은 작업 status 필드 — 뒤 op 이 sent · confirmed 면 앞 op 은 대체."""
+    from app.domain.models import KosOp
+    from app.kos.ops import superseded
+
+    def op(seq, status, expect):
+        return KosOp(seq, None, 1, seq, "internal", "p", {}, expect, status, 0, 0, None)
+
+    finish = op(1, "sent", {"tasks": [1], "status": "DONE"})
+    undo = op(2, "pending", {"tasks": [1], "statusNot": "DONE"})
+    again = op(3, "pending", {"tasks": [1], "status": "DONE"})
+    other = op(4, "sent", {"tasks": [2], "statusNot": "DONE"})
+    assert not superseded(finish, [finish, undo])  # 되돌리기 아직 안 보냄
+    assert not superseded(finish, [finish, other])  # 다른 작업
+    undo.status = "sent"
+    assert superseded(finish, [finish, undo])
+    assert not superseded(undo, [finish, undo, again])
+    again.status = "confirmed"
+    assert superseded(undo, [finish, undo, again])  # 되돌린 뒤 다시 [종료] → 앞 되돌리기 op 대체

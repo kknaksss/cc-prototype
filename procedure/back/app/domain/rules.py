@@ -35,6 +35,7 @@ class Rules:
             for pid in call.procedure_ids:
                 self._effective[pid] = call
         self._accepts: dict[tuple[int, int], Accept] = {(a.call_id, a.procedure_id): a for a in world.accepts}
+        self._called = {pid for call in world.calls.values() for pid in call.procedure_ids}
         self._cards = [v for v in world.visits.values()
                        if v.present and v.flow_step in BOARD_FLOW_STEPS and v.room_id is not None]
         self._card_ids = {v.id for v in self._cards}
@@ -55,6 +56,17 @@ class Rules:
                     return self.room_title(v)
         return None
 
+    # ---- 「방 배정」 — 작업 규칙의 유일한 예외(2026-10-25)
+    def is_room_task(self, p: Procedure) -> bool:
+        """「방 배정」 = 방 붙은 ETCETERA 이면서 ccc 가 한 번도 호출하지 않은 작업.
+
+        「방 배정」은 호출 대상이 아니므로 호출된 적이 있으면 「방 배정」일 수 없다 — 시트팩 등을 호출하면 호출 전 방 넣기
+        (change-tasks-room · 로컬 room_kos_id)로 방이 붙어도 일반 시술로 남는다. 스냅샷에는 싣고(`isRoomTask` — front 가 숨김)
+        판정(체크 · 호출 · 시작 · 종료 · 전부 완료 · 수납)에서는 뺀다. [귀가 대기] 취소 대상은 안 끝난 「방 배정」뿐.
+        카드 방 고르기(`kos/sync.py` `_card_room_task`)는 type 무관(다른 판정).
+        """
+        return p.kind == "etc" and bool(p.room_kos_id) and p.id not in self._called
+
     # ---- 카드(§5.1)
     def cards(self) -> list[Visit]:
         return list(self._cards)
@@ -73,13 +85,16 @@ class Rules:
         return r.title if r else ""
 
     def items(self, v: Visit) -> list[Procedure]:
-        """카드에 보이는 작업 — KOS 목록에 있고 취소 아닌 작업 전부(PROCEDURE + ETCETERA · E2E-4 사용자 결정) · sequence 순."""
+        """카드에 보이는 작업 — KOS 목록에 있고 취소 아닌 작업 전부 · sequence 순.
+
+        type(PROCEDURE · ETCETERA) 무관 · 「방 배정」도 싣는다(판정은 `procedures`). 빼는 것은 CANCELED 뿐(2026-10-25).
+        """
         ps = [p for p in self.w.procedures.values() if p.visit_id == v.id and p.present and p.kos_status != TASK_CANCELED]
         return sorted(ps, key=lambda p: p.kos_sequence)
 
     def procedures(self, v: Visit) -> list[Procedure]:
-        """시술 = items 중 PROCEDURE 만 — 호출 · 시작 · 종료 · 전부 완료 · 수납 판정은 이것만 본다(OQ-506)."""
-        return [p for p in self.items(v) if p.kind == "procedure"]
+        """시술 = 카드 작업 중 「방 배정」을 뺀 전부(type 무관) — 호출 · 시작 · 종료 · 전부 완료 · 수납 판정이 이것을 본다."""
+        return [p for p in self.items(v) if not self.is_room_task(p)]
 
     def ordered_procedures(self, v: Visit) -> list[Procedure]:
         """표시 순서 = 완료(완료 시각 순) → 진행 → 대기(sequence 순) — §5.9."""
@@ -121,18 +136,40 @@ class Rules:
         return None
 
     def pickable(self, v: Visit, p: Procedure) -> bool:
-        return p.kind == "procedure" and not self.is_home(v) and self.proc_state(p) == "wait"
+        return not self.is_room_task(p) and not self.is_home(v) and self.proc_state(p) == "wait"
 
     def start_block(self, v: Visit, p: Procedure) -> str | None:
         """[시작] 을 막는 이유(§5.6) — None 이면 켜짐."""
         if self.is_home(v):
             return "visit_home"
-        if p.kind != "procedure" or self.proc_state(p) != "wait":
+        if self.is_room_task(p) or self.proc_state(p) != "wait":
             return "procedure_not_waiting"
         call = self.effective_call(p)
         if call is not None:
             return None if self.accept_of(call, p) else "call_not_accepted"
         return None if self.has_doctor(p) else "no_doctor"
+
+    # ---- 되돌리기(§5.13) — 409 코드 또는 None. 귀가 대기가 먼저
+    def undo_start_block(self, v: Visit, p: Procedure) -> str | None:
+        if self.is_home(v):
+            return "visit_home"
+        if self.is_room_task(p) or self.proc_state(p) != "doing":
+            return "procedure_not_doing"
+        return None
+
+    def undo_finish_block(self, v: Visit, p: Procedure) -> str | None:
+        if self.is_home(v):
+            return "visit_home"
+        if self.is_room_task(p) or self.proc_state(p) != "done":
+            return "procedure_not_done"
+        if p.started_at is None:  # KOS 에서만 완료 — 「시술 중」 기준인 ccc [시작] 시각이 없다
+            return "procedure_not_started"
+        return None
+
+    def back_to_waiting(self, v: Visit, p: Procedure) -> bool:
+        """[시작] 되돌리기 뒤 고객을 시술 대기로 돌리나 — 고객이 진행이고, p 를 뺀 시술(「방 배정」 제외) 중 진행 · 완료가 0."""
+        return v.flow_step == FLOW_DOING and not any(
+            self.proc_state(q) in ("doing", "done") for q in self.procedures(v) if q.id != p.id)
 
     # ---- 호출 · 수락(§5.4 · §5.5)
     def receivable(self, call: Call) -> list[Procedure]:

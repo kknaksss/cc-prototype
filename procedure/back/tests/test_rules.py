@@ -129,15 +129,119 @@ def test_canceled_procedure_excluded(ctr):
 
 
 def test_can_call_needs_pickable_procedure(ctr):
-    """T6 — [의사 호출] 은 호출할 수 있는(pickable) 시술이 1개 이상일 때만."""
+    """T6 — [의사 호출] 은 호출할 수 있는(pickable) 작업이 1개 이상일 때만."""
     s = seed_staff(ctr.repo)
-    only_etc = seed_visit(ctr.repo, 1, procs=0)
-    with ctr.repo.tx() as tx:  # 시술 0개 · 기타 작업(방 배정)만
-        tx.upsert_procedure(only_etc["visit"], 9, {"kos_order": 9, "title": "방 배정", "kos_status": "READY", "kind": "etc"})
+    only_room = seed_visit(ctr.repo, 1, procs=0)
+    add_etc(ctr, only_room["visit"], 9, "방 배정", "room-1")  # 작업 0개 · 「방 배정」만
     busy = seed_visit(ctr.repo, 2, procs=2, doctors={1: [s["A"]], 2: [s["A"]]})
     ctr.actions.start("t", busy["procs"][0])
     assert card(ctr, busy["visit"]).canCall  # 대기 시술 1개 남음
     ctr.actions.start("t", busy["procs"][1])
-    c1, c2 = card(ctr, only_etc["visit"]), card(ctr, busy["visit"])
-    assert not c1.canCall and not c1.canHome  # 기타 작업만 → 호출 꺼짐(시술이 없으니 귀가 대기도 아님)
+    c1, c2 = card(ctr, only_room["visit"]), card(ctr, busy["visit"])
+    assert not c1.canCall and not c1.canHome  # 「방 배정」만 → 호출 꺼짐(시술이 없으니 귀가 대기도 아님)
     assert not c2.canCall and not c2.canHome  # 전부 진행 중 · 대기 시술 0
+
+
+# ---- 2026-10-25 규칙 하나 — 작업은 type 무관 전부 시술 · 예외 = 「방 배정」(방 붙은 ETCETERA)
+def add_etc(c, vid, seq, title, room_kos_id=None, status="NOT_STARTED", doctors=None):
+    with c.repo.tx() as tx:
+        return tx.upsert_procedure(vid, seq, {"kos_order": seq, "title": title, "kos_status": status, "kind": "etc",
+                                              "room_kos_id": room_kos_id, "doctor_staff_ids": doctors or []})
+
+
+def test_room_task_in_snapshot_flagged(ctr):
+    """③ 「방 배정」(여럿이어도 전부)은 procedures[] 에 실리고 isRoomTask=true · 판정 플래그 전부 false."""
+    s = seed_staff(ctr.repo)
+    v = seed_visit(ctr.repo, 1, procs=2, doctors={1: [s["A"]]})
+    room1 = add_etc(ctr, v["visit"], 8, "방 배정", "room-1", status="READY")
+    room2 = add_etc(ctr, v["visit"], 9, "방 점유", "room-2", status="READY")
+    rows = {p.id: p for p in card(ctr, v["visit"]).procedures}
+    assert set(rows) == {*v["procs"], room1, room2}
+    for rid in (room1, room2):
+        p = rows[rid]
+        assert p.isRoomTask and p.kind == "etc" and not (p.pickable or p.canStart or p.canFinish)
+    assert not any(rows[pid].isRoomTask for pid in v["procs"])
+    from app.domain.errors import NotFound
+
+    with pytest.raises(NotFound):
+        ctr.actions.create_call("t", v["visit"], [room1], "all", None)
+    with pytest.raises(NotFound):
+        ctr.actions.start("t", room1)
+
+
+def test_roomless_etc_is_procedure(ctr):
+    """① 방 없는 ETCETERA(시트팩)는 일반 시술 — 체크 · 시작 · 종료 · 전부 완료에 든다."""
+    s = seed_staff(ctr.repo)
+    v = seed_visit(ctr.repo, 1, procs=1, doctors={1: [s["A"]]})
+    pack = add_etc(ctr, v["visit"], 9, "시트팩", doctors=[s["A"]])
+    p = proc(ctr, v["visit"], pack)
+    assert p.kind == "etc" and not p.isRoomTask and p.pickable and p.canStart
+    ctr.actions.start("t", v["procs"][0])
+    ctr.actions.finish("t", v["procs"][0])
+    c = card(ctr, v["visit"])
+    assert not c.canHome and c.canCall  # 시트팩이 남아 전부 완료 아님
+    ctr.actions.start("t", pack)
+    assert proc(ctr, v["visit"], pack).canFinish
+    ctr.actions.finish("t", pack)
+    c = card(ctr, v["visit"])
+    assert c.canHome and not c.canCall and proc(ctr, v["visit"], pack).state == "done"
+
+
+def test_room_task_excluded_from_rules(ctr):
+    """③ canCall · 전부 완료(canHome) · paymentRequired · need 는 「방 배정」 유무와 상관없이 같다."""
+    s = seed_staff(ctr.repo)
+    a = seed_visit(ctr.repo, 1, procs=2, doctors={1: [s["A"]], 2: [s["A"]]})
+    b = seed_visit(ctr.repo, 2, procs=2, doctors={1: [s["A"]], 2: [s["A"]]})
+    add_etc(ctr, b["visit"], 8, "방 배정", "room-2", status="READY")
+    with ctr.repo.tx() as tx:
+        tx.update_procedure(a["procs"][0], payment_required=True)
+        tx.update_procedure(b["procs"][0], payment_required=True)
+        tx.upsert_procedure(b["visit"], 8, {"payment_required": True})  # 「방 배정」의 수납 표시는 판정에 안 든다
+
+    def flags(vid):
+        c = card(ctr, vid)
+        return c.canCall, c.canHome, c.paymentRequired, c.need
+
+    assert flags(a["visit"]) == flags(b["visit"]) == (True, False, True, None)
+    for v in (a, b):
+        for pid in v["procs"]:
+            ctr.actions.start("t", pid)
+            ctr.actions.finish("t", pid)
+    assert flags(a["visit"])[:3] == flags(b["visit"])[:3] == (False, True, True)  # 「방 배정」(READY)을 기다리지 않음
+    assert card(ctr, a["visit"]).need.why == card(ctr, b["visit"]).need.why == "home"
+
+
+def test_sheet_pack_payment_counts(ctr):
+    """① 시트팩 등 ETCETERA 의 수납 필요도 일반 시술과 같이 든다."""
+    seed_staff(ctr.repo)
+    v = seed_visit(ctr.repo, 1, procs=1)
+    pack = add_etc(ctr, v["visit"], 9, "시트팩")
+    assert not card(ctr, v["visit"]).paymentRequired
+    with ctr.repo.tx() as tx:
+        tx.update_procedure(pack, payment_required=True)
+    assert card(ctr, v["visit"]).paymentRequired
+
+
+def test_called_sheet_pack_with_room_is_not_room_task(ctr):
+    """「방 배정」 = 방 붙은 ETCETERA + ccc 가 호출한 적 없음 — 시트팩 호출로 방이 붙어도 isRoomTask=false · 판정 유지."""
+    s = seed_staff(ctr.repo)
+    v = seed_visit(ctr.repo, 1, procs=1, doctors={1: [s["A"]]})
+    pack = add_etc(ctr, v["visit"], 9, "시트팩")
+    room_task = add_etc(ctr, v["visit"], 8, "방 배정", "room-1", status="READY")
+    call = ctr.actions.create_call("t", v["visit"], [pack], "all", None)
+    with ctr.repo.tx() as tx:
+        assert tx.procedures_of(v["visit"])[9].room_kos_id == "room-1"  # 호출 전 방 넣기로 방이 붙음
+    p = proc(ctr, v["visit"], pack)
+    assert not p.isRoomTask and p.call.id == call and p.pickable and not p.canStart  # 수락 전
+    assert proc(ctr, v["visit"], room_task).isRoomTask  # 호출 안 된 「방 배정」은 그대로
+    ctr.actions.accept(admin(), call, s["A"])
+    ctr.actions.start("t", pack)
+    ctr.actions.finish("t", pack)
+    ctr.actions.start("t", v["procs"][0])
+    assert not card(ctr, v["visit"]).canHome
+    ctr.actions.finish("t", v["procs"][0])
+    c = card(ctr, v["visit"])
+    assert c.canHome and proc(ctr, v["visit"], pack).state == "done"  # 시트팩은 전부 완료 판정에 들어 있었다
+    ctr.actions.home("t", v["visit"])
+    with ctr.repo.tx() as tx:
+        assert tx.events("home")[-1]["payload"] == {"cancelSequences": [8]}  # 취소 = 「방 배정」만

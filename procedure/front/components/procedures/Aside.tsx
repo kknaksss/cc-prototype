@@ -11,10 +11,9 @@ import {
   STATE_NAME,
   docName,
   needView,
-  orderedCards,
+  procsOf,
   visitCls,
   type FilterId,
-  type SortKey,
 } from './view';
 
 export type TabId = 'status' | 'calls' | 'customers';
@@ -29,7 +28,7 @@ const list: React.CSSProperties = { flex: 1, minHeight: 0, overflow: 'auto', dis
 export function Aside({
   board,
   now,
-  sort,
+  ordered,
   tab,
   onTab,
   filter,
@@ -41,7 +40,7 @@ export function Aside({
 }: {
   board: Board;
   now: number;
-  sort: SortKey;
+  ordered: Card[]; // 카드판과 같은 카드 순서(스냅샷 cards[] · 경합 중이면 로컬 순서 — §6.4)
   tab: TabId;
   onTab: (t: TabId) => void;
   filter: FilterId;
@@ -132,7 +131,7 @@ export function Aside({
           </div>
           {tab === 'status' && <StatusTab board={board} now={now} filter={filter} onFilter={onFilter} focus={focus} onFocus={onFocus} />}
           {tab === 'calls' && <CallsTab board={board} now={now} focus={focus} onFocus={onFocus} onAccept={onAccept} onReassign={onReassign} />}
-          {tab === 'customers' && <CustomersTab board={board} sort={sort} focus={focus} onFocus={onFocus} />}
+          {tab === 'customers' && <CustomersTab board={board} cards={ordered} focus={focus} onFocus={onFocus} />}
         </>
       )}
     </aside>
@@ -161,43 +160,42 @@ function StatusTab({
     .sort((a, b) => (toMs(a.c.need.since) ?? 0) - (toMs(b.c.need.since) ?? 0));
   return (
     <>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0,1fr))', gap: 4, padding: '16px 16px 12px' }}>
-        {FILTERS.map((f) => (
-          <div
+      {/* 상태 수 6칸 = 3 × 2 · 점 · 이름 · 수. 칸 바탕 · 테두리 상자 없음 — 줄의 2 · 3번째 칸만 왼쪽 구분선(§6.4 · 시안 M:945-955) */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', rowGap: 8, padding: '14px 12px 10px' }}>
+        {FILTERS.map((f, i) => (
+          <button
             key={f.id}
+            type="button"
             onClick={() => onFilter(f.id)}
-            className={f.cls}
+            aria-pressed={filter === f.id}
+            className={(filter === f.id ? 'text-typo-body-600 text-ms-gray-800' : 'text-typo-body-400 text-ms-gray-500') + ' border-ms-gray-300'}
             style={{
-              borderRadius: 8,
-              borderWidth: 1,
-              borderStyle: 'solid',
-              padding: '8px 2px',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              textAlign: 'center',
-              gap: 2,
-              cursor: 'pointer',
               minWidth: 0,
-              outline: filter === f.id ? '2px solid var(--ms-primary)' : 'none',
-              outlineOffset: 1,
+              borderWidth: 0,
+              borderLeftWidth: i % 3 ? 1 : 0,
+              borderStyle: 'solid',
+              background: 'transparent',
+              padding: '0 0 0 10px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+              whiteSpace: 'nowrap',
             }}
           >
-            <span className="text-typo-caption-md-500" style={{ whiteSpace: 'nowrap' }}>
-              {f.name}
-            </span>
-            <span className="text-typo-title-sm-600" style={{ fontVariantNumeric: 'tabular-nums' }}>
-              {board.counts[f.id]}
-            </span>
-          </div>
+            <span className={f.dot} style={{ width: 6, height: 6, borderRadius: '50%', flexShrink: 0 }} />
+            <span>{f.name}</span>
+            <span style={{ fontVariantNumeric: 'tabular-nums' }}>{board.counts[f.id]}</span>
+          </button>
         ))}
       </div>
       <div className="border-ms-gray-200" style={{ borderTopWidth: 1, borderTopStyle: 'solid' }} />
       <div style={list}>
         <span className="text-typo-caption-md-600 text-ms-gray-700">확인이 필요한 고객</span>
         {needs.map(({ c, v }) => {
-          const doing = c.procedures.find((p) => p.kind !== 'etc' && p.state === 'doing');
-          const assigned = c.procedures.find((p) => p.kind !== 'etc' && p.doctor && p.state !== 'done');
+          const doing = procsOf(c).find((p) => p.state === 'doing');
+          const assigned = procsOf(c).find((p) => p.doctor && p.state !== 'done');
           const owner = doing?.doctor?.name ?? assigned?.doctor?.name ?? '미배정';
           return (
             <div
@@ -450,18 +448,18 @@ function CallsTab({
 // 고객 탭 — 고객 줄(상태 배지 · 이름 · 방 / 번호 원 시술 줄) · 귀가 대기까지 · 누르면 그 카드만 남기고 흐림
 function CustomersTab({
   board,
-  sort,
+  cards,
   focus,
   onFocus,
 }: {
   board: Board;
-  sort: SortKey;
+  cards: Card[];
   focus: number | null;
   onFocus: (visitId: number | null) => void;
 }) {
   return (
     <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
-      {orderedCards(board.cards, sort).map((c) => (
+      {cards.map((c) => (
         <div
           key={c.visitId}
           onClick={() => onFocus(focus === c.visitId ? null : c.visitId)}
@@ -491,8 +489,7 @@ function CustomersTab({
             </span>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {c.procedures
-              .filter((p) => p.kind !== 'etc')
+            {procsOf(c)
               .sort((a, b) => a.sequence - b.sequence)
               .map((p, i) => {
                 const now = p.state === 'doing';

@@ -66,6 +66,19 @@ async def finish(procedure_id: int, c: Ctr, actor: Actor) -> OkResponse:
     return OkResponse()
 
 
+@router.post("/procedures/{procedure_id}/undo-start", response_model=StartResponse)
+async def undo_start(procedure_id: int, c: Ctr, actor: Actor) -> StartResponse:
+    """[시작] 되돌리기(§5.13) — flowStepChanged = 고객을 시술 대기로 돌렸나."""
+    return StartResponse(flowStepChanged=c.actions.undo_start(actor.login_id, procedure_id))
+
+
+@router.post("/procedures/{procedure_id}/undo-finish", response_model=OkResponse)
+async def undo_finish(procedure_id: int, c: Ctr, actor: Actor) -> OkResponse:
+    """[종료] 되돌리기(§5.13)."""
+    c.actions.undo_finish(actor.login_id, procedure_id)
+    return OkResponse()
+
+
 @router.post("/visits/{visit_id}/home", response_model=OkResponse)
 async def home(visit_id: int, c: Ctr, actor: Actor) -> OkResponse:
     c.actions.home(actor.login_id, visit_id)

@@ -31,7 +31,7 @@ class Account:
 
     id: int
     login_id: str
-    role: str  # admin | doctor | nurse
+    role: str  # admin | doctor | nurse | coordinator
     name: str
     staff_id: int | None
     active: bool
@@ -57,6 +57,7 @@ class Customer:
     nationality: str | None
     is_new: bool
     chart_number: str | None
+    gender: str | None = None  # 예약 현황(SPEC-005 §3.2)
 
 
 @dataclass
@@ -92,7 +93,7 @@ class Procedure:
     present: bool
     started_at: datetime | None
     room_kos_id: str | None = None
-    kind: str = "procedure"  # procedure | etc(ETCETERA — 표시만, 규칙 · 조작 대상 아님)
+    kind: str = "procedure"  # procedure | etc(ETCETERA) — 규칙은 type 무관 · etc + 방 = 「방 배정」만 예외(2026-10-25)
 
 
 @dataclass
@@ -165,3 +166,91 @@ class World:
     recent_accepts: list[AcceptLog]
     sync_ok_at: datetime | None = None
     sync_error: str | None = None
+
+
+# ------------------------------------------------------------------ 예약 현황(SPEC-005 §3.2)
+@dataclass
+class Zone:
+    id: int
+    kos_id: str
+    title: str
+    order: int
+    is_default: bool
+    present: bool
+
+
+@dataclass
+class ResvGroup:
+    id: int
+    kos_id: str
+    title: str
+    order: int
+    interval_minutes: int
+    capacities: list[dict[str, Any]]  # [{zoneKosId, capacity}] — 켜진 구역만
+    timetable: dict[str, dict[str, Any]]  # monday … sunday → {enabled, start, end, breakStart, breakEnd}(KST HH:MM)
+    present: bool
+
+
+@dataclass
+class Reservation:
+    id: int
+    kos_id: str
+    customer_id: int | None
+    day: str | None
+    zone_kos_id: str | None
+    status: str | None
+    flow_step: str | None
+    flow_step_at: datetime | None
+    reception_at: datetime | None
+    resources: list[dict[str, Any]]  # [{kosId, groupKosId, zoneKosId, startAt, endAt, doctors[{id,name}]}]
+    consultation_required: bool
+    sedation_required: bool
+    counselor: dict[str, Any] | None
+    assignee: dict[str, Any] | None
+    memo: str | None
+    funnel: dict[str, Any] | None
+    connected_channel: str | None
+    desired_discharge_at: datetime | None
+    purchase_ids: list[str]
+    prescription_ids: list[str]
+    tasks: list[dict[str, Any]]  # [{type, sequence, title, status, paymentRequired, roomKosId, roomTitle, roomAssignedAt}]
+    room_kos_id: str | None
+    room_title: str | None
+    present: bool
+
+
+@dataclass
+class ResvSlot:
+    group_kos_id: str
+    zone_kos_id: str
+    start_at: datetime
+    end_at: datetime | None
+    capacity: int | None
+    reservation_count: int | None
+
+
+@dataclass
+class Notice:
+    id: int
+    kos_id: str
+    content: str
+    released_at: datetime | None
+
+
+@dataclass
+class FunnelCode:
+    id: int
+    kos_id: str
+    name: str
+    order: int
+    closed: bool
+    is_default: bool
+
+
+@dataclass
+class IdentityCheck:
+    customer_id: int
+    status: str
+    method: str
+    checked_at: datetime
+    actor: str

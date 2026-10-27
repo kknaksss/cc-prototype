@@ -3,6 +3,8 @@
 SPEC-005 §5.7 · §5.8 · §5.11 ~ §5.14 · §7.3 · §7.4.
 """
 
+from datetime import datetime
+
 import pytest
 
 from app.domain.errors import BadGateway, BadRequest, Conflict, NotFound
@@ -44,16 +46,15 @@ def test_identity_fields_rules():
     assert identity_fields(None) == ("foreign", [], False)
 
 
-def test_detail_new_reception_needs_identity(env):
+def test_detail_new_reception_identity_not_required(env):
+    """10-27 — [접수 완료]는 신분 칸과 상관없이 켜짐(U2 뒤집음) · 신분 칸은 표시만."""
     c, fake, _ = env
     fake.visitors["vis-1"].pop("passportNumber")
     d = detail(c, fake, "s1")
-    assert d.receiveMode == "new" and d.customer.identity.complete is False and d.can.receive is False
+    assert d.receiveMode == "new" and d.customer.identity.complete is False and d.can.receive is True
     assert [f.key for f in d.customer.identity.fields if not f.filled] == ["passportNumber"]
     assert d.customer.personal.passportNumber is None and d.customer.personalError is None
-    fake.visitors["vis-1"]["passportNumber"] = "X9"
-    d = run(c.resv.detail(d.reservationId))
-    assert d.can.receive and d.customer.identity.complete
+    assert d.can.editRoute is True and not hasattr(d.reservation, "consultationRequired")  # 초진 · 재진 모두 · KOS 체크 안 읽음
     assert [r.title for r in d.rooms] == ["A-룸1", "A-룸2", "A-룸3"] and not d.roomLocked
 
 
@@ -90,7 +91,7 @@ def test_visitor_read_failure(env):
     fake.resv_fail = {"get-visitor": (500, {"className": "Boom"})}
     d = detail(c, fake, "s1")
     assert d.customer.personal is None and d.customer.personalError == "HTTP 500 Boom"
-    assert d.customer.identity.fields == [] and d.can.receive is False and d.health.state in ("none", "ok")
+    assert d.customer.identity.fields == [] and d.can.receive is True and d.health.state in ("none", "ok")
     d = detail(c, fake, "s2", flow="RECEPTION", status="IN_PROGRESS")
     assert d.can.receive  # 이어 하기는 신분 칸을 안 본다
 
@@ -231,7 +232,7 @@ def test_identity_mark(env):
     d = run(c.resv.detail(d.reservationId))
     ident = d.customer.identity
     assert (ident.status, ident.checkedBy, ident.method) == ("confirmed", "desk1", "web_manual")
-    assert d.can.unconfirmIdentity and d.can.receive == ident.complete  # 표시만 — 접수 조건 아님
+    assert d.can.unconfirmIdentity and d.can.receive  # 표시만 — 접수 조건 아님
     c.resv.identity(DESK, cid, "unconfirmed")
     fake._resv_sch("s1").update(flowStep="RECEPTION")
     fake._resv_sch("s1")["reservation"]["status"] = "IN_PROGRESS"
@@ -265,7 +266,8 @@ def test_form_defaults(env):
     names = [x.name for x in f.staff]
     assert "시스템" in names and "마취용" not in names  # 시스템 포함 · 제외 계정 뺌
     assert f.defaultAssigneeStaffId == next(x.staffId for x in f.staff if x.name == "시스템")
-    assert sorted(x.name for x in f.doctors) == ["가 원장", "나 원장"] and [x.name for x in f.counselors] == ["상담사 1"]
+    assert [x.name for x in f.counselors] == ["상담사 1"] and not hasattr(f, "doctors")  # 당일 지정 의사 칸 없음(10-27)
+    assert f.snsTypes == ["etc", "kakaotalk", "line", "instagram", "whatsapp", "wechat"]
     assert [x.name for x in f.funnels] == ["인스타그램"]  # 닫힌 코드 뺌
     assert {(x.zoneId, x.available) for x in f.zones} == {(zid[ZONE], False), (zid[ZONE2], True)}
     assert f.defaultZoneId == zid[ZONE2]  # 기본 구역이 꽉 차면 order 첫 자리 있는 구역
@@ -290,11 +292,28 @@ def test_search(env):
         assert tx.customer(r.items[0].customerId).name.startswith("검색 고객")
     run(c.resv.search(None, None, "1990-01-02", None, 1))
     assert [b for p, b in fake.calls if p.endswith("get-visitors")][-1]["dateOfBirth"] == "1990-01-02 00:00:00.000Z"
-    bad = ((None, None, None, None, 1), (" ", None, None, None, 1), ("a", None, None, None, 0),
-           (None, None, "1990/1/2", None, 1))
+    every = run(c.resv.search(None, None, None, None, 1))  # 조건 없음 = 최근 방문 순 목록(10-27 #1)
+    body = [b for p, b in fake.calls if p.endswith("get-visitors")][-1]
+    assert (body["visitorName"], body["phoneNumber"], body["chartNumber"]) == ("", "", "") and "dateOfBirth" not in body
+    assert every.total == len(fake.visitors) and len(every.items) == 20
+    assert run(c.resv.search(" ", None, None, None, 1)).total == every.total
+    bad = (("a", None, None, None, 0), (None, None, "1990/1/2", None, 1))
     for args in bad:
         with pytest.raises(BadRequest):
             run(c.resv.search(*args))
     fake.resv_fail = {"get-visitors": (500, {})}
     with pytest.raises(BadGateway):
         run(c.resv.search("a", None, None, None, 1))
+
+
+def test_detail_reads_schedule_fresh_every_time(env):
+    """10-27 #17 — 상세는 열 때마다 그 일정을 KOS 에서 바로 읽는다(날짜 캐시 10초와 상관없이) → 모달 폴링이 수납을 곧바로 본다."""
+    c, fake, _ = env
+    d = detail(c, fake, "s1", flow="PROCEDURE_DONE", status="IN_PROGRESS", tasks=[rtask(1, status="DONE", paid=True)])
+    assert d.settlement.paymentRequiredCount == 1 and not d.can.discharge
+    fake._resv_sch("s1")["tasks"][0]["paymentRequired"] = False  # KOS 에서 수납 — 캐시는 아직 신선
+    assert c.kos.resv.fresh(datetime.fromisoformat("2026-10-21").date())
+    n = fake.paths().count("get-schedule-detail")
+    d = run(c.resv.detail(d.reservationId))
+    assert fake.paths().count("get-schedule-detail") == n + 1
+    assert d.settlement.paymentRequiredCount == 0 and d.can.discharge

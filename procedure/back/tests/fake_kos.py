@@ -303,11 +303,11 @@ class ResvFake:
         end = datetime.fromisoformat(o["reservationTime"]["endDateTimeUtc"].replace("Z", "+00:00"))
         x = resv(sid, v["id"], grp=o["reservationGroup"]["reservationGroupId"], start=start,
                  minutes=int((end - start).total_seconds() // 60), zone=body["zoneId"], name=v["name"],
-                 nationality=v.get("nationality"), is_new=bool(v.get("isNew")), consult=body["consultationRequired"],
+                 nationality=v.get("nationality"), is_new=bool(v.get("isNew")), consult=body.get("consultationRequired", False),
                  memo=body.get("reservationMemo"))
         x["occupiedResources"][0]["id"] = o["id"]
         x["occupiedResources"][0]["reservationGroup"]["doctors"] = o["reservationGroup"]["doctors"]
-        x["reservation"].update({"sedationRequired": body["sedationRequired"],
+        x["reservation"].update({"sedationRequired": body.get("sedationRequired", False),
                                  "counselor": body.get("counselor") or {"id": "", "name": ""},
                                  "reservationAssignee": body["reservationAssignee"],
                                  "funnel": body.get("funnel") or {"funnelDetail": ""}})

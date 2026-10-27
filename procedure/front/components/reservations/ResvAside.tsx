@@ -4,7 +4,6 @@
 // 「예약 요청」 = 그 날짜 KOS 공지(읽기만) + 예약 요청 자리(빈 상태 · D-07) / 「원내 현황」 = 오늘만 · 구역별 묶음 · 필터 5 · 금액 3칸
 import { useState } from 'react';
 import { Badge, Tabs, type BadgeVariant } from '@medisolve-ai/medikit';
-import { hm } from '@/lib/time';
 import type { ClinicItem, ResvBoard, ResvMain } from '@/lib/types';
 import { Flag, moneyOf, stateText } from './view';
 
@@ -23,6 +22,9 @@ const FILTERS: { id: ClinicFilter; name: string; dot: string }[] = [
   { id: 'procedure', name: '시술', dot: 'bg-primary' },
   { id: 'home', name: '귀가 대기', dot: 'bg-ms-gray-600' },
 ];
+
+// 공지 영역 = 패널 높이의 이 비율(시안 420 고정 → 화면 높이에 비례 · E2E #20 「지금보다 크게」)
+const NOTICE_SHARE = '55%';
 
 const BADGE: Partial<Record<ResvMain, BadgeVariant>> = { reception: 'warning', consultation: 'primary', procedure: 'primary', home: 'neutral' };
 
@@ -49,20 +51,16 @@ export function ResvAside({ board, tab, onTab, onOpen }: { board: ResvBoard; tab
 function RequestsTab({ board }: { board: ResvBoard }) {
   return (
     <>
-      {/* 공지사항 — 그 날짜 KOS 공지 목록 · 읽기만([수정하기] 없음 — OQ-737) */}
-      <div style={{ maxHeight: 420, flexShrink: 0, boxSizing: 'border-box', padding: '12px 16px 16px', display: 'flex', flexDirection: 'column', gap: 8, minHeight: 0 }}>
+      {/* 공지사항 — 그 날짜 KOS 공지 목록 · 읽기만([수정하기] 없음 — OQ-737)
+          높이 = 패널의 고정 비율(공지 없어도 자리 유지 · 넘치면 안에서 스크롤 — E2E #5 · #20) · 시각 글자 없음(E2E #19) */}
+      <div style={{ flex: `0 0 ${NOTICE_SHARE}`, minHeight: 0, boxSizing: 'border-box', padding: '12px 16px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
         <span className="text-typo-heading-sm-600 text-ms-gray-800">공지사항</span>
-        <div style={{ overflowY: 'auto', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ flex: 1, overflowY: 'auto', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
           {board.notices.length ? (
             board.notices.map((n) => (
-              <div key={n.id} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <span className="text-typo-caption-md-400 text-ms-gray-500" style={{ fontVariantNumeric: 'tabular-nums' }}>
-                  {n.releasedAt ? hm(n.releasedAt) : ''}
-                </span>
-                <span className="text-typo-body-400 text-ms-gray-800" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                  {n.content}
-                </span>
-              </div>
+              <span key={n.id} className="text-typo-body-400 text-ms-gray-800" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                {n.content}
+              </span>
             ))
           ) : (
             <span className="text-typo-body-400 text-ms-gray-500">이 날짜 공지가 없어요</span>

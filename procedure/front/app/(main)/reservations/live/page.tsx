@@ -2,21 +2,23 @@
 
 // 예약 현황(SPEC-005 §6 · 전체현황판 시안 「현황 › 예약 현황」 M:93-715) — 제목 줄 · 스케줄 표 · 오른쪽 패널 · 등록 모달 · 상세 모달 · 토스트
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Badge, Button } from '@medisolve-ai/medikit';
+import { Badge, Button, Calendar, Popover, PopoverContent, PopoverTrigger } from '@medisolve-ai/medikit';
 import * as api from '@/lib/api';
 import { useNow, useResvBoard, useSession, useWide } from '@/lib/hooks';
 import { clearSession } from '@/lib/session';
 import { hms } from '@/lib/time';
-import type { ResvBoard, ResvCard, ResvColumn } from '@/lib/types';
+import type { ResvBoard, ResvCard, ResvColumn, ResvState } from '@/lib/types';
 import { HEADER_H } from '@/components/common/AppHeader';
 import { ScheduleTable, cardKey } from '@/components/reservations/ScheduleTable';
 import { ResvAside, type ResvTab } from '@/components/reservations/ResvAside';
 import { NewReservationModal, type NewDraft } from '@/components/reservations/NewReservationModal';
 import { DetailModal } from '@/components/reservations/DetailModal';
 import { LEGEND, MAIN_NAME, dateTitle, isoAt, shiftDate } from '@/components/reservations/view';
+import { dateToYmd, ymdToDate } from '@/components/reservations/controls';
 
 const TOAST_MS = 2600; // 가운데 아래 · 2.6초(§6.7)
 const SETTLE_MS = 2500; // 이동 성공 뒤 이만큼 낙관 표시를 두고 사본을 따른다(조작 직후 + 2초 뒤 다시 부름 — §4.3)
+const RECEIVED_MS = 4000; // 접수 성공 뒤 카드 상태 낙관 표시(E2E #14)
 
 // 놓은 직후 카드를 새 자리로 미리 옮겨 보인다(낙관 표시 — §5.4). 실패면 지우고 원위치 + 토스트
 interface Moved {
@@ -25,9 +27,16 @@ interface Moved {
   end: string;
 }
 
-function withMoves(board: ResvBoard, moves: Record<string, Moved>): ResvBoard {
-  if (!Object.keys(moves).length) return board;
-  return { ...board, cards: board.cards.map((c) => (moves[cardKey(c)] ? { ...c, ...moves[cardKey(c)] } : c)) };
+function withMoves(board: ResvBoard, moves: Record<string, Moved>, states: Record<number, ResvState>): ResvBoard {
+  if (!Object.keys(moves).length && !Object.keys(states).length) return board;
+  return {
+    ...board,
+    cards: board.cards.map((c) => {
+      const m = moves[cardKey(c)];
+      const st = states[c.reservationId];
+      return m || st ? { ...c, ...m, ...(st ? { state: st, draggable: false } : null) } : c;
+    }),
+  };
 }
 
 export default function ReservationsLivePage() {
@@ -38,6 +47,8 @@ export default function ReservationsLivePage() {
   const wide = useWide();
 
   const [moves, setMoves] = useState<Record<string, Moved>>({});
+  const [received, setReceived] = useState<Record<number, ResvState>>({});
+  const [calOpen, setCalOpen] = useState(false);
   const [tab, setTab] = useState<ResvTab>('requests');
   const [focus, setFocus] = useState<number | null>(null);
   const [draft, setDraft] = useState<NewDraft | null>(null);
@@ -52,7 +63,7 @@ export default function ReservationsLivePage() {
   }, [toast]);
 
   const raw = live.board;
-  const board = useMemo(() => (raw ? withMoves(raw, moves) : null), [raw, moves]);
+  const board = useMemo(() => (raw ? withMoves(raw, moves, received) : null), [raw, moves, received]);
   const shownDate = date ?? raw?.date ?? null;
 
   if (!session) return null;
@@ -124,9 +135,33 @@ export default function ReservationsLivePage() {
             </h1>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <NavBtn label="전날" text="‹" onClick={() => go(-1)} disabled={!shownDate} />
-              <span className="text-typo-heading-md-500 text-ms-gray-800" style={{ minWidth: 140, textAlign: 'center', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
-                {shownDate ? dateTitle(shownDate) : ''}
-              </span>
+              {/* 날짜 글자 → 달력(DS Calendar — E2E #6) */}
+              <Popover open={calOpen} onOpenChange={setCalOpen}>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    disabled={!shownDate}
+                    aria-label="날짜 고르기"
+                    className="text-typo-heading-md-500 text-ms-gray-800"
+                    style={{ minWidth: 140, textAlign: 'center', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', border: 'none', background: 'transparent', cursor: 'pointer', fontFamily: 'inherit', padding: '4px 6px', borderRadius: 6 }}
+                  >
+                    {shownDate ? dateTitle(shownDate) : ''}
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent className="p-[16px]" align="center">
+                  <Calendar
+                    mode="single"
+                    selected={ymdToDate(shownDate)}
+                    defaultMonth={ymdToDate(shownDate)}
+                    onSelect={(d) => {
+                      if (!d) return;
+                      setCalOpen(false);
+                      setFocus(null);
+                      setDate(dateToYmd(d));
+                    }}
+                  />
+                </PopoverContent>
+              </Popover>
               <NavBtn label="다음날" text="›" onClick={() => go(1)} disabled={!shownDate} />
               <Button variant="outlined" color={board?.isToday ? 'gray' : 'blue'} size="sm" disabled={!board || board.isToday} onClick={goToday}>
                 오늘
@@ -211,6 +246,19 @@ export default function ReservationsLivePage() {
             live.refreshSoon();
           }}
           onError={fail}
+          onReceived={(st) => {
+            const id = detailId;
+            setReceived((r) => ({ ...r, [id]: st }));
+            setTimeout(
+              () =>
+                setReceived((r) => {
+                  const next = { ...r };
+                  delete next[id];
+                  return next;
+                }),
+              RECEIVED_MS,
+            );
+          }}
         />
       )}
     </div>

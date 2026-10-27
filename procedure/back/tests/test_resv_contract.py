@@ -8,13 +8,12 @@ from app.schemas.reservations import CustomerSearch, ReservationBoard, Reservati
 from tests.conftest import ADMIN, make_settings
 
 OPS = [
-    ("post", "/api/reservations", {"groupId": 1, "start": "2026-10-26T10:00:00+09:00", "customer": {"customerId": 1},
-                                   "consultationRequired": True, "sedationRequired": False, "doctorStaffIds": []}),
+    ("post", "/api/reservations", {"groupId": 1, "start": "2026-10-26T10:00:00+09:00", "customer": {"customerId": 1}}),
     ("post", "/api/reservations/1/move", {"resourceIndex": 0, "groupId": 1, "start": "2026-10-26T10:00:00+09:00"}),
     ("post", "/api/reservations/1/cancel", {"reason": "CANCELED"}),
     ("put", "/api/reservations/1/memo", {"memo": ""}),
-    ("put", "/api/reservations/1/route", {"consultationRequired": False}),
-    ("post", "/api/reservations/1/reception", {"roomId": 1}),
+    ("post", "/api/reservations/1/reception", {"roomId": 1, "route": "direct"}),
+    ("post", "/api/reservations/1/consultation-add", None),
     ("post", "/api/reservations/1/counselor-call", {"staffId": 1}),
     ("post", "/api/reservations/1/discharge", None),
     ("put", "/api/customers/1/personal", {"personal": {"passportNumber": "X1"}}),
@@ -86,7 +85,10 @@ def test_form_and_search(fake):
     s = CustomerSearch.model_validate(fake.get("/api/customers/search?name=고객 A").json())
     assert s.pageSize == 20 and s.total > 20 and len(s.items) == 20
     assert len(fake.get("/api/customers/search?name=고객 A&page=2").json()["items"]) == s.total - 20
-    assert fake.get("/api/customers/search").json()["error"]["code"] == "invalid_request"
+    assert form.snsTypes == ["etc", "kakaotalk", "line", "instagram", "whatsapp", "wechat"]
+    assert "doctors" not in fake.get("/api/reservations/form").json()  # 당일 지정 의사 칸 없음(10-27)
+    every = CustomerSearch.model_validate(fake.get("/api/customers/search?page=1").json())  # 조건 없음 = 목록(10-27 #1)
+    assert every.total >= s.total and len(every.items) == 20
 
 
 @pytest.mark.parametrize(("method", "path", "body"), OPS)

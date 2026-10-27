@@ -12,6 +12,7 @@ from app.domain.clock import KST, iso
 from app.domain.errors import BadRequest, NotFound
 from app.domain.reservation_rules import CLOSED_MAINS, at_hhmm, hhmm, parse_day, state_of
 from app.schemas.reservations import (
+    SNS_TYPES,
     CustomerSearch,
     ReservationBoard,
     ReservationDetail,
@@ -39,7 +40,7 @@ GROUPS = [
     (12, "VIP", 60, {}, ("10:00", "20:00"), False),  # 켜진 구역 없음 → 「- 명」
     (13, "기타", 30, {Z4: 3}, ("10:00", "20:00"), True),
 ]
-AXIS = ("10:00", "20:00")
+AXIS = ("06:00", "22:00")  # 축 고정(10-27)
 
 ROOMS = {Z4: [(1, "A-룸1"), (2, "A-룸2"), (3, "A-룸3"), (4, "A-룸4"), (5, "A-레이저실")],
          Z5: [(11, "B-룸1"), (12, "B-룸2")]}
@@ -339,11 +340,10 @@ def detail(now: datetime, reservation_id: int) -> ReservationDetail:
                       {"staffId": 22, "name": "상담사 2", "busyRoom": None},
                       {"staffId": 23, "name": "상담사 3", "busyRoom": None}]
 
-    ident_ok = identity["complete"]
     can = {
         "cancel": main == "reserved",
-        "editRoute": main in ("reserved", "noshow") and not c[5],  # 추가 지시 1 W4
-        "receive": bool(resume or (new and ident_ok and personal is not None)),
+        "editRoute": main in ("reserved", "noshow"),  # 10-27 — 초진 · 재진 모두
+        "receive": bool(resume or new),  # 10-27 — 신분 조건 없음
         "callCounselor": flow in ("CONSULTATION_WAITING", "CONSULTATION"),
         "discharge": flow == "PROCEDURE_DONE" and pay == 0,
         "editMemo": main != "canceled" and flow != "COMPLETED",  # §5.14 · r1 W1
@@ -351,6 +351,7 @@ def detail(now: datetime, reservation_id: int) -> ReservationDetail:
         "confirmIdentity": identity["status"] == "unconfirmed",
         "unconfirmIdentity": identity["status"] == "confirmed" and not any(  # 고객 단위(r1 W4)
             x[1] == cid and _state(x)[0] not in ("reserved", "noshow", "canceled") for x in RESERVATIONS),
+        "addConsultation": flow in ("PROCEDURE_WAITING", "PROCEDURE", "PROCEDURE_DONE") and main not in ("canceled", "noshow"),
     }
     end = _hm(_minutes(resources[-1][1]) + resources[-1][2])
     return ReservationDetail.model_validate({
@@ -362,7 +363,7 @@ def detail(now: datetime, reservation_id: int) -> ReservationDetail:
             "chartNumber": c[6], "age": _age(c[7], day), "personal": personal,
             "personalError": "HTTP 500 InternalServerError" if personal is None else None,
             "remark": "고객 공통 메모 예시" if rid % 3 == 0 else None, "identity": identity},
-        "reservation": {"consultationRequired": consult, "sedationRequired": rid % 4 == 0, "memo": memo,
+        "reservation": {"sedationRequired": rid % 4 == 0, "memo": memo,
                         "funnel": {"name": "인스타그램", "detail": "광고 보고 옴"} if rid % 2 else None,
                         "connectedChannel": None,
                         "counselor": {"staffId": 21, "name": "상담사 1"} if rid in (1, 5) else None,
@@ -396,9 +397,9 @@ def form(now: datetime, date_value: str | None, group_id: int | None, start: str
     default = next((z["zoneId"] for z in zones if z["available"]), None)
     return ReservationForm.model_validate({
         "staff": [{"staffId": i, "name": n} for i, n in STAFF], "defaultAssigneeStaffId": SYSTEM[0],
-        "doctors": [{"staffId": i, "name": n} for i, n in DOCTORS],
         "counselors": [{"staffId": i, "name": n} for i, n in COUNSELORS],
-        "funnels": [{"funnelId": i, "name": n} for i, n in FUNNELS], "zones": zones, "defaultZoneId": default})
+        "funnels": [{"funnelId": i, "name": n} for i, n in FUNNELS], "zones": zones, "defaultZoneId": default,
+        "snsTypes": list(SNS_TYPES)})
 
 
 def _start_hhmm(value: str) -> str:
@@ -410,8 +411,6 @@ def _start_hhmm(value: str) -> str:
 
 
 def search(name: str | None, phone: str | None, birth: str | None, chart: str | None, page: int) -> CustomerSearch:
-    if not any(v and v.strip() for v in (name, phone, birth, chart)):
-        raise BadRequest("invalid_request", "검색 조건을 하나 이상 넣어 주세요")
     if page < 1:
         raise BadRequest("invalid_request", "page: 1 이상이어야 해요")
     found = [c for c in (*CUSTOMERS, *SEARCH_EXTRA)

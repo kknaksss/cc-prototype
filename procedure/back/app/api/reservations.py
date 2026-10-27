@@ -1,6 +1,7 @@
 """예약 현황 API(SPEC-005 §7) — HTTP 만. 규칙 · KOS 호출은 service 가 한다.
 
-GET 넷(§7.2 ~ §7.4)은 `PROC_FAKE_BOARD` 면 지어낸 값 · 조작 11개(§7.5)는 `require_real_board`(403 fake_board).
+GET 넷(§7.2 ~ §7.4)은 `PROC_FAKE_BOARD` 면 지어낸 값 · 조작(§7.5)은 `require_real_board`(403 fake_board).
+10-27 E2E: PUT route 없앰(진행 경로 = 접수 본문 route) · POST consultation-add 넣음.
 역할은 네 개 모두 ○(§7.1 · D-30) — 로그인만 본다.
 """
 
@@ -24,7 +25,6 @@ from app.schemas.reservations import (
     ReservationBoard,
     ReservationDetail,
     ReservationForm,
-    RouteRequest,
 )
 from app.service import fake_reservations as fake
 
@@ -87,20 +87,20 @@ async def memo(reservation_id: int, body: MemoRequest, c: Ctr, actor: Actor) -> 
     return OkResponse()
 
 
-@router.put("/reservations/{reservation_id}/route", response_model=OkResponse, dependencies=write)
-async def route(reservation_id: int, body: RouteRequest, c: Ctr, actor: Actor) -> OkResponse:
-    await c.resv.route(actor, reservation_id, body.consultationRequired)
-    return OkResponse()
-
-
 @router.post("/reservations/{reservation_id}/reception", response_model=ReceptionResponse, dependencies=write)
 async def reception(reservation_id: int, body: ReceptionRequest, c: Ctr, actor: Actor) -> ReceptionResponse:
-    return ReceptionResponse(flowStep=await c.reception.run(actor, reservation_id, body.roomId))
+    return ReceptionResponse(flowStep=await c.reception.run(actor, reservation_id, body.roomId, body.route))
 
 
 @router.post("/reservations/{reservation_id}/counselor-call", response_model=OkResponse, dependencies=write)
 async def counselor_call(reservation_id: int, body: CounselorCallRequest, c: Ctr, actor: Actor) -> OkResponse:
     await c.reception.counselor_call(actor, reservation_id, body.staffId)
+    return OkResponse()
+
+
+@router.post("/reservations/{reservation_id}/consultation-add", response_model=OkResponse, dependencies=write)
+async def consultation_add(reservation_id: int, c: Ctr, actor: Actor) -> OkResponse:
+    await c.reception.consultation_add(actor, reservation_id)
     return OkResponse()
 
 

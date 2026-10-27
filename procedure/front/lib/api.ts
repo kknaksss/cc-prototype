@@ -10,6 +10,7 @@ import type {
   LoginResult,
   Me,
   Personal,
+  ReceiveRoute,
   ResvBoard,
   ResvDetail,
   ResvForm,
@@ -122,8 +123,9 @@ export const moveReservation = (id: number, resourceIndex: number, groupId: numb
   post<Ok>(`/api/reservations/${id}/move`, { resourceIndex, groupId, start });
 export const cancelReservation = (id: number, reason: 'CANCELED' | 'NO_SHOW') => post<Ok>(`/api/reservations/${id}/cancel`, { reason });
 export const saveReservationMemo = (id: number, memo: string) => put<Ok>(`/api/reservations/${id}/memo`, { memo });
-export const saveRoute = (id: number, consultationRequired: boolean) => put<Ok>(`/api/reservations/${id}/route`, { consultationRequired });
-export const receive = (id: number, roomId: number) => post<{ ok: true; flowStep: string | null }>(`/api/reservations/${id}/reception`, { roomId });
+export const receive = (id: number, roomId: number, route: ReceiveRoute) =>
+  post<{ ok: true; flowStep: string | null }>(`/api/reservations/${id}/reception`, { roomId, route });
+export const addConsultation = (id: number) => post<Ok>(`/api/reservations/${id}/consultation-add`);
 export const callCounselor = (id: number, staffId: number) => post<Ok>(`/api/reservations/${id}/counselor-call`, { staffId });
 export const discharge = (id: number) => post<Ok>(`/api/reservations/${id}/discharge`);
 export const savePersonal = (customerId: number, personal: Partial<Personal>) => put<Ok>(`/api/customers/${customerId}/personal`, { personal });

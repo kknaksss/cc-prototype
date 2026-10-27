@@ -111,20 +111,17 @@ export function dateShort(date: string): string {
   return `${p.m}/${p.d} (${p.wd})`;
 }
 
-// ─── 칸 머리 정원(§5.2) — 켜진 구역 하나 = 「3명」 · 둘 이상 = 「4층 3 · 미사용 3명」 · 없음 = 「- 명」
+// ─── 칸 머리 정원(§5.2) — 켜진 구역마다 「{구역} {N}명」 을 · 로 잇는다(구역 하나여도 같은 꼴 — E2E #7) · 없음 = 「- 명」
 export function capacityText(col: ResvColumn, zones: ResvZone[]): string {
   const caps = col.capacities;
   if (!caps.length) return '- 명';
-  if (caps.length === 1) return caps[0].capacity + '명';
   const order = (id: number) => zones.find((z) => z.zoneId === id)?.order ?? 0;
   const title = (id: number) => zones.find((z) => z.zoneId === id)?.title ?? '';
-  return (
-    caps
-      .slice()
-      .sort((a, b) => order(a.zoneId) - order(b.zoneId))
-      .map((c) => title(c.zoneId) + ' ' + c.capacity)
-      .join(' · ') + '명'
-  );
+  return caps
+    .slice()
+    .sort((a, b) => order(a.zoneId) - order(b.zoneId))
+    .map((c) => [title(c.zoneId), c.capacity + '명'].filter(Boolean).join(' '))
+    .join(' · ');
 }
 
 // ─── 고객 표시

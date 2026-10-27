@@ -27,6 +27,7 @@ from app.domain.reservation_rules import (
     can,
     day_range,
     draggable,
+    flow_rank,
     health_items,
     identifiable,
     identity_fields,
@@ -49,6 +50,7 @@ from app.kos.client import KosError
 from app.kos.reservation_sync import PATH_DETAIL, PATH_PURCHASES, apply_schedule, upsert_customer
 from app.repository.repo import Repository, Tx
 from app.schemas.reservations import (
+    SNS_TYPES,
     CreateReservationRequest,
     CreateReservationResponse,
     CustomerSearch,
@@ -65,6 +67,7 @@ from app.service import kos_errors
 
 log = logging.getLogger("procedure.resv")
 
+PIN_SEC = 5  # 먼저 실은 단계를 지키는 창(KOS 반영 0 ~ 3초 · r2 W1)
 PATH_VISITORS = "visitor/v2/queries/get-visitors"
 PATH_VISITOR = "visitor/v2/queries/get-visitor"
 PATH_Q_FORM = "visitor/open/v1/queries/get-visitor-questionnaire"
@@ -226,6 +229,7 @@ class ReservationService:
         self.repo = repo
         self.clock = clock
         self._kos = kos  # () → KosRuntime | None(시험이 런타임을 바꿔 끼워도 따라간다)
+        self._pins: dict[str, tuple[str, datetime, datetime]] = {}  # kos_id → (단계, 실은 시각, 풀 시각) — 반영 지연 창
 
     # ------------------------------------------------------------------ KOS
     @property
@@ -297,7 +301,7 @@ class ReservationService:
         for c in cards:
             del c["_order"], c["_start"]
 
-        ax = axis([g.timetable for g in ctx.groups], day, spans)
+        ax = axis(spans)
         columns, slot_rows, rows = [], [], []
         for g in ctx.groups:
             zones = ctx.enabled_zones(g)
@@ -328,7 +332,7 @@ class ReservationService:
         return ReservationBoard.model_validate({
             "date": day.isoformat(), "isToday": day == today, "now": iso(now),
             "sync": {"lastOkAt": iso(ok_at), "lastError": error},
-            "axis": {"start": ax[0], "end": ax[1]} if ax else None,
+            "axis": {"start": ax[0], "end": ax[1]},
             "zones": [{"zoneId": z.id, "title": z.title, "order": z.order, "isDefault": z.is_default} for z in ctx.zones],
             "columns": columns, "cards": cards, "slots": slot_rows, "rows": rows, "counts": counts,
             "notices": [{"id": n.id, "content": n.content, "releasedAt": iso(n.released_at)} for n in notices],
@@ -399,17 +403,15 @@ class ReservationService:
         return ReservationForm.model_validate({
             "staff": [{"staffId": x.id, "name": x.name} for x in active],
             "defaultAssigneeStaffId": sys_staff.id if sys_staff else None,
-            "doctors": [{"staffId": x.id, "name": x.name} for x in staff if x.is_doctor],
             "counselors": [{"staffId": x.id, "name": x.name} for x in _counselors(staff, system_kos)],
             "funnels": [{"funnelId": f.id, "name": f.name} for f in funnels],
-            "zones": zones, "defaultZoneId": default})
+            "zones": zones, "defaultZoneId": default, "snsTypes": list(SNS_TYPES)})
 
     # ------------------------------------------------------------------ §7.4 고객 검색
     async def search(self, name: str | None, phone: str | None, birth: str | None, chart: str | None,
                      page: int) -> CustomerSearch:
         name, phone, birth, chart = (v.strip() if isinstance(v, str) and v.strip() else None for v in (name, phone, birth, chart))
-        if not any((name, phone, birth, chart)):
-            raise BadRequest("invalid_request", "검색 조건을 하나 이상 넣어 주세요")
+        # 조건 없음 = 최근 방문 순 목록(내부 get-visitors 빈 조건 · 10-27 E2E #1)
         if page < 1:
             raise BadRequest("invalid_request", "page: 1 이상이어야 해요")
         if birth is not None:
@@ -462,8 +464,10 @@ class ReservationService:
             cust = tx.customer(r.customer_id) if r.customer_id else None
         if r.day:
             await self.ensure_day(date.fromisoformat(r.day))
-            with self.repo.tx() as tx:
-                r = self._reservation(tx, reservation_id)
+        if self.runtime is not None:  # 그 일정만 KOS 에서 바로(캐시 없이) — 열린 모달 폴링이 수납 · 단계를 곧바로 본다(10-27 #17)
+            await self.refresh_schedule(r.kos_id, r.day)
+        with self.repo.tx() as tx:
+            r = self._reservation(tx, reservation_id)
         main, sub = state_of(r.status, r.flow_step)
         reads = await self._detail_reads(r, cust, main)
         visitor, visitor_err = reads["visitor"]
@@ -525,7 +529,7 @@ class ReservationService:
                              "checkedBy": accounts.get(check.actor, check.actor) if check else None,
                              "method": check.method if check else None, "kind": kind, "fields": fields, "complete": complete}},
             "reservation": {
-                "consultationRequired": r.consultation_required, "sedationRequired": r.sedation_required, "memo": r.memo,
+                "sedationRequired": r.sedation_required, "memo": r.memo,
                 "funnel": funnel_of(r.funnel), "connectedChannel": r.connected_channel or None,
                 "counselor": self._staff_ref(r.counselor, staff_by_kos),
                 "assignee": {"name": r.assignee["name"]} if r.assignee else None,
@@ -534,8 +538,7 @@ class ReservationService:
             "health": health, "previousVisits": previous_visits(reads["previous"], day, ctx), "flow": flow,
             "settlement": settlement, "rooms": rooms, "roomLocked": bool(locked_room), "receiveMode": mode,
             "counselors": counselors,
-            "can": can(main, r.flow_step, is_new=bool(cust and cust.is_new), identity_complete=complete,
-                       personal_ok=visitor is not None, payment_required=pay, identity_confirmed=confirmed,
+            "can": can(main, r.flow_step, payment_required=pay, identity_confirmed=confirmed,
                        identity_locked=identity_locked(today_resvs, cust.id if cust else None)),
         })
 
@@ -597,7 +600,10 @@ class ReservationService:
         reception = [e for e in events if e["type"] == "reception"]
         calls = [e for e in events if e["type"] == "counselor_call"]
         cons = None
-        if r.consultation_required:
+        # 상담 거침 = 지금 상담 단계 · ccc 접수가 상담 대기로 끝남 · [+ 상담 추가](KOS consultationRequired 는 안 읽는다 · 10-27)
+        routed = any(e["type"] == "reception" and e["payload"].get("endStep") == "CONSULTATION_WAITING" for e in events) \
+            or any(e["type"] == "consultation_add" for e in events)
+        if r.flow_step in ("CONSULTATION_WAITING", "CONSULTATION") or routed:
             states = {"CONSULTATION_WAITING": "waiting", "CONSULTATION": "doing", "RECEPTION": "none"}
             state = states.get(r.flow_step or "", "done")
             last = calls[-1] if calls else None
@@ -671,8 +677,24 @@ class ReservationService:
         data = resp.get("data")
         if not isinstance(data, dict):
             return None
+        now = self.clock.now()
         with self.repo.tx() as tx:
-            return apply_schedule(tx, data, self.clock.now(), fallback_day)
+            rid = apply_schedule(tx, data, now, fallback_day)
+            pin = self._pins.get(kos_id)
+            if pin is not None:
+                step, at, until = pin
+                if now >= until or flow_rank(data.get("flowStep")) >= flow_rank(step):
+                    del self._pins[kos_id]  # 창이 지났거나 KOS 가 따라왔다 — 정상 덮어쓰기
+                else:  # KOS 가 아직 이전 단계 — 먼저 실은 단계를 지킨다(r2 W1)
+                    tx.upsert("reservation", kos_id, {"flow_step": step, "flow_step_at": at})
+            return rid
+
+    def pin_step(self, kos_id: str, step: str) -> None:
+        """조작이 단계를 사본에 먼저 실었다 — PIN_SEC 동안 상세 다시 읽기가 KOS 의 이전 단계로 되돌리지 않게."""
+        now = self.clock.now()
+        with self.repo.tx() as tx:
+            tx.upsert("reservation", kos_id, {"flow_step": step, "flow_step_at": now})
+        self._pins[kos_id] = (step, now, now + timedelta(seconds=PIN_SEC))
 
     # ------------------------------------------------------------------ §5.5 예약 등록
     async def create(self, actor: Account, body: CreateReservationRequest) -> CreateReservationResponse:
@@ -700,12 +722,6 @@ class ReservationService:
                                      "closed": f.closed, "default": f.is_default},
                           "funnelDetail": body.funnelDetail or ""}
         assignee = self._assignee(staff, body.assigneeStaffId, system[2] if system else None)
-        doctors = []
-        for sid in body.doctorStaffIds:
-            st = staff.get(sid)
-            if st is None or not st.is_doctor:
-                raise BadRequest("invalid_request", "doctorStaffIds: 원장 목록에 없는 직원이에요")
-            doctors.append({"id": st.kos_id, "name": st.name})
         counselor = None
         if body.counselorStaffId is not None:
             st = staff.get(body.counselorStaffId)
@@ -739,9 +755,8 @@ class ReservationService:
             "occupiedResources": [{"id": str(uuid.uuid4()), "type": "RESERVATION_GROUP",
                                    "reservationTime": {"startDateTimeUtc": kos_utc(start), "endDateTimeUtc": kos_utc(end)},
                                    "reservationGroup": {"reservationGroupId": g.kos_id, "zoneId": zone.kos_id,
-                                                        "doctors": doctors}}],
-            "reservationAssignee": assignee, "consultationRequired": body.consultationRequired,
-            "sedationRequired": body.sedationRequired}
+                                                        "doctors": []}}],  # 당일 지정 의사 없음(KOS 화면 빈 값과 같음)
+            "reservationAssignee": assignee}  # 상담 필요 · 수면마취는 보내지 않는다(10-27 · KOS 기본 false)
         if counselor:
             req["counselor"] = counselor
         if body.memo:
@@ -892,7 +907,7 @@ class ReservationService:
                 "to": {"groupId": g.id, "start": iso(start), "end": iso(end)}})
         self.after_write(r.day, day.isoformat())
 
-    # ------------------------------------------------------------------ 취소 · 메모 · 진행 경로
+    # ------------------------------------------------------------------ 취소 · 메모
     async def cancel(self, actor: Account, reservation_id: int, reason: str) -> None:
         with self.repo.tx() as tx:
             r = self._reservation(tx, reservation_id)
@@ -913,18 +928,6 @@ class ReservationService:
             PATH_MEMO, {"scheduleId": r.kos_id, "memo": memo}), reservation_id=r.id)
         with self.repo.tx() as tx:
             self._event(tx, actor, "resv_memo", {"reservationId": r.id})
-        self.after_write(r.day)
-
-    async def route(self, actor: Account, reservation_id: int, consultation_required: bool) -> None:
-        with self.repo.tx() as tx:
-            r = self._reservation(tx, reservation_id)
-            cust = tx.customer(r.customer_id) if r.customer_id else None
-        if state_of(r.status, r.flow_step)[0] not in ("reserved", "noshow") or cust is None or cust.is_new:
-            raise Conflict("route_locked", "진행 경로를 바꿀 수 없어요")  # 추가 지시 1 W4 — 부도도 연다 · 재진만
-        await self.kos_write(actor, "update-reservation", self.client().internal(
-            PATH_UPDATE, {"scheduleId": r.kos_id, "consultationRequired": consultation_required}), reservation_id=r.id)
-        with self.repo.tx() as tx:
-            self._event(tx, actor, "resv_route", {"reservationId": r.id, "consultationRequired": consultation_required})
         self.after_write(r.day)
 
     # ------------------------------------------------------------------ §5.13 고객 정보 · 특이사항

@@ -20,6 +20,14 @@ FLOW_STATE: dict[str, tuple[str, str | None]] = {
     "PROCEDURE_DONE": ("home", "waiting"),
     "COMPLETED": ("home", "done"),
 }
+FLOW_ORDER = tuple(FLOW_STATE)  # 앞 → 뒤
+
+
+def flow_rank(flow_step: str | None) -> int:
+    """KOS 단계 순서(모르는 값 = -1)."""
+    return FLOW_ORDER.index(flow_step) if flow_step in FLOW_ORDER else -1
+
+
 MAINS = ("reserved", "reception", "consultation", "procedure", "home", "canceled", "noshow")
 CLOSED_MAINS = ("canceled", "noshow")
 # §5.7 「사용 중」 · §6.4 원내 · §5.6 끝 단계 이후
@@ -109,20 +117,16 @@ def open_spans(timetable: dict[str, Any], day: date) -> list[tuple[str, str]]:
     return [(start, end)]
 
 
-def axis(timetables: list[dict[str, Any]], day: date, card_spans: list[tuple[int, int]]) -> tuple[str, str] | None:
-    """세로축 = 켜진 그룹 운영 시간의 합 + 축 밖 카드까지 늘림(30분 단위). 둘 다 없으면 None(운영 안 하는 날)."""
-    lo, hi = None, None
-    for tt in timetables:
-        t = day_table(tt, day)
-        if t:
-            lo = to_min(t["start"]) if lo is None else min(lo, to_min(t["start"]))
-            hi = to_min(t["end"]) if hi is None else max(hi, to_min(t["end"]))
+AXIS = ("06:00", "22:00")  # 세로축 고정(10-27 E2E #4 — 운영 시간은 칸마다 회색으로)
+
+
+def axis(card_spans: list[tuple[int, int]]) -> tuple[str, str]:
+    """세로축 = 06:00 ~ 22:00 고정 + 축 밖 카드까지 늘림(30분 단위 · 카드가 잘리지 않게)."""
+    lo, hi = to_min(AXIS[0]), to_min(AXIS[1])
     for s, e in card_spans:
         s, e = max(0, s), min(24 * 60, e)
-        lo = (s // 30) * 30 if lo is None else min(lo, (s // 30) * 30)
-        hi = math.ceil(e / 30) * 30 if hi is None else max(hi, math.ceil(e / 30) * 30)
-    if lo is None or hi is None or lo >= hi:
-        return None
+        lo = min(lo, (s // 30) * 30)
+        hi = max(hi, math.ceil(e / 30) * 30)
     return from_min(lo), from_min(hi)
 
 
@@ -268,13 +272,19 @@ def reception_room_task(tasks: list[dict[str, Any]]) -> dict[str, Any] | None:
     return max(cands, key=lambda t: t.get("sequence") or 0) if cands else None
 
 
-def can(main: str, flow_step: str | None, *, is_new: bool, identity_complete: bool, personal_ok: bool,
-        payment_required: int, identity_confirmed: bool, identity_locked: bool = False) -> dict[str, bool]:
+# [+ 상담 추가] — 상담 대기로 되돌릴 수 있는 단계(상담 · 접수 묶음 중 · 귀가 완료 · 닫힘은 아님 · 10-27)
+CONSULT_ADD_FLOWS = ("PROCEDURE_WAITING", "PROCEDURE", "PROCEDURE_DONE")
+
+
+def can(main: str, flow_step: str | None, *, payment_required: int, identity_confirmed: bool,
+        identity_locked: bool = False) -> dict[str, bool]:
     mode = receive_mode(main, flow_step)
     return {
         "cancel": main == "reserved",
-        "editRoute": main in ("reserved", "noshow") and not is_new,  # 추가 지시 1 W4 — 부도도 연다
-        "receive": mode == "resume" or (mode == "new" and personal_ok and identity_complete),
+        # 진행 경로 = 접수 때 고르는 ccc 값 — 접수 전이면 초진 · 재진 모두(10-27 · 부도도 연다)
+        "editRoute": main in ("reserved", "noshow"),
+        # 신분 조건 없음(10-27 U2 뒤집음) — 접수 갈래면 켜짐(방은 front 가 고른다)
+        "receive": mode is not None,
         "callCounselor": flow_step in ("CONSULTATION_WAITING", "CONSULTATION") and main not in CLOSED_MAINS,
         "discharge": flow_step == "PROCEDURE_DONE" and main not in CLOSED_MAINS and payment_required == 0,
         "editMemo": main != "canceled" and flow_step != "COMPLETED",  # §5.14 — 부도는 연다(추가 지시 1 W4 · r1 W1)
@@ -282,6 +292,7 @@ def can(main: str, flow_step: str | None, *, is_new: bool, identity_complete: bo
         "editRemark": True,
         "confirmIdentity": not identity_confirmed,
         "unconfirmIdentity": identity_confirmed and not identity_locked,  # 고객 단위 — 409 identity_locked 와 같은 식(r1 W4)
+        "addConsultation": flow_step in CONSULT_ADD_FLOWS and main not in CLOSED_MAINS,
     }
 
 

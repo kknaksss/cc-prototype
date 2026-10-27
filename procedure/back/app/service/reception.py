@@ -1,6 +1,7 @@
-"""[접수 완료] 묶음 · [실장 호출] · [귀가 완료](SPEC-005 §5.6 · §5.8 · §5.10 · §8).
+"""[접수 완료] 묶음 · [실장 호출] · [귀가 완료] · [+ 상담 추가](SPEC-005 §5.6 · §5.8 · §5.10 · §8 · 10-27 E2E).
 
 묶음은 0단계에서 지금 KOS 단계 · 작업을 읽고 남은 단계만 간다(이어 하기). 실패하면 거기서 멈추고 되돌리지 않는다(D-48).
+끝 단계를 보낸 뒤에는 바로 응답한다 — 사본에 끝 단계를 먼저 싣고, KOS 반영 확인 · 시술 현황 조회는 뒤에서(10-27 #14).
 """
 
 import asyncio
@@ -14,8 +15,8 @@ from app.domain.models import Account, Reservation, Room
 from app.domain.reservation_rules import (
     AFTER_END_FLOWS,
     CLOSED_MAINS,
+    CONSULT_ADD_FLOWS,
     ROOM_TASK_TITLE,
-    identity_fields,
     reception_room_task,
     state_of,
 )
@@ -23,7 +24,6 @@ from app.kos.reservation_sync import PATH_DETAIL, apply_schedule, tasks_of
 from app.service import kos_errors
 from app.service.reservations import (
     PATH_UPDATE,
-    PATH_VISITOR,
     ReservationService,
     ResvContext,
     _counselors,
@@ -37,7 +37,10 @@ PATH_ADD_TASKS = "schedule/v1/commands/add-flow-tasks"
 PATH_TASKS_ROOM = "schedule/flow/v1/commands/change-tasks-room"
 PATH_FLOW_STEP = "schedule/v1/commands/change-flow-step"  # 내부 — 키 = id(RM§2.3)
 PATH_OPEN_FLOW_STEP = "schedule/open/v1/commands/change-flow-step"  # 공개 — 키 = scheduleId
-READ_TRIES = 5  # 반영 기다림 1초 × 5(§5.6)
+READ_GAP = 0.5  # 반영 기다림 간격 — 0.5초 × 10 = 5초까지(§5.6 의 1초 × 5 와 같은 한도 · 10-27 #14)
+READ_TRIES = 10
+FOLLOW_UP_SEC = 3.0  # 끝 단계 뒤 KOS 반영 확인까지(데모 시험 0 ~ 3초 — reservation-reception-test-report)
+END_STEP = {"consultation": "CONSULTATION_WAITING", "direct": "PROCEDURE_WAITING"}  # 진행 경로 → 끝 단계(D-32 · D-33)
 SLOW = "KOS 반영이 늦어요 · 잠시 뒤 다시 눌러 주세요"
 
 
@@ -45,7 +48,10 @@ class ReceptionService:
     def __init__(self, resv: ReservationService):
         self.resv = resv
         self.sleep = asyncio.sleep  # 시험이 바꿔 끼운다
-        self.read_gap = 1.0
+        self.read_gap = READ_GAP
+        self.follow_up_sec = FOLLOW_UP_SEC
+        self._bg: set[asyncio.Task] = set()
+        self.spawn = self._spawn  # 응답 뒤 할 일 — 시험이 바꿔 끼운다
 
     # ------------------------------------------------------------------ 공통
     @property
@@ -66,14 +72,31 @@ class ReceptionService:
             apply_schedule(tx, data, self.resv.clock.now(), r.day)
         return data
 
-    async def _wait(self, actor: Account, r: Reservation, step: str, seen) -> dict[str, Any]:
-        """1초 간격 최대 5번 다시 읽기 — seen(일정) 이 참이면 그 일정. 안 보이면 409 kos_slow."""
-        for _ in range(READ_TRIES):
-            await self.sleep(self.read_gap)
+    async def _wait(self, actor: Account, r: Reservation, step: str, seen, *, now: bool = False) -> dict[str, Any]:
+        """read_gap 간격 최대 READ_TRIES 번 다시 읽기 — seen(일정) 이 참이면 그 일정. 안 보이면 409 kos_slow.
+
+        now = 첫 읽기를 기다리지 않는다(바로 보이는 쓰기 — change-tasks-room).
+        """
+        for i in range(READ_TRIES):
+            if i or not now:
+                await self.sleep(self.read_gap)
             sch = await self._read(actor, r, step)
             if seen(sch):
                 return sch
         raise Conflict("kos_slow", SLOW, step=step)
+
+    def _spawn(self, coro) -> None:
+        t = asyncio.create_task(coro)
+        self._bg.add(t)
+        t.add_done_callback(self._bg.discard)
+
+    async def _follow_up(self, actor: Account, r: Reservation) -> None:
+        """응답 뒤 — KOS 반영을 기다려 사본을 다시 읽고(캐시 비움) 시술 현황 조회 1회. 실패해도 조작 결과는 그대로."""
+        await self.sleep(self.follow_up_sec)
+        with contextlib.suppress(Exception):
+            await self._read(actor, r, None)
+        self._after(r)
+        await self._procedure_board()
 
     def _after(self, r: Reservation) -> None:
         self.resv.after_write(r.day)
@@ -89,7 +112,7 @@ class ReceptionService:
             log.warning("시술 현황 조회 실패: %s", kos_errors.describe(e))
 
     # ------------------------------------------------------------------ §5.6 [접수 완료]
-    async def run(self, actor: Account, reservation_id: int, room_id: int) -> str | None:
+    async def run(self, actor: Account, reservation_id: int, room_id: int, route: str = "consultation") -> str | None:
         r = self._reservation(reservation_id)
         with self.repo.tx() as tx:
             room = next((x for x in tx.rooms() if x.id == room_id), None)
@@ -108,9 +131,7 @@ class ReceptionService:
             raise Conflict("not_receivable", "접수할 수 없는 예약이에요")
         if flow in AFTER_END_FLOWS:  # 반영 지연 · 두 번 누름 — 보내지 않고 성공
             return flow
-        if flow == "RESERVED":
-            await self._check_identity(actor, r)
-        elif flow != "RECEPTION":
+        if flow not in ("RESERVED", "RECEPTION"):  # 신분 조건 없음(10-27 U2 뒤집음)
             raise Conflict("not_receivable", "접수할 수 없는 예약이에요")
         if not room_task_id:
             raise Conflict("room_task_missing", "「방 배정」 기타 작업을 찾지 못했어요")
@@ -139,9 +160,8 @@ class ReceptionService:
                                  {"scheduleId": r.kos_id, "sequences": [seq], "roomId": room.kos_id})
                 done.append("assign_room")
                 await self._wait(actor, r, "assign_room", lambda s: any(
-                    t["sequence"] == seq and t["roomKosId"] for t in tasks_of(s)))
-            consult = bool((sch.get("reservation") or {}).get("consultationRequired"))
-            end_step = "CONSULTATION_WAITING" if consult else "PROCEDURE_WAITING"  # 6 끝 단계(D-32 · D-33)
+                    t["sequence"] == seq and t["roomKosId"] for t in tasks_of(s)), now=True)
+            end_step = END_STEP[route]  # 6 끝 단계 = 접수 때 고른 진행 경로(KOS consultationRequired 아님 · 10-27)
             await self._send(actor, r, "flow_step", PATH_FLOW_STEP, {"id": r.kos_id, "step": end_step})
             done.append("flow_step")
         except (Conflict, BadGateway):
@@ -149,30 +169,17 @@ class ReceptionService:
             self._after(r)
             raise
         self._log_reception(actor, r, room, end_step, done)
-        self._after(r)
-        with contextlib.suppress(Exception):
-            await self._read(actor, r, None)  # 사본에 끝 단계를 바로 싣는다(실패해도 성공)
-        await self._procedure_board()
+        self._settle(actor, r, end_step)
         return end_step
+
+    def _settle(self, actor: Account, r: Reservation, step: str) -> None:
+        """단계를 보낸 뒤 — 사본에 그 단계를 먼저 싣고(KOS 는 0 ~ 3초 뒤 보임) 바로 응답 · 확인은 뒤에서."""
+        self.resv.pin_step(r.kos_id, step)
+        self.spawn(self._follow_up(actor, r))
 
     async def _send(self, actor: Account, r: Reservation, step: str, path: str, body: dict[str, Any]) -> None:
         name = path.rsplit("/", 1)[-1]
         await self.resv.kos_write(actor, name, self.resv.client().internal(path, body), reservation_id=r.id, step=step)
-
-    async def _check_identity(self, actor: Account, r: Reservation) -> None:
-        """새 접수 — KOS 신분 칸 다 채움(§5.12 ① · D-45). get-visitor 를 다시 읽는다."""
-        with self.repo.tx() as tx:
-            cust = tx.customer(r.customer_id) if r.customer_id else None
-        if cust is None:
-            raise Conflict("not_receivable", "접수할 수 없는 예약이에요")
-        resp = await self.resv.kos_write(actor, "get-visitor", self.resv.client().internal(PATH_VISITOR, {"id": cust.kos_id}),
-                                         reservation_id=r.id)
-        visitor = resp.get("data") if isinstance(resp.get("data"), dict) else None
-        _, fields, complete = identity_fields(visitor)
-        if not complete:
-            empty = [f for f in fields if not f["filled"]]
-            raise Conflict("identity_incomplete", "신분 칸을 채워 주세요 · " + " · ".join(f["label"] for f in empty),
-                           fields=[f["key"] for f in empty])  # 추가 지시 1 W5 — KOS 키
 
     def _check_room(self, r: Reservation, room: Room, tasks: list[dict[str, Any]]) -> None:
         attached = (reception_room_task(tasks) or {}).get("roomKosId")
@@ -233,3 +240,24 @@ class ReceptionService:
             self.resv._event(tx, actor, "discharge", {"reservationId": r.id})
         self._after(r)
         await self._procedure_board()
+
+    # ------------------------------------------------------------------ [+ 상담 추가](10-27 E2E #15 · OQ-750 뒤집음)
+    async def consultation_add(self, actor: Account, reservation_id: int) -> str:
+        """상담 뒤(시술 대기 ~ 귀가 대기) 고객을 상담 대기로 되돌린다 — 공개 change-flow-step(CONSULTATION_WAITING).
+
+        상담 기록은 만들지 않는다(KOS [상담 시작]이 만든다 · 10-26). 지금 단계는 KOS 에서 다시 읽어 정한다.
+        """
+        r = self._reservation(reservation_id)
+        sch = await self._read(actor, r, None)
+        r = self._reservation(reservation_id)
+        flow = sch.get("flowStep")
+        main = state_of((sch.get("reservation") or {}).get("status"), flow)[0]
+        if flow not in CONSULT_ADD_FLOWS or main in CLOSED_MAINS:
+            raise Conflict("not_consultation_addable", "상담을 추가할 수 없는 단계예요")
+        step = "CONSULTATION_WAITING"
+        await self.resv.kos_write(actor, "change-flow-step", self.resv.client().open(
+            PATH_OPEN_FLOW_STEP, {"scheduleId": r.kos_id, "step": step}), reservation_id=r.id)
+        with self.repo.tx() as tx:
+            self.resv._event(tx, actor, "consultation_add", {"reservationId": r.id, "fromStep": flow})
+        self._settle(actor, r, step)
+        return step

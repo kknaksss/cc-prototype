@@ -5,7 +5,7 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt
+from pydantic import BaseModel, ConfigDict, StrictInt, field_validator
 
 # §5.1 상태 2계층
 Main = Literal["reserved", "reception", "consultation", "procedure", "home", "canceled", "noshow"]
@@ -250,7 +250,6 @@ class NameRef(BaseModel):
 
 
 class ReservationInfo(BaseModel):
-    consultationRequired: bool
     sedationRequired: bool
     memo: str | None
     funnel: Funnel | None
@@ -351,6 +350,7 @@ class Can(BaseModel):
     editRemark: bool
     confirmIdentity: bool
     unconfirmIdentity: bool
+    addConsultation: bool
 
 
 class ReservationDetail(BaseModel):
@@ -395,11 +395,11 @@ class FormZone(BaseModel):
 class ReservationForm(BaseModel):
     staff: list[StaffItem]
     defaultAssigneeStaffId: int | None
-    doctors: list[StaffItem]
     counselors: list[StaffItem]
     funnels: list[FunnelItem]
     zones: list[FormZone]
     defaultZoneId: int | None
+    snsTypes: list[str]  # KOS snsInfo.snsType enum 그대로 — 표시 글자는 front
 
 
 class SearchItem(BaseModel):
@@ -425,8 +425,12 @@ class PhoneIn(_Req):
     number: str
 
 
+SNS_TYPES = ("etc", "kakaotalk", "line", "instagram", "whatsapp", "wechat")  # KOS snsInfo.snsType
+SnsType = Literal["etc", "kakaotalk", "line", "instagram", "whatsapp", "wechat"]
+
+
 class SnsIn(_Req):
-    type: str
+    type: SnsType
     accountId: str
 
 
@@ -455,10 +459,7 @@ class CreateReservationRequest(_Req):
     zoneId: StrictInt | None = None  # 생략 = §5.5 기본 구역
     start: str
     customer: ExistingCustomerRef | NewCustomerRef
-    consultationRequired: StrictBool
-    sedationRequired: StrictBool
     assigneeStaffId: StrictInt | None = None
-    doctorStaffIds: list[StrictInt]
     counselorStaffId: StrictInt | None = None
     funnelId: StrictInt | None = None
     funnelDetail: str | None = None
@@ -485,12 +486,9 @@ class MemoRequest(_Req):
     memo: str
 
 
-class RouteRequest(_Req):
-    consultationRequired: StrictBool
-
-
 class ReceptionRequest(_Req):
     roomId: StrictInt
+    route: Literal["consultation", "direct"] = "consultation"  # 진행 경로 — ccc 값(KOS consultationRequired 아님 · 10-27)
 
 
 class ReceptionResponse(BaseModel):
@@ -514,8 +512,13 @@ class PhoneOpt(_Req):
 
 
 class SnsOpt(_Req):
-    type: str | None = None
+    type: str | None = None  # 보통 SNS_TYPES — '' · null = 없음 · enum 밖 KOS 값은 그대로 통과(r2 W3)
     accountId: str | None = None
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def _blank_none(cls, v):
+        return None if isinstance(v, str) and not v.strip() else v
 
 
 class PersonalIn(_Req):
@@ -560,9 +563,7 @@ RESV_CONFLICT_CODES = (
     "not_movable",
     "not_cancelable",
     "reservation_closed",
-    "route_locked",
     "not_receivable",
-    "identity_incomplete",
     "room_busy",
     "room_locked",
     "room_task_missing",
@@ -570,6 +571,7 @@ RESV_CONFLICT_CODES = (
     "not_consultation",
     "not_counselor",
     "not_home_waiting",
+    "not_consultation_addable",
     "payment_required",
     "identity_locked",
     "kos_rejected",

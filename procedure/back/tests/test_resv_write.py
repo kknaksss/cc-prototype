@@ -6,6 +6,7 @@ KOS 본문 = WP-KOS K2 ~ K7 판정 모양(가짜 KOS 가 받은 본문을 본다
 import uuid
 
 import pytest
+from pydantic import ValidationError
 
 from app.domain.errors import BadGateway, BadRequest, Conflict, NotFound
 from app.schemas.reservations import CreateReservationRequest, MoveRequest, PersonalIn
@@ -47,7 +48,7 @@ def existing_customer(c, fake, vid="vis-1"):
 def req(c, **kw):
     g, z, s, f = ids(c)
     body = {"groupId": g["grp-1"], "start": "2026-10-21T15:00:00+09:00", "customer": {"customerId": 1},
-            "consultationRequired": True, "sedationRequired": True, "doctorStaffIds": []}
+           }
     body.update(kw)
     return CreateReservationRequest.model_validate(body)
 
@@ -58,7 +59,7 @@ def test_create_existing_full_body(env):
     cid = existing_customer(c, fake)
     g, z, s, f = ids(c)
     n = fake.paths().count("get-schedules-for-reservation")
-    out = run(c.resv.create(DESK, req(c, customer={"customerId": cid}, doctorStaffIds=[s["doc-a"]], counselorStaffId=s["cs-1"],
+    out = run(c.resv.create(DESK, req(c, customer={"customerId": cid}, counselorStaffId=s["cs-1"],
                                       funnelId=f["fn-1"], memo="메모", desiredDischargeTime="17:30")))
     body = sent(fake, "reserve")[-1]
     o = body["occupiedResources"][0]
@@ -66,11 +67,10 @@ def test_create_existing_full_body(env):
     assert o == {"type": "RESERVATION_GROUP",
                  "reservationTime": {"startDateTimeUtc": "2026-10-21T06:00:00.000Z",
                                      "endDateTimeUtc": "2026-10-21T06:30:00.000Z"},
-                 "reservationGroup": {"reservationGroupId": "grp-1", "zoneId": ZONE,
-                                      "doctors": [{"id": "doc-a", "name": "가 원장"}]}}
-    assert {k: v for k, v in body.items() if k != "occupiedResources"} == {
+                 "reservationGroup": {"reservationGroupId": "grp-1", "zoneId": ZONE, "doctors": []}}  # 당일 지정 의사 없음(10-27)
+    assert {k: v for k, v in body.items() if k != "occupiedResources"} == {  # 상담 필요 · 수면마취 안 보냄(10-27)
         "visitorId": "vis-1", "zoneId": ZONE, "reservationAssignee": {"id": SYSTEM, "name": "시스템"},
-        "consultationRequired": True, "sedationRequired": True, "counselor": {"id": "cs-1", "name": "상담사 1"},
+        "counselor": {"id": "cs-1", "name": "상담사 1"},
         "reservationMemo": "메모", "desiredDischargeDateTimeUtc": "2026-10-21T08:30:00.000Z",
         "funnel": {"funnel": {"id": "fn-1", "category": "FUNNEL", "name": "인스타그램", "order": 1, "closed": False,
                               "default": False}, "funnelDetail": ""}}
@@ -88,11 +88,9 @@ def test_create_minimal_body_and_assignee(env):
     c, fake, _ = env
     cid = existing_customer(c, fake)
     g, z, s, f = ids(c)
-    run(c.resv.create(DESK, req(c, customer={"customerId": cid}, assigneeStaffId=s["nurse-0"], consultationRequired=False,
-                                sedationRequired=False)))
+    run(c.resv.create(DESK, req(c, customer={"customerId": cid}, assigneeStaffId=s["nurse-0"])))
     body = sent(fake, "reserve")[-1]
-    assert set(body) == {"visitorId", "zoneId", "occupiedResources", "reservationAssignee", "consultationRequired",
-                         "sedationRequired"}  # 값 없는 칸은 넣지 않는다
+    assert set(body) == {"visitorId", "zoneId", "occupiedResources", "reservationAssignee"}  # 값 없는 칸은 넣지 않는다
     assert body["reservationAssignee"] == {"id": "nurse-0", "name": "간호"}
 
 
@@ -113,7 +111,7 @@ def test_create_zone_rules(env):
     assert e.value.code == "slot_full" and len(sent(fake, "reserve")) == n  # KOS 를 부르지 않는다
 
 
-@pytest.mark.parametrize("bad", [{"groupId": 999}, {"funnelId": 999}, {"doctorStaffIds": [-1]}, {"start": "15:00"},
+@pytest.mark.parametrize("bad", [{"groupId": 999}, {"funnelId": 999}, {"start": "15:00"},
                                  {"desiredDischargeTime": "5시"}, {"counselorStaffId": -1}])
 def test_create_400(env, bad):
     c, fake, _ = env
@@ -146,13 +144,21 @@ def test_create_check_order_400_404_409(env):
     assert e.value.code == "slot_full" and "find-duplicated-visitor" not in fake.paths()  # KOS 를 부르기 전
 
 
-def test_create_closed_funnel_and_non_doctor(env):
+def test_create_closed_funnel_and_non_counselor(env):
     c, fake, _ = env
     cid = existing_customer(c, fake)
     g, z, s, f = ids(c)
-    for bad in ({"funnelId": f["fn-2"]}, {"doctorStaffIds": [s["nurse-0"]]}, {"counselorStaffId": s["doc-a"]}):
+    for bad in ({"funnelId": f["fn-2"]}, {"counselorStaffId": s["doc-a"]}):
         with pytest.raises(BadRequest):
             run(c.resv.create(DESK, req(c, customer={"customerId": cid}, **bad)))
+
+
+@pytest.mark.parametrize("gone", [{"consultationRequired": True}, {"sedationRequired": False}, {"doctorStaffIds": []}])
+def test_create_body_rejects_removed_fields(env, gone):
+    """10-27 — 당일 지정 의사 · 상담 필요 · 수면마취 칸은 등록 본문에 없다(보내면 422)."""
+    c, _, _ = env
+    with pytest.raises(ValidationError):
+        req(c, **gone)
 
 
 # ------------------------------------------------------------------ 등록 — 신규 고객(K2-1 · K2-2)
@@ -362,21 +368,6 @@ def test_memo_rules(env):
     assert len(events(c, "resv_memo")) == 1 and len(sent(fake, "change-reservation-memo")) == 1
 
 
-def test_route_rules(env):
-    c, fake, _ = env
-    fake.add_resv("re", status="NO_SHOW")  # 재진(isNew false) · 부도도 연다(W4)
-    fake.add_resv("new", "v2", is_new=True)
-    fake.add_resv("rc", "v3", flow="RECEPTION", status="IN_PROGRESS")
-    load(c)
-    run(c.resv.route(DESK, rid_of(c, "re"), False))
-    assert sent(fake, "update-reservation") == [{"scheduleId": "re", "consultationRequired": False}]
-    assert events(c, "resv_route")[-1]["payload"] == {"reservationId": rid_of(c, "re"), "consultationRequired": False}
-    for k in ("new", "rc"):
-        with pytest.raises(Conflict) as e:
-            run(c.resv.route(DESK, rid_of(c, k), True))
-        assert e.value.code == "route_locked"
-
-
 # ------------------------------------------------------------------ 고객 정보 · 특이사항(K7 · MT§4)
 def test_personal_reads_then_sends_bundle_plus_changes(env):
     c, fake, _ = env
@@ -428,3 +419,10 @@ def test_remark_management_bundle(env):
     with pytest.raises(BadGateway):
         run(c.resv.remark(DESK, cid, "x"))
     assert events(c, "kos_rejected")[-1]["payload"]["op"] == "get-visitor"
+
+
+@pytest.mark.parametrize(("raw", "want"), [("", None), ("  ", None), (None, None), ("kakaotalk", "kakaotalk"),
+                                           ("telegram", "telegram")])
+def test_personal_sns_type_blank_and_unknown(raw, want):
+    """r2 W3 — 고객 정보 SNS 종류: '' · null = 없음 · enum 밖 KOS 값은 그대로 통과."""
+    assert PersonalIn.model_validate({"sns": {"type": raw, "accountId": "a"}}).sns.type == want

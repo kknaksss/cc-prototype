@@ -2,21 +2,32 @@
 
 // 예약 상세 모달(SPEC-005 §5.6 ~ §5.14 · §6.6 · 시안 M:245-571)
 // 버튼 켜짐은 back 의 can.* · receiveMode · roomLocked 로만 그린다(§5 머리 · §5.14). 다시 부르기 = 열 때 · 조작 직후 + 2초 뒤(addendum-1 W1) ·
-// 스케줄 표 폴링에서 그 예약 상태가 바뀌었을 때(§6.7)
+// 스케줄 표 폴링에서 그 예약 상태가 바뀌었을 때(§6.7) · 열려 있는 동안 5초마다(KOS 수납 반영 — E2E #17)
+// 진행 경로 = 접수 때 고르는 ccc 값(기본 상담 필요 · [접수 완료] 요청에 실음 — E2E #13) · 접수 신분 조건 없음(E2E #12)
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Badge, Button, type BadgeVariant } from '@medisolve-ai/medikit';
 import * as api from '@/lib/api';
 import { clearSession } from '@/lib/session';
 import { hm, pad } from '@/lib/time';
-import type { Personal, PreviousVisit, ResvBoard, ResvDetail } from '@/lib/types';
+import type { Personal, PreviousVisit, ReceiveRoute, ResvBoard, ResvDetail, ResvState } from '@/lib/types';
 import { Flag, NATION_OPTIONS, genderIcon, headOf, moneyOf, nationName } from './view';
+import { DsDate, DsSelect, snsOptions } from './controls';
 
 const SETTLE_MS = 2000;
+const POLL_MS = 5000; // 열려 있는 동안 다시 부름(E2E #17 — 코디 기본값 5초)
 const KST = 9 * 3600 * 1000;
 const kstDay = (ms: number) => {
   const d = new Date(ms + KST);
   return d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate());
 };
+
+const GENDER_OPTS = [
+  { value: 'MALE', label: '남성' },
+  { value: 'FEMALE', label: '여성' },
+  { value: 'GENDER_UNSPECIFIED', label: '선택 안 함' },
+];
+const NATION_OPTS = NATION_OPTIONS.map((n) => ({ value: n.code, label: n.name + ' (' + n.code + ')' }));
+const isClosedMain = (m: ResvState['main']) => m === 'canceled' || m === 'noshow';
 
 // [접수 완료] 단계 이름(§5.6 error.step)
 const STEP_NAME: Record<string, string> = {
@@ -68,7 +79,7 @@ function personalPatch(p: Personal, edits: Partial<Record<EditKey, string>>): Pa
   const v = (k: EditKey) => edits[k] ?? valueOf(p, k);
   for (const k of Object.keys(edits) as EditKey[]) {
     if (k === 'phoneCc' || k === 'phoneNo') out.phone = { countryCode: v('phoneCc'), number: v('phoneNo') };
-    else if (k === 'snsType' || k === 'snsId') out.sns = { type: v('snsType'), accountId: v('snsId') };
+    else if (k === 'snsType' || k === 'snsId') out.sns = { type: v('snsType') || null, accountId: v('snsId') }; // 종류 빈 값 = null(리뷰 r2 W3)
     else if (k === 'address') out.address = { address: v('address'), detailed: p.address?.detailed ?? null, zipCode: p.address?.zipCode ?? null };
     else out[k] = v(k);
   }
@@ -81,12 +92,14 @@ export function DetailModal({
   onClose,
   onChanged,
   onError,
+  onReceived,
 }: {
   reservationId: number;
   board: ResvBoard | null;
   onClose: () => void;
   onChanged: (toast?: string) => void;
   onError: (e: unknown) => void;
+  onReceived?: (state: ResvState) => void; // 접수 성공 → 표 카드 낙관 표시(E2E #14)
 }) {
   const [d, setD] = useState<ResvDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -104,6 +117,7 @@ export function DetailModal({
   const [consPick, setConsPick] = useState<number | null>(null);
   const [openVisit, setOpenVisit] = useState<number | null>(null);
   const [receiveError, setReceiveError] = useState<string | null>(null);
+  const [route, setRoute] = useState<ReceiveRoute>('consultation');
 
   const seq = useRef(0);
   const load = useCallback(() => {
@@ -125,8 +139,17 @@ export function DetailModal({
       });
   }, [reservationId]);
 
+  // 5초 폴링 — 조작 요청 중에는 건너뜀(§6.7 · 리뷰 r2 W4: 조작 직후 다시 부르기와 겹쳐 중간 상태가 보이지 않게)
+  const busyRef = useRef<string | null>(null);
+  useEffect(() => {
+    busyRef.current = busy;
+  }, [busy]);
   useEffect(() => {
     load();
+    const t = setInterval(() => {
+      if (busyRef.current === null) load();
+    }, POLL_MS);
+    return () => clearInterval(t);
   }, [load]);
 
   // 조작 뒤 — 바로 1번 + 2초 뒤 1번(addendum-1 W1 · §4.3)
@@ -217,9 +240,14 @@ export function DetailModal({
             onError={onError}
             onClose={onClose}
             reload={load}
-            state={{ edits, setEdits, unlock, setUnlock, memo, setMemo, remark, setRemark, roomPick, setRoomPick, roomOpen, setRoomOpen, cancelOpen, setCancelOpen, consOpen, setConsOpen, consPick, setConsPick, openVisit, setOpenVisit, receiveError, setReceiveError, setBusy }}
+            state={{ edits, setEdits, unlock, setUnlock, memo, setMemo, remark, setRemark, roomPick, setRoomPick, roomOpen, setRoomOpen, cancelOpen, setCancelOpen, consOpen, setConsOpen, consPick, setConsPick, openVisit, setOpenVisit, receiveError, setReceiveError, route, setRoute, setBusy }}
             onChanged={onChanged}
             reloadSoon={reloadSoon}
+            optimistic={(x) => {
+              seq.current++; // 앞서 나간 읽기가 낙관 표시를 덮지 않게
+              setD(x);
+              onReceived?.(x.state);
+            }}
           />
         )}
       </div>
@@ -250,6 +278,8 @@ interface UiState {
   setOpenVisit: (v: number | null) => void;
   receiveError: string | null;
   setReceiveError: (v: string | null) => void;
+  route: ReceiveRoute;
+  setRoute: (v: ReceiveRoute) => void;
   setBusy: (v: string | null) => void;
 }
 
@@ -263,6 +293,7 @@ function Body({
   state: s,
   onChanged,
   reloadSoon,
+  optimistic,
 }: {
   d: ResvDetail;
   busy: string | null;
@@ -273,6 +304,7 @@ function Body({
   state: UiState;
   onChanged: (toast?: string) => void;
   reloadSoon: () => void;
+  optimistic: (d: ResvDetail) => void;
 }) {
   const c = d.customer;
   const g = genderIcon(c.gender);
@@ -286,12 +318,8 @@ function Body({
   const roomTitle = d.rooms.find((r) => r.roomId === roomId)?.title ?? null;
   const freeRooms = d.rooms.filter((r) => !r.busy).length;
 
-  // [접수 완료] 꺼짐 이유(§6.6)
-  const missing = id.fields.filter((f) => !f.filled).map((f) => f.label);
-  let receiveWhy = '';
-  if (d.receiveMode === 'new' && !c.personal) receiveWhy = '고객 정보를 읽지 못했어요';
-  else if (d.receiveMode === 'new' && !id.complete) receiveWhy = '신분 칸을 채워 주세요' + (missing.length ? ' · ' + missing.join(', ') : '');
-  else if (d.can.receive && roomId === null) receiveWhy = '시술실을 고르세요';
+  // [접수 완료] 꺼짐 이유(§6.6) — 방만 고르면 켜짐 · 신분 조건 없음(E2E #12)
+  const receiveWhy = d.can.receive && roomId === null ? '시술실을 고르세요' : '';
   const canReceive = d.can.receive && roomId !== null && busy === null;
 
   const receive = async () => {
@@ -299,18 +327,16 @@ function Body({
     s.setReceiveError(null);
     s.setBusy('receive');
     try {
-      await api.receive(d.reservationId, roomId);
+      await api.receive(d.reservationId, roomId, s.route);
       s.setRoomPick(null);
+      optimistic(receivedView(d, s.route, roomId, roomTitle));
       onChanged('접수 완료 · ' + (roomTitle ?? ''));
       reloadSoon();
     } catch (e) {
       // 단계에서 멈춤(§5.6) — 모달 안에 남겨 두고 토스트도
       if (e instanceof api.ApiError) {
         const step = e.extra.step ? (STEP_NAME[e.extra.step] ?? e.extra.step) + ' 단계에서 멈췄어요 · ' : '';
-        const fields = e.extra.fields?.length
-          ? ' (' + e.extra.fields.map((k) => id.fields.find((f) => f.key === k)?.label ?? k).join(', ') + ')'
-          : '';
-        if (e.status !== 401) s.setReceiveError(step + e.message + fields);
+        if (e.status !== 401) s.setReceiveError(step + e.message);
       }
       onError(e);
       reload();
@@ -370,29 +396,7 @@ function Body({
                   {id.status === 'confirmed' ? '확인 완료' : '미확인'}
                 </Badge>
               </div>
-              {/* ① KOS 신분 칸 채움(접수 조건 — §5.12 ①) */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                {id.fields.length ? (
-                  <>
-                    {id.fields.map((f) => (
-                      <span
-                        key={f.key}
-                        className={(f.filled ? 'bg-ms-white border-ms-gray-300 text-ms-gray-700' : 'bg-yellow-100 border-yellow-500 text-ms-gray-800') + ' text-typo-caption-md-500'}
-                        style={{ borderWidth: 1, borderStyle: 'solid', borderRadius: 6, padding: '2px 8px', whiteSpace: 'nowrap' }}
-                      >
-                        {f.filled ? '✓ ' : ''}
-                        {f.label}
-                      </span>
-                    ))}
-                    <span className={'text-typo-caption-md-600 ' + (id.complete ? 'text-primary' : 'text-ms-gray-600')} style={{ whiteSpace: 'nowrap' }}>
-                      신분 칸 {id.fields.filter((f) => f.filled).length} / {id.fields.length}
-                    </span>
-                  </>
-                ) : (
-                  <span className="text-typo-caption-md-400 text-ms-gray-500">KOS 신분 칸을 알 수 없어요</span>
-                )}
-              </div>
-              {/* ② ccc 「확인 완료」 표시(표시만 — §5.12 ②) */}
+              {/* ccc 「확인 완료」 표시(표시만 — §5.12 ② · 접수 조건 아님 — E2E #12) */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 {id.status === 'confirmed' && (
                   <span className="text-typo-body-400 text-ms-gray-600">
@@ -476,7 +480,7 @@ function Body({
             />
           </div>
           <div style={{ flex: 1, padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {pre ? <Visits visits={d.previousVisits} open={s.openVisit} onOpen={s.setOpenVisit} /> : <FlowBlock d={d} s={s} busy={busy} run={run} />}
+            {pre ? <Visits visits={d.previousVisits} open={s.openVisit} onOpen={s.setOpenVisit} /> : <FlowBlock d={d} s={s} busy={busy} run={run} onClose={onClose} />}
           </div>
         </div>
       </div>
@@ -531,7 +535,7 @@ function Body({
             {s.receiveError ?? receiveWhy}
           </span>
         )}
-        {showRoute && <RouteRadio d={d} busy={busy} run={run} />}
+        {showRoute && <RouteRadio on={d.can.editRoute && busy === null} value={s.route} onChange={s.setRoute} />}
         {d.receiveMode !== null && (
           <>
             <button
@@ -630,7 +634,7 @@ function PersonalBlock({
   const kr = (p?.nationality ?? d.customer.nationality) === 'KR';
   // 접수 뒤에는 회색 읽기 전용 + [수정] 하나로 풀기(시안 M:2067 · 기본값)
   const locked = !d.can.editPersonal || (d.flow !== null && !s.unlock);
-  const fields: { k: EditKey; label: string; span?: number; type?: 'date' | 'gender' | 'nation' }[] = [
+  const fields: { k: EditKey; label: string; span?: number; type?: 'date' | 'gender' | 'nation' | 'sns' }[] = [
     { k: 'name', label: kr ? '이름' : '이름 (여권 영문)' },
     { k: 'phoneticName', label: '한글 발음' },
     { k: 'gender', label: '성별', type: 'gender' },
@@ -640,7 +644,7 @@ function PersonalBlock({
     { k: 'phoneCc', label: '휴대폰 국가번호' },
     { k: 'phoneNo', label: '휴대폰 번호' },
     { k: 'email', label: '이메일' },
-    { k: 'snsType', label: 'SNS 종류' },
+    { k: 'snsType', label: 'SNS 종류', type: 'sns' },
     { k: 'snsId', label: 'SNS 아이디', span: 2 },
     { k: 'passportSurname', label: '여권 영문 성' },
     { k: 'passportGivenNames', label: '여권 영문 이름', span: 2 },
@@ -699,30 +703,38 @@ function PersonalBlock({
             const cls = (locked ? 'bg-ms-gray-100 border-ms-gray-200' : v.trim() ? 'bg-ms-white border-ms-gray-300' : 'bg-yellow-100 border-yellow-500') + ' text-typo-heading-sm-400 text-ms-gray-800';
             const style: React.CSSProperties = { height: 34, padding: '0 10px', borderWidth: 1, borderStyle: 'solid', borderRadius: 6, boxSizing: 'border-box', width: '100%', minWidth: 0, fontFamily: 'inherit' };
             const set = (x: string) => s.setEdits((e) => ({ ...e, [f.k]: x }));
+            // DS 컨트롤(E2E #2) — 칸 색(읽기 전용 회색 · 빈 칸 노랑)은 입력 칸과 같게
+            const tone = locked ? 'bg-ms-gray-100 border-ms-gray-200' : v.trim() ? 'bg-ms-white border-ms-gray-300' : 'bg-yellow-100 border-yellow-500';
             return (
-              <label key={f.k} style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, gridColumn: f.span ? `span ${f.span}` : undefined }}>
+              <div key={f.k} style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, gridColumn: f.span ? `span ${f.span}` : undefined }}>
                 <span className="text-typo-body-400 text-ms-gray-500">{f.label}</span>
                 {f.type === 'gender' ? (
-                  <select value={v} disabled={locked} onChange={(e) => set(e.target.value)} className={cls} style={style}>
-                    <option value="">미입력</option>
-                    <option value="MALE">남성</option>
-                    <option value="FEMALE">여성</option>
-                    <option value="GENDER_UNSPECIFIED">선택 안 함</option>
-                  </select>
+                  <DsSelect value={v} disabled={locked} onChange={set} options={GENDER_OPTS} none="미입력" className={tone} />
                 ) : f.type === 'nation' ? (
-                  <select value={v} disabled={locked} onChange={(e) => set(e.target.value)} className={cls} style={style}>
-                    <option value="">미입력</option>
-                    {v && !NATION_OPTIONS.some((n) => n.code === v) && <option value={v}>{v}</option>}
-                    {NATION_OPTIONS.map((n) => (
-                      <option key={n.code} value={n.code}>
-                        {n.name} ({n.code})
-                      </option>
-                    ))}
-                  </select>
+                  <DsSelect
+                    value={v}
+                    disabled={locked}
+                    onChange={set}
+                    options={v && !NATION_OPTIONS.some((n) => n.code === v) ? [{ value: v, label: v }, ...NATION_OPTS] : NATION_OPTS}
+                    none="미입력"
+                    search
+                    className={tone}
+                  />
+                ) : f.type === 'sns' ? (
+                  <DsSelect
+                    value={v}
+                    disabled={locked}
+                    onChange={set}
+                    options={v && !snsOptions().some((o) => o.value === v) ? [{ value: v, label: v }, ...snsOptions()] : snsOptions()}
+                    none="미입력"
+                    className={tone}
+                  />
+                ) : f.type === 'date' ? (
+                  <DsDate birth value={v} disabled={locked} onChange={set} placeholder="미입력" tone={tone} />
                 ) : (
-                  <input type={f.type === 'date' ? 'date' : 'text'} value={v} readOnly={locked} onChange={(e) => set(e.target.value)} placeholder="미입력" className={cls} style={style} />
+                  <input value={v} readOnly={locked} onChange={(e) => set(e.target.value)} placeholder="미입력" className={cls} style={style} />
                 )}
-              </label>
+              </div>
             );
           })}
         </div>
@@ -843,18 +855,16 @@ function Visits({ visits, open, onOpen }: { visits: PreviousVisit[]; open: numbe
   );
 }
 
-// ── 진행 경로 라디오(§5.14 · addendum-1 W4 — 켜짐은 can.editRoute 그대로)
-function RouteRadio({ d, busy, run }: { d: ResvDetail; busy: string | null; run: (key: string, fn: () => Promise<unknown>, toast: string) => Promise<boolean> }) {
-  const cur = d.reservation.consultationRequired;
-  const on = d.can.editRoute && busy === null;
-  const opts = [
-    { v: true, name: '상담 필요' },
-    { v: false, name: '바로 시술' },
+// ── 진행 경로 라디오(E2E #13) — 접수 때 고르는 값 · 바꿔도 API 호출 없음 · [접수 완료] 요청에 실린다. 켜짐 = can.editRoute
+function RouteRadio({ on, value, onChange }: { on: boolean; value: ReceiveRoute; onChange: (v: ReceiveRoute) => void }) {
+  const opts: { v: ReceiveRoute; name: string }[] = [
+    { v: 'consultation', name: '상담 필요' },
+    { v: 'direct', name: '바로 시술' },
   ];
   return (
     <div role="radiogroup" aria-label="진행 경로" className="bg-ms-gray-100" style={{ display: 'flex', gap: 2, padding: 3, borderRadius: 8, height: 40, boxSizing: 'border-box' }}>
       {opts.map((o) => {
-        const sel = o.v === cur;
+        const sel = o.v === value;
         return (
           <button
             key={o.name}
@@ -863,8 +873,7 @@ function RouteRadio({ d, busy, run }: { d: ResvDetail; busy: string | null; run:
             aria-checked={sel}
             disabled={!on && !sel}
             onClick={() => {
-              if (!on || sel) return;
-              void run('route', () => api.saveRoute(d.reservationId, o.v), '저장했어요');
+              if (on && !sel) onChange(o.v);
             }}
             className={sel ? 'bg-ms-white text-primary text-typo-body-600' : 'text-ms-gray-600 text-typo-body-500'}
             style={{ border: 'none', padding: '0 12px', borderRadius: 6, cursor: on && !sel ? 'pointer' : 'default', whiteSpace: 'nowrap', fontFamily: 'inherit', background: sel ? undefined : 'transparent', boxShadow: sel ? '0 1px 3px rgba(0,0,0,0.08)' : 'none' }}
@@ -877,17 +886,40 @@ function RouteRadio({ d, busy, run }: { d: ResvDetail; busy: string | null; run:
   );
 }
 
+// 접수 성공 직후 낙관 표시(E2E #14) — 끝 단계(상담 필요 → 상담 대기 · 바로 시술 → 시술 대기) · 방 · 지금 시각. 다시 읽기가 오면 그 값으로 바뀐다
+function receivedView(d: ResvDetail, route: ReceiveRoute, roomId: number, roomTitle: string | null): ResvDetail {
+  const now = new Date().toISOString();
+  const cons = route === 'consultation';
+  return {
+    ...d,
+    state: { main: cons ? 'consultation' : 'procedure', sub: 'waiting' },
+    flow: {
+      receptionAt: now,
+      roomTitle,
+      receptionBy: null,
+      consultation: cons ? { state: 'waiting', counselor: null, since: now, calledAt: null, calledBy: null } : null,
+      stages: { procedure: cons ? 'none' : 'waiting', home: 'none' },
+    },
+    rooms: d.rooms.map((r) => ({ ...r, selected: r.roomId === roomId })),
+    roomLocked: true,
+    receiveMode: null,
+    can: { ...d.can, receive: false, editRoute: false, cancel: false },
+  };
+}
+
 // ── 내원 현황(접수 뒤 — §6.6)
 function FlowBlock({
   d,
   s,
   busy,
   run,
+  onClose,
 }: {
   d: ResvDetail;
   s: UiState;
   busy: string | null;
   run: (key: string, fn: () => Promise<unknown>, toast: string, after?: () => void) => Promise<boolean>;
+  onClose: () => void;
 }) {
   const f = d.flow;
   if (!f) return null;
@@ -910,12 +942,20 @@ function FlowBlock({
   const procCur = f.stages.procedure === 'waiting' || f.stages.procedure === 'doing';
   const homeCur = f.stages.home !== 'none';
   const st = d.settlement;
+  // [+ 상담 추가](시안 M:415-521 · E2E #15) — 접수 뒤 · 취소 아님. 켜짐 = can.addConsultation(없으면 상담 대기 · 진행 중이 아닐 때)
+  const showAddCons = !isClosedMain(d.state.main);
+  const addConsOn = (d.can.addConsultation ?? !consActive) && busy === null;
 
   return (
     <>
-      <span className="text-typo-heading-sm-600 text-ms-gray-800" style={{ flexShrink: 0 }}>
-        내원 현황
-      </span>
+      <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <span className="text-typo-heading-sm-600 text-ms-gray-800">내원 현황</span>
+        {showAddCons && (
+          <Button variant="outlined" color="blue" size="sm" disabled={!addConsOn} onClick={() => void run('addCons', () => api.addConsultation(d.reservationId), '상담 추가')}>
+            {busy === 'addCons' ? '추가 중…' : '+ 상담 추가'}
+          </Button>
+        )}
+      </div>
       <div className="border-ms-gray-300" style={{ flexShrink: 0, borderWidth: 1, borderStyle: 'solid', borderRadius: 8, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 12 }}>
         <span className="bg-primary" style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0 }} />
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -1060,11 +1100,16 @@ function FlowBlock({
             {d.state.sub !== 'done' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <div data-fill-buttons="true" style={{ display: 'grid' }}>
-                  <Button variant="solid" color="blue" disabled={!d.can.discharge || busy !== null} onClick={() => void run('discharge', () => api.discharge(d.reservationId), '귀가 완료')}>
+                  {/* 성공 → 모달 닫기 + 토스트(E2E #18) · 수납 필요 문구 없음(E2E #16 — 정산 상자 「수납 필요 N건」만) */}
+                  <Button
+                    variant="solid"
+                    color="blue"
+                    disabled={!d.can.discharge || busy !== null}
+                    onClick={() => void run('discharge', () => api.discharge(d.reservationId), d.customer.name + ' 귀가 완료', onClose)}
+                  >
                     {busy === 'discharge' ? '처리 중…' : '귀가 완료'}
                   </Button>
                 </div>
-                {st.paymentRequiredCount > 0 && <span className="text-typo-body-500 text-red">수납 필요 {st.paymentRequiredCount}건이 남아 귀가 완료를 할 수 없어요</span>}
               </div>
             )}
           </div>

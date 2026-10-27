@@ -406,6 +406,7 @@ export interface ResvCan {
   cancel: boolean;
   editRoute: boolean;
   receive: boolean;
+  addConsultation?: boolean; // [+ 상담 추가](E2E #15)
   callCounselor: boolean;
   discharge: boolean;
   editMemo: boolean;
@@ -439,7 +440,6 @@ export interface ResvDetail {
     identity: Identity;
   };
   reservation: {
-    consultationRequired: boolean;
     sedationRequired: boolean;
     memo: string | null;
     funnel: { name: string | null; detail: string | null } | null;
@@ -469,11 +469,11 @@ export interface StaffItem {
 export interface ResvForm {
   staff: StaffItem[];
   defaultAssigneeStaffId: number | null;
-  doctors: StaffItem[];
   counselors: StaffItem[];
   funnels: { funnelId: number; name: string }[];
   zones: { zoneId: number; title: string; available: boolean }[];
   defaultZoneId: number | null;
+  snsTypes?: string[]; // KOS snsInfo.snsType enum(E2E #23)
 }
 
 export interface CustomerHit {
@@ -492,6 +492,9 @@ export interface CustomerSearch {
   page: number;
   pageSize: number;
 }
+
+// [접수 완료] 진행 경로(E2E #13) — 접수 때 고르는 ccc 값 · KOS consultationRequired 와 다르다
+export type ReceiveRoute = 'consultation' | 'direct';
 
 export interface CustomerSearchQuery {
   name?: string;
@@ -519,10 +522,7 @@ export interface CreateReservation {
   zoneId?: number;
   start: string;
   customer: { customerId: number } | { new: NewCustomer };
-  consultationRequired: boolean;
-  sedationRequired: boolean;
   assigneeStaffId?: number;
-  doctorStaffIds: number[];
   counselorStaffId?: number;
   funnelId?: number;
   funnelDetail?: string;

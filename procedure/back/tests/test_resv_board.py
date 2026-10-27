@@ -98,7 +98,7 @@ def test_day_query_body_and_cards(env):
     assert cols["일본"]["count"] == 2 and cols["리프팅"]["count"] == 1  # 예약 수(묶음 수 아님)
     assert cols["일본"]["open"] == [{"start": "10:00", "end": "13:00"}, {"start": "14:00", "end": "20:00"}]
     assert [len(x["capacities"]) for x in b["columns"][:3]] == [1, 1, 2]
-    assert b["axis"] == {"start": "10:00", "end": "20:00"} and b["isToday"] and b["clinic"] is not None
+    assert b["axis"] == {"start": "06:00", "end": "22:00"} and b["isToday"] and b["clinic"] is not None
     assert b["notices"][0]["content"] == "공지 예시" and b["requests"] == []
     assert b["zones"][0]["isDefault"] and b["sync"]["lastError"] is None and b["sync"]["lastOkAt"]
 
@@ -156,22 +156,20 @@ def test_counts_exclude_canceled_noshow(env):
 
 
 def test_axis_rules():
-    tt = {"wednesday": {"enabled": True, "start": "10:00", "end": "20:00"}}
-    off = {"wednesday": {"enabled": False}}
-    d = datetime(2026, 10, 21).date()
-    assert axis([tt, off], d, []) == ("10:00", "20:00")
-    assert axis([off], d, []) is None  # 모든 그룹이 쉬는 요일
-    assert axis([tt], d, [(9 * 60 + 15, 9 * 60 + 45), (20 * 60, 20 * 60 + 40)]) == ("09:00", "21:00")  # 축 밖 예약 → 늘림
+    assert axis([]) == ("06:00", "22:00")  # 고정(10-27 E2E #4) — 운영 시간과 상관없이
+    assert axis([(9 * 60 + 15, 9 * 60 + 45), (20 * 60, 20 * 60 + 40)]) == ("06:00", "22:00")
+    assert axis([(5 * 60 + 15, 5 * 60 + 45), (22 * 60, 22 * 60 + 40)]) == ("05:00", "23:00")  # 축 밖 예약 → 늘림
     assert lines(("09:30", "12:00"), 60) == [540, 600, 660]  # 축 시작을 간격으로 내림(r1 W2) — 09:00 · 10:00 · 11:00
     assert lines(("09:30", "11:00"), 30) == [570, 600, 630] and lines(("09:45", "10:30"), 15)[0] == 585
     assert capacity_label([]) == "- 명" and capacity_label([("4층", 3)]) == "3명"
     assert capacity_label([("4층", 3), ("미사용", 3)]) == "4층 3 · 미사용 3명"
 
 
-def test_sunday_no_axis(env):
+def test_sunday_axis_fixed_all_closed(env):
     c, _, _ = env
-    b = board(c, "2026-10-25")  # 일요일 — 데모 그룹 모두 꺼짐
-    assert b["axis"] is None and b["rows"] == [] and b["slots"] == []
+    b = board(c, "2026-10-25")  # 일요일 — 데모 그룹 모두 꺼짐 → 축은 그대로 · 칸 전부 운영 밖(회색)
+    assert b["axis"] == {"start": "06:00", "end": "22:00"}
+    assert all(col["open"] == [] for col in b["columns"]) and b["rows"]
 
 
 # ------------------------------------------------------------------ 정원(§5.4)
@@ -193,7 +191,7 @@ def test_slots_full_per_zone_and_plus(env):
     assert row[(gid["제모"], "10:15")] is True  # 하나라도 자리 있으면 [+]
     assert (gid["일본"], zid["미사용"], "10:00") not in slot  # 꺼진 구역 슬롯 없음
     assert all(r["groupId"] is not None for r in b["rows"])  # 「그룹 없음」 줄 없음
-    assert len([r for r in b["rows"] if r["groupId"] == gid["제모"]]) == 40  # 15분 × 10시간
+    assert len([r for r in b["rows"] if r["groupId"] == gid["제모"]]) == 64  # 15분 × 16시간(06 ~ 22)
 
 
 def test_slot_missing_is_null_not_full(env):
@@ -390,12 +388,12 @@ def test_today_refresh_helper(env):
 
 
 def test_rows_align_to_interval_when_axis_extended(env):
-    """축이 09:30 으로 늘어나도 60분 칸 줄은 09:00 · 10:00 …(자정 기준 경계 = move 의 간격 경계와 같다 · r1 W2)."""
+    """축이 05:30 으로 늘어나도 60분 칸 줄은 05:00 · 06:00 …(자정 기준 경계 = move 의 간격 경계와 같다 · r1 W2)."""
     c, fake, _ = env
-    fake.add_resv("early", start=kst(9, 30))  # 축 밖 → 09:30 까지 늘림
+    fake.add_resv("early", start=kst(5, 30))  # 축 밖 → 05:30 까지 늘림
     b = board(c)
-    assert b["axis"]["start"] == "09:30"
+    assert b["axis"]["start"] == "05:30"
     gid = {x["title"]: x["groupId"] for x in b["columns"]}
     starts = [r["start"][11:16] for r in b["rows"] if r["groupId"] == gid["리프팅"]]
-    assert starts[:2] == ["09:00", "10:00"]
-    assert [r["start"][11:16] for r in b["rows"] if r["groupId"] == gid["일본"]][:2] == ["09:30", "10:00"]
+    assert starts[:2] == ["05:00", "06:00"]
+    assert [r["start"][11:16] for r in b["rows"] if r["groupId"] == gid["일본"]][:2] == ["05:30", "06:00"]

@@ -1,13 +1,15 @@
 'use client';
 
 // 예약 등록 모달(SPEC-005 §5.5 · §6.5 · 시안 M:572-652) — 왼쪽 고객 검색 · 오른쪽 예약 초안(KOS 예약 칸 그대로 — D-16)
-// 기존 고객 = 검색 결과 줄을 고름 · 신규 고객 = 이름 + 구분 정보 하나 이상(D-17). 이름 같은 고객 경고(D-18) · 등록 직전 KOS 중복 = 409 duplicated_visitor
-import { useEffect, useRef, useState } from 'react';
+// 기존 고객 = 검색 결과 줄을 고름(열면 첫 페이지 목록 — E2E #1) · 신규 고객 = 이름 + 구분 정보 하나 이상(D-17) · 등록 직전 KOS 중복 = 409 duplicated_visitor
+// 이름만 같은 고객 경고는 뺐다(E2E #8) · 「당일 지정 의사」 · 「진행(상담 필요 · 수면마취)」 칸 뺌(E2E #21 · #22) · 입력 컨트롤 = DS(E2E #2 · #9 · #23)
+import { useEffect, useState } from 'react';
 import { Badge, Button } from '@medisolve-ai/medikit';
 import * as api from '@/lib/api';
 import { clearSession } from '@/lib/session';
 import type { CreateReservation, CustomerHit, CustomerSearch, DuplicateCandidate, NewCustomer, ResvForm } from '@/lib/types';
 import { NATION_OPTIONS, dateShort, minToHm, nationName } from './view';
+import { DsDate, DsSelect, snsOptions, timeOptions } from './controls';
 
 export interface NewDraft {
   date: string;
@@ -74,7 +76,14 @@ function newCustomerOf(w: Who): NewCustomer {
   return c;
 }
 
-const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+const NATION_OPTS = NATION_OPTIONS.map((n) => ({ value: n.code, label: n.name + ' (' + n.code + ')' }));
+const GENDER_OPTS = [
+  { value: 'MALE', label: '남' },
+  { value: 'FEMALE', label: '여' },
+];
+const DISCHARGE_OPTS = timeOptions(); // 06:00 ~ 22:00 · 30분(코디 답 ①)
+const idOpt = (id: number | null) => (id === null ? '' : String(id));
+const optId = (v: string) => (v ? Number(v) : null);
 
 export function NewReservationModal({ draft, onClose, onDone }: { draft: NewDraft; onClose: () => void; onDone: (toast: string) => void }) {
   const [form, setForm] = useState<ResvForm | null>(null);
@@ -84,19 +93,15 @@ export function NewReservationModal({ draft, onClose, onDone }: { draft: NewDraf
   const [q, setQ] = useState({ name: '', phone: '', birth: '', chart: '' });
   const [result, setResult] = useState<CustomerSearch | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
-  const [searching, setSearching] = useState(false);
+  const [searching, setSearching] = useState(true); // 열 때 첫 목록을 부른다
 
   // 고른 기존 고객 · 신규 고객 칸
   const [picked, setPicked] = useState<CustomerHit | null>(null);
   const [who, setWho] = useState<Who>(EMPTY_WHO);
-  const [sameNames, setSameNames] = useState<CustomerHit[]>([]);
 
   // 예약 칸
   const [zoneId, setZoneId] = useState<number | null>(null);
-  const [consult, setConsult] = useState(false);
-  const [sedation, setSedation] = useState(false);
   const [assignee, setAssignee] = useState<number | null>(null);
-  const [doctors, setDoctors] = useState<number[]>([]);
   const [counselor, setCounselor] = useState<number | null>(null);
   const [funnel, setFunnel] = useState<number | null>(null);
   const [funnelDetail, setFunnelDetail] = useState('');
@@ -136,34 +141,12 @@ export function NewReservationModal({ draft, onClose, onDone }: { draft: NewDraf
     };
   }, [draft]);
 
-  // 이름 같은 고객 경고(D-18) — 신규 이름을 입력하면 내부 검색(0.4초 뒤)
-  const nameSeq = useRef(0);
-  useEffect(() => {
-    const name = who.name.trim();
-    const n = ++nameSeq.current;
-    if (picked || !name) return;
-    const t = setTimeout(() => {
-      api
-        .searchCustomers({ name })
-        .then((r) => {
-          if (n === nameSeq.current) setSameNames(r.items.filter((h) => sameName(h.name, name)));
-        })
-        .catch(() => undefined);
-    }, 400);
-    return () => clearTimeout(t);
-  }, [who.name, picked]);
-  const warnNames = picked || !who.name.trim() ? [] : sameNames;
-
-  const search = async (page = 1) => {
-    const has = Object.values(q).some((v) => v.trim());
-    if (!has) {
-      setSearchError('검색 조건을 하나 이상 넣어 주세요');
-      return;
-    }
+  // 조건 없이도 검색(= 전체 목록 · 페이지) — E2E #1
+  const search = async (page = 1, cond = q) => {
     setSearching(true);
     setSearchError(null);
     try {
-      setResult(await api.searchCustomers({ name: q.name.trim(), phone: q.phone.trim(), birth: q.birth.trim(), chart: q.chart.trim(), page }));
+      setResult(await api.searchCustomers({ name: cond.name.trim(), phone: cond.phone.trim(), birth: cond.birth.trim(), chart: cond.chart.trim(), page }));
     } catch (e) {
       if (!authFail(e)) setSearchError(e instanceof Error ? e.message : '검색하지 못했어요');
     } finally {
@@ -171,11 +154,29 @@ export function NewReservationModal({ draft, onClose, onDone }: { draft: NewDraf
     }
   };
   const reset = () => {
-    setQ({ name: '', phone: '', birth: '', chart: '' });
-    setResult(null);
-    setSearchError(null);
+    const empty = { name: '', phone: '', birth: '', chart: '' };
+    setQ(empty);
     setPicked(null);
+    void search(1, empty);
   };
+  // 열면 첫 페이지 목록(E2E #1) — 조건 없는 검색
+  useEffect(() => {
+    let live = true;
+    api
+      .searchCustomers({ page: 1 })
+      .then((r) => {
+        if (live) setResult((x) => x ?? r); // 그 사이 사용자가 검색했으면 그대로
+      })
+      .catch((e: unknown) => {
+        if (live && !authFail(e)) setSearchError(e instanceof Error ? e.message : '목록을 불러오지 못했어요');
+      })
+      .finally(() => {
+        if (live) setSearching(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   // 구역 칸 = 그 그룹에서 켜진 구역 · 하나뿐이면 숨기고 그 구역으로(§5.5 · D-44)
   const zones = (form?.zones ?? []).filter((z) => !draft.zoneIds.length || draft.zoneIds.includes(z.zoneId));
@@ -189,9 +190,6 @@ export function NewReservationModal({ draft, onClose, onDone }: { draft: NewDraf
       groupId: draft.groupId,
       start: draft.start,
       customer,
-      consultationRequired: consult,
-      sedationRequired: sedation,
-      doctorStaffIds: doctors,
     };
     if (zoneId !== null) body.zoneId = zoneId;
     if (assignee !== null) body.assigneeStaffId = assignee;
@@ -224,7 +222,8 @@ export function NewReservationModal({ draft, onClose, onDone }: { draft: NewDraf
     void submit({ customerId: dup.customerId });
   };
 
-  const setW = (k: keyof Who) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setWho((w) => ({ ...w, [k]: e.target.value }));
+  const setW = (k: keyof Who) => (e: React.ChangeEvent<HTMLInputElement>) => setWho((w) => ({ ...w, [k]: e.target.value }));
+  const setV = (k: keyof Who) => (v: string) => setWho((w) => ({ ...w, [k]: v }));
   const kind = picked
     ? { text: picked.chartNumber ? '기존 고객 · No.' + picked.chartNumber : '기존 고객', variant: 'primary' as const }
     : { text: '신규 고객', variant: 'neutral' as const };
@@ -274,10 +273,13 @@ export function NewReservationModal({ draft, onClose, onDone }: { draft: NewDraf
                 [
                   ['name', '이름'],
                   ['phone', '연락처'],
-                  ['birth', '생년월일 (YYYY-MM-DD)'],
+                  ['birth', '생년월일'],
                   ['chart', '차트번호'],
                 ] as const
-              ).map(([k, label]) => (
+              ).map(([k, label]) =>
+                k === 'birth' ? (
+                  <DsDate key={k} birth value={q.birth} onChange={(v) => setQ((x) => ({ ...x, birth: v }))} placeholder={label} className="h-[40px]" />
+                ) : (
                 <input
                   key={k}
                   aria-label={label}
@@ -287,7 +289,8 @@ export function NewReservationModal({ draft, onClose, onDone }: { draft: NewDraf
                   className="bg-ms-white border-ms-gray-300 text-typo-body-400 text-ms-gray-800"
                   style={{ ...INPUT, height: 40 }}
                 />
-              ))}
+                ),
+              )}
               <Button type="submit" variant="solid" color="blue" isLoading={searching}>
                 검색
               </Button>
@@ -343,7 +346,7 @@ export function NewReservationModal({ draft, onClose, onDone }: { draft: NewDraf
               })}
               {!result?.items.length && (
                 <div className="text-typo-body-400 text-ms-gray-500" style={{ padding: '28px 12px', textAlign: 'center' }}>
-                  {result ? '일치하는 고객이 없어요 · 신규 고객으로 등록됩니다' : '고객을 검색하세요'}
+                  {result ? '일치하는 고객이 없어요 · 신규 고객으로 등록됩니다' : searching ? '불러오는 중…' : ''}
                 </div>
               )}
             </div>
@@ -379,14 +382,11 @@ export function NewReservationModal({ draft, onClose, onDone }: { draft: NewDraf
               </Field>
               {showZone && (
                 <Field k="구역" span>
-                  <select value={zoneId ?? ''} onChange={(e) => setZoneId(Number(e.target.value))} className={INPUT_CLS} style={INPUT}>
-                    {zones.map((z) => (
-                      <option key={z.zoneId} value={z.zoneId} disabled={!z.available}>
-                        {z.title}
-                        {z.available ? '' : ' (정원 마감)'}
-                      </option>
-                    ))}
-                  </select>
+                  <DsSelect
+                    value={idOpt(zoneId)}
+                    onChange={(v) => v && setZoneId(Number(v))}
+                    options={zones.map((z) => ({ value: String(z.zoneId), label: z.title + (z.available ? '' : ' (정원 마감)'), disabled: !z.available }))}
+                  />
                 </Field>
               )}
 
@@ -408,46 +408,19 @@ export function NewReservationModal({ draft, onClose, onDone }: { draft: NewDraf
                 <>
                   <Field k="이름 *" span>
                     <input value={who.name} onChange={setW('name')} placeholder="여권과 같은 이름" className={INPUT_CLS} style={INPUT} />
-                    {warnNames.length > 0 && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 4 }}>
-                        <span className="text-typo-body-500 text-red">이름이 같은 기존 고객이 있어요 · 같은 사람이면 선택하세요</span>
-                        {warnNames.slice(0, 5).map((h) => (
-                          <button
-                            key={h.customerId}
-                            type="button"
-                            onClick={() => setPicked(h)}
-                            className="text-typo-body-400 text-red"
-                            style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontFamily: 'inherit', padding: 0, textAlign: 'left', textDecoration: 'underline' }}
-                          >
-                            {h.name} · {h.chartNumber ? 'No.' + h.chartNumber : '차트 없음'} · {h.dateOfBirth ?? '생년월일 없음'}
-                          </button>
-                        ))}
-                      </div>
-                    )}
                   </Field>
                   <Field k="한글 발음">
                     <input value={who.phoneticName} onChange={setW('phoneticName')} className={INPUT_CLS} style={INPUT} />
                     {kataBad && <span className="text-typo-caption-md-500 text-red">가타카나로 입력해 주세요</span>}
                   </Field>
                   <Field k="성별">
-                    <select value={who.gender} onChange={setW('gender')} className={INPUT_CLS} style={INPUT}>
-                      <option value="">선택 안 함</option>
-                      <option value="MALE">남</option>
-                      <option value="FEMALE">여</option>
-                    </select>
+                    <DsSelect value={who.gender} onChange={setV('gender')} options={GENDER_OPTS} none="선택 안 함" />
                   </Field>
                   <Field k="생년월일">
-                    <input type="date" value={who.birth} onChange={setW('birth')} className={INPUT_CLS} style={INPUT} />
+                    <DsDate birth value={who.birth} onChange={setV('birth')} placeholder="선택 안 함" />
                   </Field>
                   <Field k="국적">
-                    <select value={who.nationality} onChange={setW('nationality')} className={INPUT_CLS} style={INPUT}>
-                      <option value="">선택 안 함</option>
-                      {NATION_OPTIONS.map((n) => (
-                        <option key={n.code} value={n.code}>
-                          {n.name} ({n.code})
-                        </option>
-                      ))}
-                    </select>
+                    <DsSelect value={who.nationality} onChange={setV('nationality')} options={NATION_OPTS} none="선택 안 함" search />
                   </Field>
                   <Field k="연락처(국가번호 · 번호)">
                     <div style={{ display: 'grid', gridTemplateColumns: '72px minmax(0,1fr)', gap: 6 }}>
@@ -459,8 +432,8 @@ export function NewReservationModal({ draft, onClose, onDone }: { draft: NewDraf
                     <input type="email" value={who.email} onChange={setW('email')} className={INPUT_CLS} style={INPUT} />
                   </Field>
                   <Field k="SNS(종류 · ID)">
-                    <div style={{ display: 'grid', gridTemplateColumns: '96px minmax(0,1fr)', gap: 6 }}>
-                      <input value={who.snsType} onChange={setW('snsType')} placeholder="종류" className={INPUT_CLS} style={INPUT} />
+                    <div style={{ display: 'grid', gridTemplateColumns: '120px minmax(0,1fr)', gap: 6 }}>
+                      <DsSelect value={who.snsType} onChange={setV('snsType')} options={snsOptions(form?.snsTypes)} none="종류" ariaLabel="SNS 종류" />
                       <input value={who.snsId} onChange={setW('snsId')} placeholder="ID" className={INPUT_CLS} style={INPUT} />
                     </div>
                   </Field>
@@ -475,60 +448,17 @@ export function NewReservationModal({ draft, onClose, onDone }: { draft: NewDraf
                 </>
               )}
 
-              <Field k="진행">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 16, height: 36 }}>
-                  <Check on={consult} onChange={setConsult} label="상담 필요" />
-                  <Check on={sedation} onChange={setSedation} label="수면마취" />
-                </div>
-              </Field>
               <Field k="귀가 희망 시각">
-                <input type="time" value={discharge} onChange={(e) => setDischarge(e.target.value)} className={INPUT_CLS} style={INPUT} />
+                <DsSelect value={discharge} onChange={setDischarge} options={DISCHARGE_OPTS} none="선택 안 함" />
               </Field>
               <Field k="예약 담당자">
-                <select value={assignee ?? ''} onChange={(e) => setAssignee(e.target.value ? Number(e.target.value) : null)} className={INPUT_CLS} style={INPUT}>
-                  <option value="">선택 안 함</option>
-                  {form?.staff.map((s) => (
-                    <option key={s.staffId} value={s.staffId}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
+                <DsSelect value={idOpt(assignee)} onChange={(v) => setAssignee(optId(v))} options={(form?.staff ?? []).map((x) => ({ value: String(x.staffId), label: x.name }))} none="선택 안 함" search={(form?.staff.length ?? 0) > 10} />
               </Field>
               <Field k="희망 상담사">
-                <select value={counselor ?? ''} onChange={(e) => setCounselor(e.target.value ? Number(e.target.value) : null)} className={INPUT_CLS} style={INPUT}>
-                  <option value="">선택 안 함</option>
-                  {form?.counselors.map((s) => (
-                    <option key={s.staffId} value={s.staffId}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Field k="당일 지정 의사" span>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 16px', minHeight: 36, alignItems: 'center' }}>
-                  {form?.doctors.length ? (
-                    form.doctors.map((d) => (
-                      <Check
-                        key={d.staffId}
-                        on={doctors.includes(d.staffId)}
-                        onChange={(on) => setDoctors((x) => (on ? [...x, d.staffId] : x.filter((id) => id !== d.staffId)))}
-                        label={d.name}
-                      />
-                    ))
-                  ) : (
-                    <span className="text-typo-body-400 text-ms-gray-500">원장 목록 없음</span>
-                  )}
-                </div>
+                <DsSelect value={idOpt(counselor)} onChange={(v) => setCounselor(optId(v))} options={(form?.counselors ?? []).map((x) => ({ value: String(x.staffId), label: x.name }))} none="선택 안 함" />
               </Field>
               <Field k="유입 채널">
-                <select value={funnel ?? ''} onChange={(e) => setFunnel(e.target.value ? Number(e.target.value) : null)} className={INPUT_CLS} style={INPUT}>
-                  <option value="">선택 안 함</option>
-                  {form?.funnels.map((f) => (
-                    <option key={f.funnelId} value={f.funnelId}>
-                      {f.name}
-                    </option>
-                  ))}
-                </select>
+                <DsSelect value={idOpt(funnel)} onChange={(v) => setFunnel(optId(v))} options={(form?.funnels ?? []).map((f) => ({ value: String(f.funnelId), label: f.name }))} none="선택 안 함" />
               </Field>
               <Field k="유입 상세">
                 <input value={funnelDetail} onChange={(e) => setFunnelDetail(e.target.value)} disabled={funnel === null} className={INPUT_CLS} style={INPUT} />
@@ -576,21 +506,13 @@ export function NewReservationModal({ draft, onClose, onDone }: { draft: NewDraf
   );
 }
 
+// 칸 = div(DS 버튼을 label 로 감싸면 머리 글자 클릭이 펼침을 건드린다)
 function Field({ k, span, children }: { k: string; span?: boolean; children: React.ReactNode }) {
   return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, gridColumn: span ? '1 / -1' : undefined }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, gridColumn: span ? '1 / -1' : undefined }}>
       <span className="text-typo-body-400 text-ms-gray-500">{k}</span>
       {children}
-    </label>
-  );
-}
-
-function Check({ on, onChange, label }: { on: boolean; onChange: (on: boolean) => void; label: string }) {
-  return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer', whiteSpace: 'nowrap' }} onClick={() => onChange(!on)}>
-      <input type="checkbox" checked={on} onChange={(e) => onChange(e.target.checked)} onClick={(e) => e.stopPropagation()} style={{ width: 16, height: 16, margin: 0 }} />
-      <span className="text-typo-body-400 text-ms-gray-800">{label}</span>
-    </span>
+    </div>
   );
 }
 

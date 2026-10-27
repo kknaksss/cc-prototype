@@ -152,7 +152,7 @@ def test_counts_exclude_canceled_noshow(env):
                            "canceled": 1, "noshow": 1}
     assert b["columns"][0]["count"] == 2
     assert {x["state"]["main"]: x["draggable"] for x in b["cards"]} == {
-        "reserved": True, "canceled": False, "noshow": False, "consultation": False}
+        "reserved": True, "canceled": True, "noshow": True, "consultation": True}  # KOS 가 받는 단계 = 끌림(b5 #1)
 
 
 def test_axis_rules():

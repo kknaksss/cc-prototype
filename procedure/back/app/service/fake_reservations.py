@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta
 
 from app.domain.clock import KST, iso
 from app.domain.errors import BadRequest, NotFound
-from app.domain.reservation_rules import CLOSED_MAINS, at_hhmm, hhmm, parse_day, state_of
+from app.domain.reservation_rules import CLOSED_MAINS, at_hhmm, draggable, hhmm, parse_day, state_of
 from app.schemas.reservations import (
     SNS_TYPES,
     CustomerSearch,
@@ -181,7 +181,7 @@ def board(now: datetime, date_value: str | None) -> ReservationBoard:
             cards.append({"reservationId": r[0], "resourceIndex": i, "groupId": gid if gid in GROUP else None,
                           "zoneId": r[3], "start": at(start), "end": at(_hm(_minutes(start) + minutes)),
                           "customer": _card_customer(r[1]), "state": {"main": main, "sub": sub},
-                          "paymentRequiredCount": r[8], "draggable": main in ("reserved", "reception")})
+                          "paymentRequiredCount": r[8], "draggable": draggable(main)})
     order = {g[0]: g[0] for g in GROUPS}
     cards.sort(key=lambda c: (order.get(c["groupId"], 99), c["start"], c["reservationId"]))
 

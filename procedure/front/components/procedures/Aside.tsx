@@ -7,11 +7,12 @@ import { minutesSince, toMs } from '@/lib/time';
 import type { Board, Card, OpenCall } from '@/lib/types';
 import {
   FILTERS,
-  STATE_BADGE,
-  STATE_NAME,
   docName,
   needView,
+  procSubName,
   procsOf,
+  stateBadge,
+  stateText,
   visitCls,
   type FilterId,
 } from './view';
@@ -114,7 +115,7 @@ export function Aside({
                 </span>
               </div>
               <span className="text-typo-caption-md-500 text-ms-gray-600" style={{ whiteSpace: 'nowrap' }}>
-                {c.room.title} · {STATE_NAME[c.state]}
+                {c.room.title} · {stateText(c.state)}
               </span>
             </div>
           ))}
@@ -184,7 +185,10 @@ function StatusTab({
               whiteSpace: 'nowrap',
             }}
           >
-            <span className={f.dot} style={{ width: 6, height: 6, borderRadius: '50%', flexShrink: 0 }} />
+            <span
+              className={f.dot}
+              style={{ width: 6, height: 6, borderRadius: '50%', flexShrink: 0, boxSizing: 'border-box', ...(f.ring ? { borderWidth: 2, borderStyle: 'solid' } : null) }}
+            />
             <span>{f.name}</span>
             <span style={{ fontVariantNumeric: 'tabular-nums' }}>{board.counts[f.id]}</span>
           </button>
@@ -477,8 +481,8 @@ function CustomersTab({
         >
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-              <Badge variant={STATE_BADGE[c.state]} size="sm" dot>
-                {STATE_NAME[c.state]}
+              <Badge variant={stateBadge(c.state).variant} size="sm" className={stateBadge(c.state).cls}>
+                {stateText(c.state)}
               </Badge>
               <span className="text-typo-body-600 text-ms-gray-800" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {c.customer.name}
@@ -539,7 +543,7 @@ function CustomersTab({
                       {p.title}
                     </span>
                     <span className="text-typo-caption-md-400 text-ms-gray-500" style={{ whiteSpace: 'nowrap' }}>
-                      {(who ? who + ' · ' : '') + (past ? '완료' : now ? '진행 중' : '대기')}
+                      {(who ? who + ' · ' : '') + procSubName(p.state)}
                     </span>
                   </div>
                 );

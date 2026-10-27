@@ -2,24 +2,45 @@
 import type { BadgeVariant } from '@medisolve-ai/medikit';
 import { hm, minutesSince, toMs } from '@/lib/time';
 import type { Board, Card, Need, OpenCall, Procedure, VisitState } from '@/lib/types';
+import { MAIN_NAME, SUB_NAME, phaseStyle, type Phase } from '@/components/reservations/view';
 
-export const STATE_NAME: Record<VisitState, string> = { waiting: '시술 대기', doing: '시술 진행', home: '귀가 대기' };
-export const STATE_BADGE: Record<VisitState, BadgeVariant> = { waiting: 'warning', doing: 'primary', home: 'neutral' };
+// 상태 2계층(SPEC-003 §5.14) — 스냅샷 state 세 값을 예약 현황과 같은 주 상태 · 부상태로 보인다.
+// 이름 · 색은 예약 현황 구현(reservations/view.tsx MAIN_NAME · SUB_NAME · phaseStyle) 값을 그대로 가져다 쓴다 — 여기서 값을 새로 정하지 않는다
+const STATE_2: Record<VisitState, { main: 'procedure' | 'home'; sub: 'waiting' | 'doing' }> = {
+  waiting: { main: 'procedure', sub: 'waiting' },
+  doing: { main: 'procedure', sub: 'doing' },
+  home: { main: 'home', sub: 'waiting' },
+};
+// 「시술 · 대기」 꼴(예약 현황 stateText 와 같음)
+export const stateText = (s: VisitState) => MAIN_NAME[STATE_2[s].main] + ' · ' + SUB_NAME[STATE_2[s].sub];
+// 상태 Badge — sm · 점 없음 · phaseStyle chip 으로 색을 덮는다(예약 현황 원내 현황 Badge 와 같은 꼴 · ResvAside.tsx)
+export function stateBadge(s: VisitState): { variant: BadgeVariant; cls: string; text: string } {
+  const { main, sub } = STATE_2[s];
+  return { variant: main === 'home' ? 'neutral' : 'primary', cls: phaseStyle(main, sub).chip, text: stateText(s) };
+}
 
-export const LEGEND: { name: string; variant: BadgeVariant }[] = [
-  { name: '시술 대기', variant: 'warning' },
-  { name: '마취 중', variant: 'purple' },
-  { name: '시술 진행', variant: 'primary' },
-  { name: '확인 필요', variant: 'danger' },
-  { name: '귀가 대기', variant: 'neutral' },
+// 시술 줄 부상태 칩(§5.14 시술 줄 표) — 주 상태는 늘 「시술」 · 완료 = 회색(phaseStyle done)
+const PROC_SUB: Record<Procedure['state'], Exclude<Phase, 'none'>> = { wait: 'waiting', doing: 'doing', done: 'done' };
+// 부상태 이름 하나(고객 탭 번호 원 시술 줄 글자도 이것 — §5.14 #14)
+export const procSubName = (s: Procedure['state']) => SUB_NAME[PROC_SUB[s]];
+export const procChip = (s: Procedure['state']) => ({ cls: phaseStyle('procedure', PROC_SUB[s]).chip, text: procSubName(s) });
+
+// 제목 줄 범례 5개(§6.2 · §5.14 #3) — 상태 셋 = 카드 Badge 꼴(점 없음) · 알림 둘(마취 중 · 확인 필요) = Badge sm dot 그대로
+export const LEGEND: { name: string; variant: BadgeVariant; cls?: string; dot: boolean }[] = [
+  { name: stateText('waiting'), variant: stateBadge('waiting').variant, cls: stateBadge('waiting').cls, dot: false },
+  { name: '마취 중', variant: 'purple', dot: true },
+  { name: stateText('doing'), variant: stateBadge('doing').variant, cls: stateBadge('doing').cls, dot: false },
+  { name: '확인 필요', variant: 'danger', dot: true },
+  { name: stateText('home'), variant: stateBadge('home').variant, cls: stateBadge('home').cls, dot: false },
 ];
 
 // 현황 탭 상태 수 6칸 = 3 × 2 · 점 · 칸 바탕 없음 = 카드 필터(SPEC-003 §6.4 · 시안 M:945-955). 수는 스냅샷 counts
 export type FilterId = 'all' | 'need' | 'waiting' | 'anes' | 'call' | 'doing';
-export const FILTERS: { id: FilterId; name: string; dot: string }[] = [
+// 대기 = ○(흰 속 · primary 테두리 2px — phaseStyle 대기 dot · §5.14 #4) · 나머지 = 채운 점
+export const FILTERS: { id: FilterId; name: string; dot: string; ring?: boolean }[] = [
   { id: 'all', name: '전체', dot: 'bg-ms-gray-300' },
   { id: 'need', name: '확인', dot: 'bg-red' },
-  { id: 'waiting', name: '대기', dot: 'bg-yellow' },
+  { id: 'waiting', name: '대기', dot: phaseStyle('procedure', 'waiting').dot, ring: true },
   { id: 'anes', name: '마취', dot: 'bg-purple' },
   { id: 'call', name: '호출', dot: 'bg-primary-500' },
   { id: 'doing', name: '진행', dot: 'bg-primary' },

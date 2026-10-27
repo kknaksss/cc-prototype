@@ -326,6 +326,23 @@ def schedule_start(sch: dict[str, Any]) -> datetime | None:
     return min(starts) if starts else parse((sch.get("reservation") or {}).get("startDateTime"))
 
 
+# ------------------------------------------------------------------ 단계 줄 시각(E2E b3 #2) — KOS 일정 원본에서
+def consultation_started_at(sch: dict[str, Any] | None, reserved_starts: list[datetime]) -> datetime | None:
+    """KOS 상담 기록의 상담 시작 중 마지막 — 예약 시작 시각과 같은 값은 버린다(화면이 예약 시각을 넣는다 · Q-101)."""
+    got = [parse((x or {}).get("consultationStartedDateTimeUtc")) for x in (sch or {}).get("consultations") or []
+           if isinstance(x, dict)]
+    got = [t for t in got if t and t not in reserved_starts]
+    return max(got) if got else None
+
+
+def procedure_done_at(sch: dict[str, Any] | None) -> datetime | None:
+    """KOS 시술(PROCEDURE) 작업 완료 시각 중 마지막."""
+    got = [parse(t.get("completedDateTimeUtc")) for t in (sch or {}).get("tasks") or []
+           if isinstance(t, dict) and t.get("type") == "PROCEDURE" and t.get("status") == "DONE"]
+    got = [t for t in got if t]
+    return max(got) if got else None
+
+
 def age_on(birth: str | None, day: date) -> int | None:
     if blank(birth):
         return None

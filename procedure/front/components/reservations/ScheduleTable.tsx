@@ -9,7 +9,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Badge } from '@medisolve-ai/medikit';
 import type { ResvBoard, ResvCard, ResvColumn } from '@/lib/types';
-import { Flag, SUB_NAME, barStyle, capacityText, genderIcon, hmToMin, isClosed, kstMin, minToHm, visitChip } from './view';
+import { Flag, SUB_NAME, barStyle, capacityText, genderIcon, hmToMin, isClosed, kstMin, minToHm, phaseOfSub, phaseStyle, visitChip } from './view';
 
 const STEP = 30; // 줄 = 30분(시안)
 const LABEL_W = 64;
@@ -393,9 +393,10 @@ function CardView({
             {v.text}
           </span>
           {card.state.sub && (
+            // 부상태 칩 — 대기 연한 색 · 진행 채움 · 완료 회색(phaseStyle · E2E b3 #3)
             <span
-              className="border-ms-gray-300 text-ms-gray-600"
-              style={{ flexShrink: 0, fontSize: 11, lineHeight: '14px', fontWeight: 600, padding: '0 4px', borderRadius: 4, borderWidth: 1, borderStyle: 'solid', whiteSpace: 'nowrap' }}
+              className={phaseStyle(card.state.main, phaseOfSub(card.state.sub) ?? 'none').chip}
+              style={{ flexShrink: 0, fontSize: 11, lineHeight: '16px', fontWeight: 600, padding: '0 5px', borderRadius: 4, whiteSpace: 'nowrap' }}
             >
               {SUB_NAME[card.state.sub]}
             </span>

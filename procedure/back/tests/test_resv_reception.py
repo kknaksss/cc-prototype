@@ -387,3 +387,31 @@ def test_pinned_end_step_survives_stale_detail_read(env):
     c.resv.pin_step("s1", "PROCEDURE_WAITING")
     fake._resv_sch("s1")["flowStep"] = "PROCEDURE"  # KOS 가 끝 단계 이상 — 정상 덮어쓰기
     assert run(c.resv.detail(rid)).state.sub == "doing" and "s1" not in c.resv._pins
+
+
+# ------------------------------------------------------------------ 단계 줄 시각(E2E b3 #2)
+def test_flow_times_from_kos_evidence_only(env):
+    c, fake, _ = env
+    x = add(c, fake, "s1", consult=False)
+    receive(c, "s1")  # ccc 접수 = 상담 필요
+    follow(c)
+    rid = rid_of(c, "s1")
+    x["flowStepUpdatedDateTimeUtc"] = "2026-10-21T02:10:00Z"
+    t = run(c.resv.detail(rid)).flow.times
+    assert (t.consultation, t.procedure, t.home) == ("2026-10-21T11:10:00+09:00", None, None)  # 상담 대기가 된 시각
+    x.update(flowStep="PROCEDURE_WAITING", flowStepUpdatedDateTimeUtc="2026-10-21T02:40:00Z")
+    t = run(c.resv.detail(rid)).flow.times
+    assert t.consultation == t.procedure == "2026-10-21T11:40:00+09:00"  # 상담 끝 = 시술 대기가 된 시각
+    x.update(flowStep="PROCEDURE", flowStepUpdatedDateTimeUtc="2026-10-21T03:00:00Z")
+    t = run(c.resv.detail(rid)).flow.times
+    assert (t.consultation, t.procedure) == (None, "2026-10-21T12:00:00+09:00")  # 지난 상담 — 근거 없음 = null
+    x["consultations"] = [{"consultationStartedDateTimeUtc": "2026-10-21T02:00:00Z"},  # = 예약 시작(11:00 KST) → 버림
+                          {"consultationStartedDateTimeUtc": "2026-10-21T02:15:00Z"}]
+    assert run(c.resv.detail(rid)).flow.times.consultation == "2026-10-21T11:15:00+09:00"
+    x["consultations"] = x["consultations"][:1]
+    assert run(c.resv.detail(rid)).flow.times.consultation is None
+    x.update(flowStep="COMPLETED", flowStepUpdatedDateTimeUtc="2026-10-21T04:00:00Z")
+    x["reservation"]["status"] = "COMPLETED"
+    x["tasks"].append({**rtask(9, status="DONE"), "completedDateTimeUtc": "2026-10-21T03:30:00Z"})
+    t = run(c.resv.detail(rid)).flow.times
+    assert (t.procedure, t.home) == ("2026-10-21T12:30:00+09:00", "2026-10-21T13:00:00+09:00")

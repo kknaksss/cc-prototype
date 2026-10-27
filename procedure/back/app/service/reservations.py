@@ -25,6 +25,7 @@ from app.domain.reservation_rules import (
     axis,
     blank,
     can,
+    consultation_started_at,
     day_range,
     draggable,
     flow_rank,
@@ -39,6 +40,7 @@ from app.domain.reservation_rules import (
     parse_day,
     payment_required_count,
     plus_allowed,
+    procedure_done_at,
     purchase_amount,
     receive_mode,
     reception_room_task,
@@ -470,8 +472,9 @@ class ReservationService:
             cust = tx.customer(r.customer_id) if r.customer_id else None
         if r.day:
             await self.ensure_day(date.fromisoformat(r.day))
+        raw: dict[str, Any] = {}  # 그 일정 KOS 원본(단계 줄 시각 · E2E b3 #2)
         if self.runtime is not None:  # 그 일정만 KOS 에서 바로(캐시 없이) — 열린 모달 폴링이 수납 · 단계를 곧바로 본다(10-27 #17)
-            await self.refresh_schedule(r.kos_id, r.day, gone=True)
+            await self.refresh_schedule(r.kos_id, r.day, gone=True, sink=raw)
         with self.repo.tx() as tx:
             r = self._reservation(tx, reservation_id)
         main, sub = state_of(r.status, r.flow_step)
@@ -503,7 +506,7 @@ class ReservationService:
                       "selected": bool(locked_room) and x.kos_id == locked_room}
                      for x in rooms_all if x.zone_kos_id == r.zone_kos_id]
         after = main not in ("reserved", "canceled", "noshow")
-        flow = self._flow(r, after, events, accounts, staff_by_kos) if after else None
+        flow = self._flow(r, after, events, accounts, staff_by_kos, raw) if after else None
         counselors = []
         if flow is not None and flow["consultation"] is not None:
             counselors = [{"staffId": x.id, "name": x.name, "busyRoom": counselor_busy_room(today_resvs, x.kos_id)}
@@ -602,10 +605,14 @@ class ReservationService:
         return {"state": "ok", "submittedAt": iso(parse(submitted)), "needCount": sum(1 for i in items if i["needsCheck"]),
                 "items": items}
 
-    def _flow(self, r: Reservation, after: bool, events: list[dict], accounts: dict[str, str], staff_by_kos) -> dict:
+    def _flow(self, r: Reservation, after: bool, events: list[dict], accounts: dict[str, str], staff_by_kos,
+              raw: dict[str, Any]) -> dict:
+        """내원 현황. 단계 줄 시각은 근거 있는 것만 — 사본 `flow_step_at`(= KOS flowStepUpdatedDateTimeUtc) 은 지금 단계가 된
+        시각이라 지금 단계와 바로 앞 단계의 끝에만 쓰고, 지난 단계는 KOS 원본(상담 기록 · 작업 완료)만 쓴다(E2E b3 #2)."""
+        step, step_at = r.flow_step or "", iso(r.flow_step_at)
         reception = [e for e in events if e["type"] == "reception"]
         calls = [e for e in events if e["type"] == "counselor_call"]
-        cons = None
+        cons, c_at = None, None
         # 상담 거침 = 지금 상담 단계 · ccc 접수가 상담 대기로 끝남 · [+ 상담 추가](KOS consultationRequired 는 안 읽는다 · 10-27)
         routed = any(e["type"] == "reception" and e["payload"].get("endStep") == "CONSULTATION_WAITING" for e in events) \
             or any(e["type"] == "consultation_add" for e in events)
@@ -617,12 +624,22 @@ class ReservationService:
                     "since": iso(r.flow_step_at) if state == "doing" else None,
                     "calledAt": iso(parse(last["at"])) if last else None,
                     "calledBy": accounts.get(last["actor"], last["actor"]) if last else None}
+            if state in ("waiting", "doing"):
+                c_at = step_at
+            elif state == "done":  # 끝 = 바로 다음 단계(시술 대기)가 된 시각 · 아니면 KOS 상담 시작
+                started = consultation_started_at(raw, [parse(x["startAt"]) for x in r.resources])
+                c_at = step_at if step == "PROCEDURE_WAITING" else iso(started)
         proc = {"PROCEDURE_WAITING": "waiting", "PROCEDURE": "doing", "PROCEDURE_DONE": "done", "COMPLETED": "done"}
         home = {"PROCEDURE_DONE": "waiting", "COMPLETED": "done"}
+        p_state, h_state = proc.get(step, "none"), home.get(step, "none")
+        p_at = step_at if step in ("PROCEDURE_WAITING", "PROCEDURE", "PROCEDURE_DONE") else (
+            iso(procedure_done_at(raw)) if p_state == "done" else None)
+        h_at = step_at if h_state != "none" else None
         return {"receptionAt": iso(r.reception_at), "roomTitle": r.room_title,
                 "receptionBy": accounts.get(reception[-1]["actor"], reception[-1]["actor"]) if reception else None,
                 "consultation": cons,
-                "stages": {"procedure": proc.get(r.flow_step or "", "none"), "home": home.get(r.flow_step or "", "none")}}
+                "stages": {"procedure": p_state, "home": h_state},
+                "times": {"consultation": c_at, "procedure": p_at, "home": h_at}}
 
     @staticmethod
     def _staff_ref(person: dict | None, staff_by_kos) -> dict | None:
@@ -673,7 +690,8 @@ class ReservationService:
                 if d:
                     self.sync.invalidate(d)
 
-    async def refresh_schedule(self, kos_id: str, fallback_day: str | None = None, *, gone: bool = False) -> int | None:
+    async def refresh_schedule(self, kos_id: str, fallback_day: str | None = None, *, gone: bool = False,
+                               sink: dict[str, Any] | None = None) -> int | None:
         """일정 1건을 KOS 에서 다시 읽어 사본에 덮어쓴다(내부 get-schedule-detail) → reservation id. 실패는 None.
 
         gone = KOS 404 면 404 `reservation_gone`(상세 · E2E b2 #2). 로그는 일정마다 한 번만(폴링 반복 막기).
@@ -694,6 +712,8 @@ class ReservationService:
         data = resp.get("data")
         if not isinstance(data, dict):
             return None
+        if sink is not None:
+            sink.update(data)
         now = self.clock.now()
         with self.repo.tx() as tx:
             rid = apply_schedule(tx, data, now, fallback_day)

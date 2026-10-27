@@ -393,6 +393,8 @@ export interface Flow {
     calledBy: string | null;
   } | null;
   stages: { procedure: 'none' | 'waiting' | 'doing' | 'done'; home: 'none' | 'waiting' | 'done' };
+  // 단계 시각(E2E b3 #2) — KOS · ccc 근거 있는 값만 · 없으면 null(지어내지 않음)
+  times?: { consultation: string | null; procedure: string | null; home: string | null } | null;
 }
 
 export interface Settlement {

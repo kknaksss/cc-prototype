@@ -326,7 +326,10 @@ def detail(now: datetime, reservation_id: int) -> ReservationDetail:
         home = {"PROCEDURE_DONE": "waiting", "COMPLETED": "done"}
         flow_obj = {"receptionAt": at(_hm(_minutes(s0) - 10)), "roomTitle": ROOM_TITLE.get(room_id) if room_id else None,
                     "receptionBy": "데스크 1" if rid != 3 else None, "consultation": cons,
-                    "stages": {"procedure": proc.get(flow, "none"), "home": home.get(flow, "none")}}
+                    "stages": {"procedure": proc.get(flow, "none"), "home": home.get(flow, "none")},
+                    "times": {"consultation": at(_hm(_minutes(s0) + 5)) if cons else None,
+                              "procedure": at(_hm(_minutes(s0) + 25)) if flow in proc else None,
+                              "home": at(_hm(_minutes(s0) + 60)) if flow in home else None}}
 
     settlement = None
     if main == "home":

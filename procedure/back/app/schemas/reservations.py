@@ -306,12 +306,21 @@ class Stages(BaseModel):
     home: Literal["none", "waiting", "done"]
 
 
+class FlowTimes(BaseModel):
+    """단계 줄 시각(E2E b3 #2) — 그 단계 줄이 지금 상태가 된 시각 · 근거 없으면 null(지어내지 않음)."""
+
+    consultation: str | None  # 대기 · 진행 = 그 단계가 된 시각 · 완료 = 시술 대기가 된 시각(바로 다음) → 아니면 KOS 상담 시작
+    procedure: str | None  # 대기 · 진행 · 완료(귀가 대기) = 그 단계가 된 시각 · 귀가 완료 뒤 = KOS 시술 작업 완료 시각
+    home: str | None  # 귀가 대기 · 귀가 완료가 된 시각
+
+
 class Flow(BaseModel):
     receptionAt: str | None
     roomTitle: str | None
     receptionBy: str | None
     consultation: Consultation | None
     stages: Stages
+    times: FlowTimes
 
 
 class Links(BaseModel):

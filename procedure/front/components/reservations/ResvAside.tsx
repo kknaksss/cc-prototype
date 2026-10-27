@@ -5,7 +5,7 @@
 import { useState } from 'react';
 import { Badge, Tabs, type BadgeVariant } from '@medisolve-ai/medikit';
 import type { ClinicItem, ResvBoard, ResvMain } from '@/lib/types';
-import { Flag, moneyOf, stateText } from './view';
+import { Flag, moneyOf, phaseOfSub, phaseStyle, stateText } from './view';
 
 export type ResvTab = 'requests' | 'clinic';
 const TABS = [
@@ -183,7 +183,8 @@ function ClinicCard({ item, onOpen }: { item: ClinicItem; onOpen: () => void }) 
             수납 필요
           </Badge>
         ) : (
-          <Badge variant={BADGE[item.state.main] ?? 'neutral'} size="sm" className={item.state.main === 'consultation' ? 'bg-cons-100 text-cons' : undefined}>
+          // 부상태 색 규칙(phaseStyle · E2E b3 #3) — 부상태 없으면 대기 꼴
+          <Badge variant={BADGE[item.state.main] ?? 'neutral'} size="sm" className={phaseStyle(item.state.main, phaseOfSub(item.state.sub) ?? 'waiting').chip}>
             {stateText(item.state)}
           </Badge>
         )}

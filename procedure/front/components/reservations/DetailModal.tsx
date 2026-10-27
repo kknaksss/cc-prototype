@@ -9,8 +9,8 @@ import { Badge, Button, Popover, PopoverContent, PopoverTrigger, type BadgeVaria
 import * as api from '@/lib/api';
 import { clearSession } from '@/lib/session';
 import { hm, pad } from '@/lib/time';
-import type { Personal, PreviousVisit, ReceiveRoute, ResvBoard, ResvDetail, ResvState } from '@/lib/types';
-import { Flag, NATION_OPTIONS, genderIcon, headOf, moneyOf, nationName } from './view';
+import type { Personal, PreviousVisit, ReceiveRoute, ResvBoard, ResvDetail, ResvMain, ResvState } from '@/lib/types';
+import { Flag, NATION_OPTIONS, genderIcon, headOf, moneyOf, nationName, phaseStyle, type Phase } from './view';
 import { DsDate, DsSelect, snsOptions } from './controls';
 
 const SETTLE_MS = 2000;
@@ -961,12 +961,13 @@ function FlowBlock({
           : '상담';
   const consActive = !!cons && (cons.state === 'waiting' || cons.state === 'doing');
   const pick = d.counselors.find((x) => x.staffId === s.consPick) ?? null;
-  const noCounselor = !!cons && !cons.counselor;
 
   const procName = { none: '시술', waiting: '시술 대기', doing: '시술 진행 중', done: '시술 완료' }[f.stages.procedure];
   const homeName = { none: '귀가', waiting: '귀가 대기', done: '귀가 완료' }[f.stages.home];
-  const procCur = f.stages.procedure === 'waiting' || f.stages.procedure === 'doing';
-  const homeCur = f.stages.home !== 'none';
+  // 단계 = 부상태 색 규칙(phaseStyle — 지난 단계 회색 · 지금 단계만 그 색 — E2E b3 #1 · #3). 접수 완료는 다음 단계가 시작되면 지난 단계
+  const recPhase: Phase = d.state.main === 'reception' ? 'waiting' : 'done';
+  // 단계 시각(E2E b3 #2) — back flow.times 값이 있을 때만(지어내지 않음)
+  const times = f.times ?? null;
   const st = d.settlement;
   // [+ 상담 추가](시안 M:415-521 · E2E #15) — 접수 뒤 · 취소 아님. 켜짐 = can.addConsultation(없으면 상담 대기 · 진행 중이 아닐 때)
   const showAddCons = !isClosedMain(d.state.main);
@@ -983,19 +984,19 @@ function FlowBlock({
         )}
       </div>
       {/* 단계 카드 = 한 줄 [제목] [상세] …… [HH:MM](E2E b2 #9) */}
-      <StageCard name="접수 완료" dot="bg-primary" detail={[f.roomTitle ? f.roomTitle + ' 배정' : null, f.receptionBy ? '데스크 ' + f.receptionBy : null].filter(Boolean).join(' · ') || '-'} at={f.receptionAt} />
+      <StageCard name="접수 완료" main="reception" phase={recPhase} detail={[f.roomTitle ? f.roomTitle + ' 배정' : null, f.receptionBy ? '데스크 ' + f.receptionBy : null].filter(Boolean).join(' · ') || '-'} at={f.receptionAt} />
 
       {/* 상담 카드(상담 필요 예약만 — §5.8) */}
       {cons && (
         <StageCard
           name={consTitle}
-          dot={consActive ? 'bg-cons' : cons.state === 'done' ? 'bg-ms-gray-400' : 'bg-ms-gray-300'}
-          tone={noCounselor && consActive ? 'bg-yellow-100 border-yellow-500' : consActive ? 'bg-primary-100 border-primary' : undefined}
+          main="consultation"
+          phase={cons.state}
           detail={
             (cons.counselor ? cons.counselor.name : '상담사를 선택하세요') +
             (cons.calledAt ? ' · ' + (cons.counselor?.name ?? '') + ' 실장 호출됨' + (cons.calledBy ? ' · 데스크 ' + cons.calledBy : '') : '')
           }
-          at={cons.state === 'doing' ? cons.since : (cons.calledAt ?? cons.since)}
+          at={times?.consultation ?? (cons.state === 'doing' ? cons.since : (cons.calledAt ?? cons.since))}
           action={
             consActive && d.counselors.length > 0 ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -1071,8 +1072,8 @@ function FlowBlock({
       )}
 
       {/* 단계 카드 2 — 시술 · 귀가(2계층 · D-11) */}
-      <StageCard name={procName} current={procCur} done={f.stages.procedure === 'done'} />
-      <StageCard name={homeName} current={homeCur} done={f.stages.home === 'done'} needPay={!!st && st.paymentRequiredCount > 0}>
+      <StageCard name={procName} main="procedure" phase={f.stages.procedure} at={times?.procedure} />
+      <StageCard name={homeName} main="home" phase={f.stages.home} at={times?.home} needPay={!!st && st.paymentRequiredCount > 0}>
         {d.state.main === 'home' && st && (
           <div className="bg-ms-white" style={{ borderRadius: 8, padding: 12, display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 8 }}>
@@ -1137,43 +1138,32 @@ function FlowBlock({
   );
 }
 
-// 내원 현황 단계 카드 — 한 줄 [점][제목][상세] …… [HH:MM][버튼](E2E b2 #9). 시술 · 귀가는 상세 · 시각 값이 없어 제목만(귀가 정산은 아래 children)
+// 내원 현황 단계 카드 — 한 줄 [점][제목][상세] …… [HH:MM][버튼](E2E b2 #9). 색 = phaseStyle(대기 연한 색 · 진행 채움 · 완료 회색 — E2E b3)
 function StageCard({
   name,
-  current = false,
-  done = false,
+  main,
+  phase,
   needPay,
-  dot,
-  tone,
   detail,
   at,
   action,
   children,
 }: {
   name: string;
-  current?: boolean;
-  done?: boolean;
+  main: ResvMain;
+  phase: Phase;
   needPay?: boolean;
-  dot?: string; // 점 색(주면 채운 점)
-  tone?: string; // 카드 배경 · 테두리
   detail?: string;
   at?: string | null;
   action?: React.ReactNode;
   children?: React.ReactNode;
 }) {
-  const box = tone ?? (current ? 'border-primary bg-primary-100' : 'border-ms-gray-300 bg-ms-white');
+  const ps = phaseStyle(main, phase);
   return (
-    <div className={box} style={{ flexShrink: 0, borderWidth: 1, borderStyle: 'solid', borderRadius: 8, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div className={ps.card} style={{ flexShrink: 0, borderWidth: 1, borderStyle: 'solid', borderRadius: 8, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-        {dot ? (
-          <span className={dot} style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0 }} />
-        ) : (
-          <span
-            className={current ? 'border-primary bg-primary' : done ? 'border-ms-gray-400 bg-ms-gray-400' : 'border-ms-gray-300 bg-ms-white'}
-            style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, borderWidth: 2, borderStyle: 'solid', boxSizing: 'border-box' }}
-          />
-        )}
-        <span className={'text-typo-heading-sm-600 ' + (dot || current ? (current ? 'text-primary' : 'text-ms-gray-800') : done ? 'text-ms-gray-600' : 'text-ms-gray-500')} style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>
+        <span className={ps.dot} style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, borderWidth: 2, borderStyle: 'solid', boxSizing: 'border-box' }} />
+        <span className={'text-typo-heading-sm-600 ' + ps.title} style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>
           {name}
         </span>
         {needPay && (
@@ -1181,11 +1171,11 @@ function StageCard({
             수납 필요
           </Badge>
         )}
-        <span className="text-typo-body-400 text-ms-gray-600" style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={detail}>
+        <span className={'text-typo-body-400 ' + ps.sub} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={detail}>
           {detail ?? ''}
         </span>
         {at && (
-          <span className="text-typo-body-500 text-ms-gray-600" style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', flexShrink: 0 }}>
+          <span className={'text-typo-body-500 ' + ps.sub} style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', flexShrink: 0 }}>
             {hm(at)}
           </span>
         )}

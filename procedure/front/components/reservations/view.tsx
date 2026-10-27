@@ -67,6 +67,42 @@ export function headOf(s: ResvState): { cls: string; style?: React.CSSProperties
   }
 }
 
+// ─── 부상태 색 규칙(E2E b3 #3) — 주 상태 색은 그대로 · 같은 색 안에서 진하기로. 예약 현황 전부 이 함수 하나로
+//   대기 = 연한 배경(100) + 그 색 글자 · 점 ○ / 진행 = 그 색 채움 + 흰 글자 · 점 ●(채운 카드 위라 흰 점) / 완료 = 회색(주 상태 무관) / 아직 = 흰 바탕 · 회색 ○
+// 클래스는 Tailwind 가 찾을 수 있게 글자 그대로 적는다
+export type Phase = 'none' | 'waiting' | 'doing' | 'done';
+const MAIN_TONE: Record<ResvMain, { fill: string; soft: string; text: string; border: string }> = {
+  reserved: { fill: 'bg-purple', soft: 'bg-purple-100', text: 'text-purple', border: 'border-purple' },
+  reception: { fill: 'bg-yellow', soft: 'bg-yellow-100', text: 'text-yellow', border: 'border-yellow' },
+  consultation: { fill: 'bg-cons', soft: 'bg-cons-100', text: 'text-cons', border: 'border-cons' },
+  procedure: { fill: 'bg-primary', soft: 'bg-primary-100', text: 'text-primary', border: 'border-primary' },
+  home: { fill: 'bg-ms-gray-600', soft: 'bg-ms-gray-200', text: 'text-ms-gray-700', border: 'border-ms-gray-600' },
+  canceled: { fill: 'bg-red', soft: 'bg-red-100', text: 'text-red', border: 'border-red' },
+  noshow: { fill: 'bg-red', soft: 'bg-red-100', text: 'text-red', border: 'border-red' },
+};
+export interface PhaseStyle {
+  chip: string; // 칩 · Badge(배경 + 글자)
+  dot: string; // 점(테두리 2px 원 — ○ 는 흰 속 · ● 는 채움)
+  card: string; // 내원 현황 단계 카드(배경 + 테두리)
+  title: string; // 카드 제목 글자
+  sub: string; // 카드 상세 · 시각 글자
+}
+export function phaseStyle(main: ResvMain, phase: Phase): PhaseStyle {
+  const t = MAIN_TONE[main];
+  switch (phase) {
+    case 'waiting':
+      return { chip: t.soft + ' ' + t.text, dot: 'bg-ms-white ' + t.border, card: t.soft + ' ' + t.border, title: t.text, sub: 'text-ms-gray-600' };
+    case 'doing':
+      return { chip: t.fill + ' text-ms-white', dot: 'bg-ms-white border-ms-white', card: t.fill + ' ' + t.border, title: 'text-ms-white', sub: 'text-ms-white' };
+    case 'done':
+      return { chip: 'bg-ms-gray-100 text-ms-gray-500', dot: 'bg-ms-gray-400 border-ms-gray-400', card: 'bg-ms-white border-ms-gray-300', title: 'text-ms-gray-500', sub: 'text-ms-gray-500' };
+    case 'none':
+      return { chip: 'bg-ms-gray-100 text-ms-gray-500', dot: 'bg-ms-white border-ms-gray-300', card: 'bg-ms-white border-ms-gray-300', title: 'text-ms-gray-400', sub: 'text-ms-gray-400' };
+  }
+}
+// 부상태 → 단계(부상태가 없으면 null — 칩을 그리지 않는다)
+export const phaseOfSub = (sub: ResvSub): Phase | null => (sub === 'waiting' ? 'waiting' : sub === 'doing' ? 'doing' : sub === 'done' ? 'done' : null);
+
 // 상태 글자 「상담 · 대기」 꼴
 export const stateText = (s: ResvState) => MAIN_NAME[s.main] + (s.sub ? ' · ' + SUB_NAME[s.sub] : '');
 export const isClosed = (s: ResvState) => s.main === 'canceled' || s.main === 'noshow';

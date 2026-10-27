@@ -121,6 +121,7 @@ const RESV_SETTLE_MS = 2_000;
 
 export interface ResvLive {
   board: ResvBoard | null;
+  prev: ResvBoard | null; // 날짜를 바꾼 뒤 새 응답 전까지 — 앞 날짜 표(흐리게 보인다 · E2E b2 #1)
   skew: number; // 서버 now - 브라우저 시각(ms)
   loading: boolean;
   error: string | null; // 마지막 GET 실패 문구(사본은 그대로 보인다)
@@ -187,5 +188,5 @@ export function useResvBoard(token: string | null, date: string | null): ResvLiv
   const b = state.board;
   const board = b && (date === null ? state.forDate === null || b.isToday : b.date === date) ? b : null;
   const settled = state.forDate === date;
-  return { board, skew: state.skew, loading: !board && !(settled && state.error), error: settled ? state.error : api.CONFIG_ERROR, refresh, refreshSoon };
+  return { board, prev: board ? null : b, skew: state.skew, loading: !board && !(settled && state.error), error: settled ? state.error : api.CONFIG_ERROR, refresh, refreshSoon };
 }

@@ -5,7 +5,7 @@
 // 스케줄 표 폴링에서 그 예약 상태가 바뀌었을 때(§6.7) · 열려 있는 동안 5초마다(KOS 수납 반영 — E2E #17)
 // 진행 경로 = 접수 때 고르는 ccc 값(기본 상담 필요 · [접수 완료] 요청에 실음 — E2E #13) · 접수 신분 조건 없음(E2E #12)
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Badge, Button, type BadgeVariant } from '@medisolve-ai/medikit';
+import { Badge, Button, Popover, PopoverContent, PopoverTrigger, type BadgeVariant } from '@medisolve-ai/medikit';
 import * as api from '@/lib/api';
 import { clearSession } from '@/lib/session';
 import { hm, pad } from '@/lib/time';
@@ -103,6 +103,8 @@ export function DetailModal({
 }) {
   const [d, setD] = useState<ResvDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [gone, setGone] = useState(false); // KOS 에서 사라진 예약(404) — 폴링 멈춤(E2E b2 #2)
+  const goneRef = useRef(false);
   const [busy, setBusy] = useState<string | null>(null);
 
   // 화면 칸 — 고친 것만 들고 있다(다시 부르기가 입력을 덮지 않게)
@@ -115,7 +117,7 @@ export function DetailModal({
   const [cancelOpen, setCancelOpen] = useState(false);
   const [consOpen, setConsOpen] = useState(false);
   const [consPick, setConsPick] = useState<number | null>(null);
-  const [openVisit, setOpenVisit] = useState<number | null>(null);
+  const [closedVisits, setClosedVisits] = useState<number[]>([]); // 이전 방문 = 기본 전부 펼침 · 접은 것만(E2E b2 #7)
   const [receiveError, setReceiveError] = useState<string | null>(null);
   const [route, setRoute] = useState<ReceiveRoute>('consultation');
 
@@ -135,6 +137,11 @@ export function DetailModal({
           clearSession();
           return;
         }
+        if (e instanceof api.ApiError && e.status === 404) {
+          goneRef.current = true;
+          setGone(true);
+          return;
+        }
         setLoadError(e instanceof Error ? e.message : '예약을 불러오지 못했어요');
       });
   }, [reservationId]);
@@ -147,7 +154,7 @@ export function DetailModal({
   useEffect(() => {
     load();
     const t = setInterval(() => {
-      if (busyRef.current === null) load();
+      if (busyRef.current === null && !goneRef.current) load();
     }, POLL_MS);
     return () => clearInterval(t);
   }, [load]);
@@ -173,13 +180,14 @@ export function DetailModal({
   useEffect(() => {
     if (!sig || sig === lastSig.current) return;
     lastSig.current = sig;
-    load();
+    if (!goneRef.current) load();
   }, [sig, load]);
 
   // Esc 로 닫기
   useEffect(() => {
     const on = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      // 팝오버(상담사 · DS 드롭다운 · 달력)가 열려 있으면 Esc 는 그것만 닫는다
+      if (e.key === 'Escape' && !document.querySelector('[data-radix-popper-content-wrapper]')) onClose();
     };
     window.addEventListener('keydown', on);
     return () => window.removeEventListener('keydown', on);
@@ -223,7 +231,14 @@ export function DetailModal({
           </button>
         </div>
 
-        {!d ? (
+        {gone ? (
+          <div style={{ padding: 24, display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span className="text-typo-body-500 text-ms-gray-800">KOS 에서 사라진 예약이에요</span>
+            <Button variant="outlined" color="gray" size="sm" onClick={onClose}>
+              닫기
+            </Button>
+          </div>
+        ) : !d ? (
           <div style={{ padding: 24, display: 'flex', alignItems: 'center', gap: 12 }}>
             <span className={'text-typo-body-400 ' + (loadError ? 'text-red' : 'text-ms-gray-500')}>{loadError ?? '불러오는 중…'}</span>
             {loadError && (
@@ -240,7 +255,7 @@ export function DetailModal({
             onError={onError}
             onClose={onClose}
             reload={load}
-            state={{ edits, setEdits, unlock, setUnlock, memo, setMemo, remark, setRemark, roomPick, setRoomPick, roomOpen, setRoomOpen, cancelOpen, setCancelOpen, consOpen, setConsOpen, consPick, setConsPick, openVisit, setOpenVisit, receiveError, setReceiveError, route, setRoute, setBusy }}
+            state={{ edits, setEdits, unlock, setUnlock, memo, setMemo, remark, setRemark, roomPick, setRoomPick, roomOpen, setRoomOpen, cancelOpen, setCancelOpen, consOpen, setConsOpen, consPick, setConsPick, closedVisits, setClosedVisits, receiveError, setReceiveError, route, setRoute, setBusy }}
             onChanged={onChanged}
             reloadSoon={reloadSoon}
             optimistic={(x) => {
@@ -274,8 +289,8 @@ interface UiState {
   setConsOpen: (v: boolean) => void;
   consPick: number | null;
   setConsPick: (v: number | null) => void;
-  openVisit: number | null;
-  setOpenVisit: (v: number | null) => void;
+  closedVisits: number[];
+  setClosedVisits: (v: number[]) => void;
   receiveError: string | null;
   setReceiveError: (v: string | null) => void;
   route: ReceiveRoute;
@@ -480,7 +495,7 @@ function Body({
             />
           </div>
           <div style={{ flex: 1, padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {pre ? <Visits visits={d.previousVisits} open={s.openVisit} onOpen={s.setOpenVisit} /> : <FlowBlock d={d} s={s} busy={busy} run={run} onClose={onClose} />}
+            {pre ? <Visits visits={d.previousVisits} closed={s.closedVisits} onClosed={s.setClosedVisits} /> : <FlowBlock d={d} s={s} busy={busy} run={run} onClose={onClose} />}
           </div>
         </div>
       </div>
@@ -562,30 +577,35 @@ function Body({
                     {d.zoneTitle ?? ''} · 빈 방 {freeRooms}개
                   </span>
                 </div>
-                <div style={{ maxHeight: 320, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 4, padding: 6 }}>
-                  {d.rooms.map((r) => {
-                    const on = r.roomId === roomId;
-                    return (
-                      <button
-                        key={r.roomId}
-                        type="button"
-                        disabled={r.busy}
-                        onClick={() => {
-                          s.setRoomPick(r.roomId);
-                          s.setRoomOpen(false);
-                        }}
-                        className={on ? 'bg-primary-100 border-primary' : r.busy ? 'bg-ms-gray-100 border-ms-gray-200' : 'bg-ms-white border-ms-gray-200'}
-                        style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', minHeight: 44, boxSizing: 'border-box', borderWidth: 1, borderStyle: 'solid', borderRadius: 8, cursor: r.busy ? 'not-allowed' : 'pointer', textAlign: 'left', fontFamily: 'inherit' }}
-                      >
-                        <span className={'text-typo-body-600 ' + (r.busy ? 'text-ms-gray-500' : 'text-ms-gray-800')} style={{ flex: 1, minWidth: 0 }}>
-                          {r.title}
-                        </span>
-                        <span className={'text-typo-caption-md-600 ' + (on ? 'text-primary' : r.busy ? 'text-red' : 'text-ms-gray-500')} style={{ whiteSpace: 'nowrap' }}>
-                          {on ? '선택됨' : r.busy ? '사용 중' : '비어있음'}
-                        </span>
-                      </button>
-                    );
-                  })}
+                {/* 시안 M:1826-1832 · M:552-560 — 빈 방 먼저 정렬 + column-reverse = 사용 중(회색) 위 · 빈 방 아래 · 한 열 · [이름 64][사용자][상태] */}
+                <div style={{ maxHeight: 320, overflow: 'auto', display: 'flex', flexDirection: 'column-reverse', padding: 6 }}>
+                  {[...d.rooms]
+                    .sort((a, b) => Number(a.busy) - Number(b.busy))
+                    .map((r) => {
+                      const on = r.roomId === roomId;
+                      return (
+                        <button
+                          key={r.roomId}
+                          type="button"
+                          disabled={r.busy}
+                          onClick={() => {
+                            s.setRoomPick(r.roomId);
+                            s.setRoomOpen(false);
+                          }}
+                          className={on ? 'bg-primary-100 border-primary' : r.busy ? 'bg-ms-gray-100 border-ms-gray-100' : 'bg-ms-white border-ms-white'}
+                          style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', minHeight: 44, boxSizing: 'border-box', borderWidth: 1, borderStyle: 'solid', borderRadius: 8, cursor: r.busy ? 'not-allowed' : 'pointer', textAlign: 'left', fontFamily: 'inherit' }}
+                        >
+                          <span className="text-typo-body-600 text-ms-gray-800" style={{ minWidth: 64, flexShrink: 0, whiteSpace: 'nowrap' }}>
+                            {r.title}
+                          </span>
+                          {/* 시안의 사용 중 고객 이름 칸 — 응답에 값이 없어 비움 */}
+                          <span className="text-typo-body-400 text-ms-gray-600" style={{ minWidth: 0, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} />
+                          <span className={r.busy ? 'text-typo-body-400 text-ms-gray-500' : 'text-typo-body-500 text-primary'} style={{ whiteSpace: 'nowrap' }}>
+                            {r.busy ? '사용 중' : on ? '선택됨' : '비어있음'}
+                          </span>
+                        </button>
+                      );
+                    })}
                   {!d.rooms.length && <span className="text-typo-body-400 text-ms-gray-500" style={{ padding: 8 }}>이 구역 방이 없어요</span>}
                 </div>
               </div>
@@ -784,7 +804,13 @@ function Health({ d }: { d: ResvDetail }) {
   );
 }
 
-// ── 이전 방문(§5.13) — 최신 순 · 펼침
+// KOS 영문 상태 → 한글 표시(값 판정은 back 그대로 — E2E b2 #8). 모르는 값은 원문
+const RESV_STATUS_KO: Record<string, string> = { RESERVED: '예약', IN_PROGRESS: '진행 중', COMPLETED: '방문 완료', NO_SHOW: '노쇼', CANCELED: '취소' };
+const TASK_STATUS_KO: Record<string, string> = { NOT_STARTED: '시작 전', WAITING: '대기', READY: '진행', DONE: '완료', CANCELED: '취소' };
+const resvStatusText = (v: string | null) => (v ? (RESV_STATUS_KO[v] ?? v) : '-');
+const taskStatusText = (v: string | null) => (v ? (TASK_STATUS_KO[v] ?? v) : null);
+
+// ── 이전 방문(§5.13) — 최신 순 · 기본 전부 펼침
 const RESULT: Record<PreviousVisit['result'], { text: string; variant: BadgeVariant }> = {
   completed: { text: '방문 완료', variant: 'neutral' },
   noshow: { text: '노쇼', variant: 'danger' },
@@ -792,7 +818,7 @@ const RESULT: Record<PreviousVisit['result'], { text: string; variant: BadgeVari
   other: { text: '', variant: 'neutral' },
 };
 
-function Visits({ visits, open, onOpen }: { visits: PreviousVisit[]; open: number | null; onOpen: (i: number | null) => void }) {
+function Visits({ visits, closed, onClosed }: { visits: PreviousVisit[]; closed: number[]; onClosed: (v: number[]) => void }) {
   return (
     <>
       <span className="text-typo-heading-sm-600 text-ms-gray-800" style={{ flexShrink: 0 }}>
@@ -804,18 +830,18 @@ function Visits({ visits, open, onOpen }: { visits: PreviousVisit[]; open: numbe
         </div>
       )}
       {visits.map((v, i) => {
-        const on = open === i;
+        const on = !closed.includes(i);
         const r = RESULT[v.result];
         const rows = [
           { k: '예약 메모', v: v.reservationMemo },
           { k: '상담 메모', v: v.consultationMemo },
-          { k: '시술 내역', v: v.procedures.map((p) => [p.title, p.status, p.doctors.join(', ')].filter(Boolean).join(' · ')).join('\n') },
+          { k: '시술 내역', v: v.procedures.map((p) => [p.title, taskStatusText(p.status), p.doctors.join(', ')].filter(Boolean).join(' · ')).join('\n') },
         ];
         return (
           <div key={i} className="border-ms-gray-300" style={{ flexShrink: 0, borderWidth: 1, borderStyle: 'solid', borderRadius: 8, overflow: 'hidden' }}>
             <button
               type="button"
-              onClick={() => onOpen(on ? null : i)}
+              onClick={() => onClosed(on ? [...closed, i] : closed.filter((x) => x !== i))}
               aria-expanded={on}
               className="bg-ms-gray-100 border-ms-gray-200"
               style={{ width: '100%', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 10, borderWidth: 0, borderBottomWidth: on ? 1 : 0, borderBottomStyle: 'solid', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit' }}
@@ -830,7 +856,7 @@ function Visits({ visits, open, onOpen }: { visits: PreviousVisit[]; open: numbe
                 {v.procedures.map((p) => p.title).join(', ')}
               </span>
               <Badge variant={r.variant} size="sm" className={v.result === 'other' ? 'text-ms-gray-500' : undefined}>
-                {v.result === 'other' ? (v.resultRaw ?? '-') : r.text}
+                {v.result === 'other' ? resvStatusText(v.resultRaw) : r.text}
               </Badge>
             </button>
             {on && (
@@ -929,7 +955,7 @@ function FlowBlock({
     : cons.state === 'waiting'
       ? '상담 대기'
       : cons.state === 'doing'
-        ? '상담 진행 중' + (cons.since ? ' · ' + hm(cons.since) : '')
+        ? '상담 진행 중'
         : cons.state === 'done'
           ? '상담 완료'
           : '상담';
@@ -956,100 +982,92 @@ function FlowBlock({
           </Button>
         )}
       </div>
-      <div className="border-ms-gray-300" style={{ flexShrink: 0, borderWidth: 1, borderStyle: 'solid', borderRadius: 8, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 12 }}>
-        <span className="bg-primary" style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0 }} />
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
-          <span className="text-typo-heading-sm-600 text-ms-gray-800">접수 완료</span>
-          <span className="text-typo-body-400 text-ms-gray-600">
-            {[f.roomTitle ? f.roomTitle + ' 배정' : null, f.receptionBy ? '데스크 ' + f.receptionBy : null].filter(Boolean).join(' · ') || '-'}
-          </span>
-        </div>
-        <span className="text-typo-body-500 text-ms-gray-600" style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
-          {f.receptionAt ? hm(f.receptionAt) : ''}
-        </span>
-      </div>
+      {/* 단계 카드 = 한 줄 [제목] [상세] …… [HH:MM](E2E b2 #9) */}
+      <StageCard name="접수 완료" dot="bg-primary" detail={[f.roomTitle ? f.roomTitle + ' 배정' : null, f.receptionBy ? '데스크 ' + f.receptionBy : null].filter(Boolean).join(' · ') || '-'} at={f.receptionAt} />
 
       {/* 상담 카드(상담 필요 예약만 — §5.8) */}
       {cons && (
-        <div style={{ flexShrink: 0 }}>
-          <div
-            className={noCounselor && consActive ? 'bg-yellow-100 border-yellow-500' : consActive ? 'bg-primary-100 border-primary' : 'bg-ms-white border-ms-gray-300'}
-            style={{ borderWidth: 1, borderStyle: 'solid', borderRadius: 8, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 12 }}
-          >
-            <span className={consActive ? 'bg-cons' : cons.state === 'done' ? 'bg-ms-gray-400' : 'bg-ms-gray-300'} style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0 }} />
-            <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <span className="text-typo-heading-sm-600 text-ms-gray-800">{consTitle}</span>
-              <span className="text-typo-body-400 text-ms-gray-600">
-                {cons.counselor ? cons.counselor.name : '상담사를 선택하세요'}
-                {cons.calledAt ? ' · ' + (cons.counselor?.name ?? '') + ' 실장 호출됨 · ' + hm(cons.calledAt) + (cons.calledBy ? ' · 데스크 ' + cons.calledBy : '') : ''}
-              </span>
-            </div>
-            {consActive && d.counselors.length > 0 && (
-              <button
-                type="button"
-                onClick={() => s.setConsOpen(!s.consOpen)}
-                aria-expanded={s.consOpen}
-                className="bg-ms-white border-ms-gray-300 text-ms-gray-800"
-                style={{ height: 36, padding: '0 12px', borderWidth: 1, borderStyle: 'solid', borderRadius: 8, cursor: 'pointer', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'inherit' }}
-              >
-                <span className="text-typo-body-500">{cons.counselor ? '상담사 변경' : '상담사 선택'}</span>
-                <span style={{ fontSize: 11 }}>▾</span>
-              </button>
-            )}
-          </div>
-          {s.consOpen && consActive && (
-            <div className="bg-ms-white border-ms-gray-200" style={{ marginTop: 6, width: '100%', boxSizing: 'border-box', borderWidth: 1, borderStyle: 'solid', borderRadius: 10, boxShadow: '0 8px 28px rgba(0,0,0,0.14)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-              <div className="border-ms-gray-200" style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, padding: '12px 16px', borderBottomWidth: 1, borderBottomStyle: 'solid' }}>
-                <span className="text-typo-heading-md-500 text-ms-gray-800">상담사 호출</span>
-                <span className="text-typo-body-400 text-ms-gray-500">{f.roomTitle ?? ''}</span>
-              </div>
-              <div style={{ maxHeight: 260, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 2, padding: 4 }}>
-                {d.counselors.map((x) => {
-                  const on = s.consPick === x.staffId;
-                  return (
-                    <div
-                      key={x.staffId}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => s.setConsPick(on ? null : x.staffId)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') s.setConsPick(on ? null : x.staffId);
-                      }}
-                      className={on ? 'bg-primary-100 border-primary' : 'bg-ms-white border-ms-white'}
-                      style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', minHeight: 44, boxSizing: 'border-box', borderWidth: 1, borderStyle: 'solid', borderRadius: 8, cursor: 'pointer' }}
+        <StageCard
+          name={consTitle}
+          dot={consActive ? 'bg-cons' : cons.state === 'done' ? 'bg-ms-gray-400' : 'bg-ms-gray-300'}
+          tone={noCounselor && consActive ? 'bg-yellow-100 border-yellow-500' : consActive ? 'bg-primary-100 border-primary' : undefined}
+          detail={
+            (cons.counselor ? cons.counselor.name : '상담사를 선택하세요') +
+            (cons.calledAt ? ' · ' + (cons.counselor?.name ?? '') + ' 실장 호출됨' + (cons.calledBy ? ' · 데스크 ' + cons.calledBy : '') : '')
+          }
+          at={cons.state === 'doing' ? cons.since : (cons.calledAt ?? cons.since)}
+          action={
+            consActive && d.counselors.length > 0 ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                {/* 상담사 고르기 = 팝오버(portal · 모달 위 · 아래 자리 모자라면 위로 — E2E b2 #4). 고르면 닫히고 [실장 호출] */}
+                <Popover open={s.consOpen} onOpenChange={s.setConsOpen}>
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      aria-expanded={s.consOpen}
+                      className="bg-ms-white border-ms-gray-300 text-ms-gray-800"
+                      style={{ height: 36, padding: '0 12px', borderWidth: 1, borderStyle: 'solid', borderRadius: 8, cursor: 'pointer', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'inherit' }}
                     >
-                      <span className="bg-cons-100 text-cons" style={{ width: 28, height: 28, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700 }}>
-                        {x.name.slice(0, 1)}
-                      </span>
-                      <span className="text-typo-body-500 text-ms-gray-800" style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {x.name}
-                      </span>
-                      <span className={'text-typo-caption-md-500 ' + (x.busyRoom ? 'text-cons' : 'text-ms-gray-500')} style={{ marginLeft: 'auto', whiteSpace: 'nowrap' }}>
-                        {x.busyRoom ? x.busyRoom + ' 상담 중' : '비어있음'}
-                      </span>
+                      <span className="text-typo-body-500">{pick ? pick.name : cons.counselor ? '상담사 변경' : '상담사 선택'}</span>
+                      <span style={{ fontSize: 11 }}>▾</span>
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent align="end" side="bottom" avoidCollisions collisionPadding={12} className="p-0" style={{ width: 320 }}>
+                    <div className="border-ms-gray-200" style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, padding: '12px 16px', borderBottomWidth: 1, borderBottomStyle: 'solid' }}>
+                      <span className="text-typo-heading-md-500 text-ms-gray-800">상담사 호출</span>
+                      <span className="text-typo-body-400 text-ms-gray-500">{f.roomTitle ?? ''}</span>
                     </div>
-                  );
-                })}
+                    <div style={{ maxHeight: 260, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 2, padding: 4 }}>
+                      {d.counselors.map((x) => {
+                        const on = s.consPick === x.staffId;
+                        return (
+                          <div
+                            key={x.staffId}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => {
+                              s.setConsPick(x.staffId);
+                              s.setConsOpen(false);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                s.setConsPick(x.staffId);
+                                s.setConsOpen(false);
+                              }
+                            }}
+                            className={on ? 'bg-primary-100 border-primary' : 'bg-ms-white border-ms-white'}
+                            style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', minHeight: 44, boxSizing: 'border-box', borderWidth: 1, borderStyle: 'solid', borderRadius: 8, cursor: 'pointer' }}
+                          >
+                            <span className="bg-cons-100 text-cons" style={{ width: 28, height: 28, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700 }}>
+                              {x.name.slice(0, 1)}
+                            </span>
+                            <span className="text-typo-body-500 text-ms-gray-800" style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {x.name}
+                            </span>
+                            <span className={'text-typo-caption-md-500 ' + (x.busyRoom ? 'text-cons' : 'text-ms-gray-500')} style={{ marginLeft: 'auto', whiteSpace: 'nowrap' }}>
+                              {x.busyRoom ? x.busyRoom + ' 상담 중' : '비어있음'}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+                {pick && (
+                  <Button
+                    variant="solid"
+                    color="blue"
+                    size="sm"
+                    disabled={!d.can.callCounselor || busy !== null}
+                    onClick={() => void run('counselor', () => api.callCounselor(d.reservationId, pick.staffId), pick.name + ' 실장 호출', () => s.setConsPick(null))}
+                  >
+                    {busy === 'counselor' ? '호출 중…' : pick.name + ' 실장 호출'}
+                  </Button>
+                )}
               </div>
-              <div data-fill-buttons="true" className="border-ms-gray-200" style={{ display: 'grid', padding: 12, borderTopWidth: 1, borderTopStyle: 'solid' }}>
-                <Button
-                  variant="solid"
-                  color="blue"
-                  disabled={!pick || !d.can.callCounselor || busy !== null}
-                  onClick={() => {
-                    if (!pick) return;
-                    void run('counselor', () => api.callCounselor(d.reservationId, pick.staffId), pick.name + ' 실장 호출', () => {
-                      s.setConsOpen(false);
-                      s.setConsPick(null);
-                    });
-                  }}
-                >
-                  {busy === 'counselor' ? '호출 중…' : pick ? pick.name + ' 실장 호출' : '상담사를 고르세요'}
-                </Button>
-              </div>
-            </div>
-          )}
-        </div>
+            ) : null
+          }
+        />
       )}
 
       {/* 단계 카드 2 — 시술 · 귀가(2계층 · D-11) */}
@@ -1119,23 +1137,59 @@ function FlowBlock({
   );
 }
 
-function StageCard({ name, current, done, needPay, children }: { name: string; current: boolean; done: boolean; needPay?: boolean; children?: React.ReactNode }) {
+// 내원 현황 단계 카드 — 한 줄 [점][제목][상세] …… [HH:MM][버튼](E2E b2 #9). 시술 · 귀가는 상세 · 시각 값이 없어 제목만(귀가 정산은 아래 children)
+function StageCard({
+  name,
+  current = false,
+  done = false,
+  needPay,
+  dot,
+  tone,
+  detail,
+  at,
+  action,
+  children,
+}: {
+  name: string;
+  current?: boolean;
+  done?: boolean;
+  needPay?: boolean;
+  dot?: string; // 점 색(주면 채운 점)
+  tone?: string; // 카드 배경 · 테두리
+  detail?: string;
+  at?: string | null;
+  action?: React.ReactNode;
+  children?: React.ReactNode;
+}) {
+  const box = tone ?? (current ? 'border-primary bg-primary-100' : 'border-ms-gray-300 bg-ms-white');
   return (
-    <div
-      className={current ? 'border-primary bg-primary-100' : 'border-ms-gray-300 bg-ms-white'}
-      style={{ flexShrink: 0, borderWidth: 1, borderStyle: 'solid', borderRadius: 8, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 12 }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <span
-          className={current ? 'border-primary bg-primary' : done ? 'border-ms-gray-400 bg-ms-gray-400' : 'border-ms-gray-300 bg-ms-white'}
-          style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, borderWidth: 2, borderStyle: 'solid', boxSizing: 'border-box' }}
-        />
-        <span className={'text-typo-heading-sm-600 ' + (current ? 'text-primary' : done ? 'text-ms-gray-600' : 'text-ms-gray-500')}>{name}</span>
+    <div className={box} style={{ flexShrink: 0, borderWidth: 1, borderStyle: 'solid', borderRadius: 8, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+        {dot ? (
+          <span className={dot} style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0 }} />
+        ) : (
+          <span
+            className={current ? 'border-primary bg-primary' : done ? 'border-ms-gray-400 bg-ms-gray-400' : 'border-ms-gray-300 bg-ms-white'}
+            style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, borderWidth: 2, borderStyle: 'solid', boxSizing: 'border-box' }}
+          />
+        )}
+        <span className={'text-typo-heading-sm-600 ' + (dot || current ? (current ? 'text-primary' : 'text-ms-gray-800') : done ? 'text-ms-gray-600' : 'text-ms-gray-500')} style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>
+          {name}
+        </span>
         {needPay && (
           <Badge variant="danger" size="sm">
             수납 필요
           </Badge>
         )}
+        <span className="text-typo-body-400 text-ms-gray-600" style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={detail}>
+          {detail ?? ''}
+        </span>
+        {at && (
+          <span className="text-typo-body-500 text-ms-gray-600" style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', flexShrink: 0 }}>
+            {hm(at)}
+          </span>
+        )}
+        {action}
       </div>
       {children}
     </div>

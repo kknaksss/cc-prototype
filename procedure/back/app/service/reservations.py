@@ -67,6 +67,7 @@ from app.service import kos_errors
 
 log = logging.getLogger("procedure.resv")
 
+GONE = "KOS 에서 사라진 예약이에요"
 PIN_SEC = 5  # 먼저 실은 단계를 지키는 창(KOS 반영 0 ~ 3초 · r2 W1)
 PATH_VISITORS = "visitor/v2/queries/get-visitors"
 PATH_VISITOR = "visitor/v2/queries/get-visitor"
@@ -96,9 +97,13 @@ def _date10(v: Any) -> str | None:
     return str(v)[:10] if isinstance(v, str) and len(v) >= 10 else None
 
 
-def _counselors(staff, system_kos: str | None):
-    """상담사 목록(D-36) = role_tags 에 COUNSELOR · 활성 · 시스템 계정 뺌."""
-    return [x for x in staff if "COUNSELOR" in x.role_tags and x.active and x.kos_id != system_kos]
+def _counselors(staff, system_kos: str | None, exclude: set[str]):
+    """상담사 목록(D-36) = role_tags 에 COUNSELOR · 활성 · 시스템 계정 · 제외 목록(`KOS_EXCLUDE_ACCOUNT_IDS`) 뺌.
+
+    시술 현황 원장 목록(`set_doctor_flags`)과 같은 규칙 — 마취용 등은 제외 목록으로 뺀다(E2E b2 #5).
+    """
+    return [x for x in staff if "COUNSELOR" in x.role_tags and x.active and x.kos_id != system_kos
+            and x.kos_id not in exclude]
 
 
 
@@ -229,6 +234,7 @@ class ReservationService:
         self.repo = repo
         self.clock = clock
         self._kos = kos  # () → KosRuntime | None(시험이 런타임을 바꿔 끼워도 따라간다)
+        self._gone_logged: set[str] = set()  # 404 를 이미 로그에 남긴 일정
         self._pins: dict[str, tuple[str, datetime, datetime]] = {}  # kos_id → (단계, 실은 시각, 풀 시각) — 반영 지연 창
 
     # ------------------------------------------------------------------ KOS
@@ -403,7 +409,7 @@ class ReservationService:
         return ReservationForm.model_validate({
             "staff": [{"staffId": x.id, "name": x.name} for x in active],
             "defaultAssigneeStaffId": sys_staff.id if sys_staff else None,
-            "counselors": [{"staffId": x.id, "name": x.name} for x in _counselors(staff, system_kos)],
+            "counselors": [{"staffId": x.id, "name": x.name} for x in _counselors(staff, system_kos, exclude)],
             "funnels": [{"funnelId": f.id, "name": f.name} for f in funnels],
             "zones": zones, "defaultZoneId": default, "snsTypes": list(SNS_TYPES)})
 
@@ -465,7 +471,7 @@ class ReservationService:
         if r.day:
             await self.ensure_day(date.fromisoformat(r.day))
         if self.runtime is not None:  # 그 일정만 KOS 에서 바로(캐시 없이) — 열린 모달 폴링이 수납 · 단계를 곧바로 본다(10-27 #17)
-            await self.refresh_schedule(r.kos_id, r.day)
+            await self.refresh_schedule(r.kos_id, r.day, gone=True)
         with self.repo.tx() as tx:
             r = self._reservation(tx, reservation_id)
         main, sub = state_of(r.status, r.flow_step)
@@ -501,7 +507,7 @@ class ReservationService:
         counselors = []
         if flow is not None and flow["consultation"] is not None:
             counselors = [{"staffId": x.id, "name": x.name, "busyRoom": counselor_busy_room(today_resvs, x.kos_id)}
-                          for x in _counselors(staff, system[2] if system else None)]
+                          for x in _counselors(staff, system[2] if system else None, self.s.exclude_account_ids)]
         settlement = None
         if main == "home":
             settlement = {"paymentRequiredCount": pay, "amount": reads["amount"], "prescriptionCount": len(r.prescription_ids),
@@ -667,13 +673,24 @@ class ReservationService:
                 if d:
                     self.sync.invalidate(d)
 
-    async def refresh_schedule(self, kos_id: str, fallback_day: str | None = None) -> int | None:
-        """일정 1건을 KOS 에서 다시 읽어 사본에 덮어쓴다(내부 get-schedule-detail) → reservation id. 실패는 None."""
+    async def refresh_schedule(self, kos_id: str, fallback_day: str | None = None, *, gone: bool = False) -> int | None:
+        """일정 1건을 KOS 에서 다시 읽어 사본에 덮어쓴다(내부 get-schedule-detail) → reservation id. 실패는 None.
+
+        gone = KOS 404 면 404 `reservation_gone`(상세 · E2E b2 #2). 로그는 일정마다 한 번만(폴링 반복 막기).
+        등록 직후 다시 읽기는 gone=False — 만든 직후 잠깐 404 가 온다(§3 데모 시험).
+        사본은 건드리지 않는다(만든 직후 404 일 수 있음 · 날짜 조회가 목록으로 맞춘다).
+        """
         try:
             resp = await self.client().internal(PATH_DETAIL, {"scheduleId": kos_id})
         except Exception as e:
+            if gone and isinstance(e, KosError) and e.status == 404:
+                if kos_id not in self._gone_logged:
+                    self._gone_logged.add(kos_id)
+                    log.info("KOS 에 없는 일정(404) — 상세는 reservation_gone")
+                raise NotFound(GONE, code="reservation_gone") from None
             log.warning("KOS 일정 다시 읽기 실패: %s", kos_errors.describe(e))
             return None
+        self._gone_logged.discard(kos_id)
         data = resp.get("data")
         if not isinstance(data, dict):
             return None
@@ -725,7 +742,8 @@ class ReservationService:
         counselor = None
         if body.counselorStaffId is not None:
             st = staff.get(body.counselorStaffId)
-            if st is None or st not in _counselors(list(staff.values()), system[2] if system else None):
+            if st is None or st not in _counselors(list(staff.values()), system[2] if system else None,
+                                                                  self.s.exclude_account_ids):
                 raise BadRequest("invalid_request", "counselorStaffId: 상담사 목록에 없는 직원이에요")
             counselor = {"id": st.kos_id, "name": st.name}
         discharge = None

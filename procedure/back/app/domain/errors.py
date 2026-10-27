@@ -27,8 +27,8 @@ class Forbidden(DomainError):
 class NotFound(DomainError):
     status = 404
 
-    def __init__(self, message: str = "없는 id 예요"):
-        super().__init__("not_found", message)
+    def __init__(self, message: str = "없는 id 예요", code: str = "not_found"):
+        super().__init__(code, message)
 
 
 class Conflict(DomainError):

@@ -317,3 +317,36 @@ def test_detail_reads_schedule_fresh_every_time(env):
     d = run(c.resv.detail(d.reservationId))
     assert fake.paths().count("get-schedule-detail") == n + 1
     assert d.settlement.paymentRequiredCount == 0 and d.can.discharge
+
+
+def test_detail_kos_gone_404_logged_once(env, caplog):
+    """E2E b2 #2 — 상세가 다시 읽은 일정이 KOS 에 없으면(404) 404 reservation_gone · 로그는 일정마다 한 번 · WARNING 없음."""
+    c, fake, _ = env
+    d = detail(c, fake, "s1")
+    fake.resv.remove(fake._resv_sch("s1"))
+    caplog.set_level("INFO", logger="procedure.resv")
+    for _ in range(3):  # 모달 폴링
+        with pytest.raises(NotFound) as e:
+            run(c.resv.detail(d.reservationId))
+        assert (e.value.code, e.value.message) == ("reservation_gone", "KOS 에서 사라진 예약이에요")
+    mine = [r for r in caplog.records if r.name == "procedure.resv"]
+    assert len(mine) == 1 and mine[0].levelname == "INFO"
+
+
+def test_counselors_exclude_system_and_excluded_accounts(env):
+    """E2E b2 #5 — 상담사 목록에서 시스템 계정 · 제외 목록(마취용 등) 뺌 · 그 밖 COUNSELOR 태그는 그대로."""
+    c, fake, _ = env
+    with c.repo.tx() as tx:
+        for kos in ("cs-1", "anes-0", "cs-2"):
+            tx.upsert("staff", kos, {"name": kos, "role_tags": ["COUNSELOR"], "active": True})
+        sys_id = tx.token("internal")[2]
+        tx.upsert("staff", sys_id, {"role_tags": ["DOCTOR", "ADMIN", "COUNSELOR"]})
+    f = run(c.resv.form(None, None, None))
+    assert [x.name for x in f.counselors] == ["cs-1", "cs-2"]
+    d = detail(c, fake, "s1", flow="CONSULTATION_WAITING", status="IN_PROGRESS")
+    assert [x.name for x in d.counselors] == ["cs-1", "cs-2"]
+    with c.repo.tx() as tx:
+        sid = {s.kos_id: s.id for s in tx.staff()}
+    with pytest.raises(Conflict) as e:
+        run(c.reception.counselor_call(DESK, d.reservationId, sid["anes-0"]))
+    assert e.value.code == "not_counselor"

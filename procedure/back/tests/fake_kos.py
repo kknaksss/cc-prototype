@@ -234,7 +234,8 @@ class ResvFake:
         if name == "get-schedule-detail":
             self._tick_reads()
             x = self._resv_sch(body.get("scheduleId"))
-            return httpx.Response(200, json={"data": _public([x])[0]}) if x else httpx.Response(400, json={})
+            return httpx.Response(200, json={"data": _public([x])[0]}) if x else httpx.Response(  # 실 KOS = 404(b2 #2)
+                404, json={"className": "com.x.NotFoundException"})
         if name == "find-duplicated-visitor":
             for v in self.visitors.values():
                 if v["name"] == body.get("name") and body.get("birthDateUtc") and v.get("dateOfBirth"):

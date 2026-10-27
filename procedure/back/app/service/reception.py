@@ -216,7 +216,7 @@ class ReceptionService:
         main = state_of(r.status, r.flow_step)[0]
         if r.flow_step not in ("CONSULTATION_WAITING", "CONSULTATION") or main in CLOSED_MAINS:
             raise Conflict("not_consultation", "상담 단계가 아니에요")
-        if st not in _counselors(staff, system[2] if system else None):
+        if st not in _counselors(staff, system[2] if system else None, self.resv.s.exclude_account_ids):
             raise Conflict("not_counselor", "상담사가 아니에요")
         await self.resv.kos_write(actor, "update-reservation", self.resv.client().internal(
             PATH_UPDATE, {"scheduleId": r.kos_id, "counselor": {"id": st.kos_id, "name": st.name}}), reservation_id=r.id)

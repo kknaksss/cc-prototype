@@ -62,9 +62,11 @@ export default function ReservationsLivePage() {
     return () => clearTimeout(t);
   }, [toast]);
 
-  const raw = live.board;
+  // 날짜를 바꾸면 바로 GET(폴링 안 기다림) · 응답 전엔 앞 날짜 표를 흐리게 둔다(빈 「불러오는 중」 대신 — E2E b2 #1)
+  const stale = !live.board && !!live.prev;
+  const raw = live.board ?? live.prev;
   const board = useMemo(() => (raw ? withMoves(raw, moves, received) : null), [raw, moves, received]);
-  const shownDate = date ?? raw?.date ?? null;
+  const shownDate = date ?? (live.board ? live.board.date : kstToday(now));
 
   if (!session) return null;
 
@@ -191,13 +193,19 @@ export default function ReservationsLivePage() {
 
         <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 12 }}>
           {board ? (
-            <ScheduleTable board={board} nowMs={now} focusId={focus} onOpen={setDetailId} onAdd={add} onMove={(c, g, m) => void move(c, g, m)} />
+            <div aria-busy={stale} style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', opacity: stale ? 0.45 : 1, pointerEvents: stale ? 'none' : undefined, transition: 'opacity 120ms' }}>
+              <ScheduleTable board={board} nowMs={now} focusId={focus} onOpen={setDetailId} onAdd={add} onMove={(c, g, m) => void move(c, g, m)} />
+            </div>
           ) : (
             <div className="bg-ms-white" style={{ flex: 1, borderRadius: 12, padding: 24, boxShadow: '0px 2px 10px 0px rgba(0,0,0,0.04)' }}>
               <span className="text-typo-body-400 text-ms-gray-500">{live.loading ? '불러오는 중…' : (live.error ?? '불러오는 중…')}</span>
             </div>
           )}
-          {board && wide && <ResvAside board={board} tab={tab} onTab={setTab} onOpen={openFromClinic} />}
+          {board && wide && (
+            <div style={{ display: 'flex', minHeight: 0, opacity: stale ? 0.45 : 1, pointerEvents: stale ? 'none' : undefined, transition: 'opacity 120ms' }}>
+              <ResvAside board={board} tab={tab} onTab={setTab} onOpen={openFromClinic} />
+            </div>
+          )}
         </div>
 
         {toast && (
@@ -263,6 +271,12 @@ export default function ReservationsLivePage() {
       )}
     </div>
   );
+}
+
+// 오늘(KST) YYYY-MM-DD — 「오늘」로 갈 때 응답 전 제목 줄 날짜
+function kstToday(ms: number): string {
+  const d = new Date(ms + 9 * 3600 * 1000);
+  return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0');
 }
 
 function NavBtn({ label, text, onClick, disabled }: { label: string; text: string; onClick: () => void; disabled?: boolean }) {

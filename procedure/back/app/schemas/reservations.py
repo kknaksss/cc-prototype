@@ -215,7 +215,10 @@ class Identity(BaseModel):
     status: Literal["confirmed", "unconfirmed"]
     checkedAt: str | None
     checkedBy: str | None
-    method: str | None
+    method: str | None  # web_manual | app_scan | app_manual(SPEC-004 §6.16 ④-d)
+    device: str | None = None  # 앱 스캔 기기 이름
+    photoId: int | None = None  # 사진 열람 = GET /api/id-photos/{photoId}(Bearer)
+    photoKos: Literal["ok", "failed", "skipped"] | None = None  # 그 사진 KOS 올리기 결과(id_photo.kos_status) · 사진 없으면 null
     kind: Literal["foreign", "domestic"]
     fields: list[IdentityField]
     complete: bool
@@ -363,6 +366,15 @@ class Can(BaseModel):
     addConsultation: bool
 
 
+class DisplayItem(BaseModel):
+    id: int
+    kind: Literal["questionnaire", "scan"]
+    status: Literal["pending", "opened", "done", "canceled", "expired"]
+    deviceName: str | None
+    createdAt: str
+    closedAt: str | None
+
+
 class ReservationDetail(BaseModel):
     reservationId: int
     day: str
@@ -383,6 +395,8 @@ class ReservationDetail(BaseModel):
     receiveMode: Literal["new", "resume"] | None
     counselors: list[CounselorItem]
     can: Can
+    displays: list[DisplayItem] = []  # 띄우기 요청(SPEC-004 §5-3 · 오늘 그 예약 것)
+
 
 
 # ------------------------------------------------------------------ §7.4 등록 모달 · 고객 검색

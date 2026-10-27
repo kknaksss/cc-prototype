@@ -41,16 +41,17 @@ void main() {
     expect(elapsed('2026-10-21T10:00:00+09:00', DateTime.parse('2026-10-21T10:03:07+09:00').millisecondsSinceEpoch), '03:07');
   });
 
-  test('etc(방 배정) 줄은 그리지 않고 진행 막대도 procedure 만 센다', () {
+  test('「방 배정」(isRoomTask)만 숨김 · ETCETERA 도 시술 줄 · 차례 = 진행 → 대기 → 완료(웹 orderedProcs)', () {
     final c = BoardCard.fromJson(card(1, procs: [
-      proc(10, 'done', kind: 'etc', seq: 0, title: '방 배정'),
+      proc(10, 'done', kind: 'etc', seq: 0, title: '방 배정', isRoomTask: true),
       proc(11, 'wait', seq: 2, title: 'B'),
       proc(12, 'doing', seq: 1, title: 'A', started: '2026-10-21T09:00:00+09:00'),
       proc(13, 'done', seq: 3, title: 'C', completed: '2026-10-21T09:10:00+09:00'),
+      proc(14, 'wait', kind: 'etc', seq: 4, title: '사진 촬영'),
     ]));
-    expect(orderedProcs(c).map((x) => x.title), ['C', 'A', 'B']);
+    expect(orderedProcs(c).map((x) => x.title), ['A', 'B', '사진 촬영', 'C']);
     final pr = progressOf(c);
-    expect(pr.total, 3);
+    expect(pr.total, 4);
     expect(pr.done, 1);
     expect(pr.next, '다음 B');
   });
@@ -84,22 +85,37 @@ void main() {
     expect(filterCount(FilterId.need, bb, Me.none), 1); // counts.need 그대로
   });
 
-  test('카드 순서 — 입실순 · 귀가 대기는 맨 뒤', () {
+  test('카드 순서 = 스냅샷 배열 그대로(웹 공유 순서 · 앱은 정렬 안 함)', () {
     final cs = [
-      BoardCard.fromJson(card(1, state: 'home', inAt: '2026-10-21T08:00:00+09:00', homeAt: '2026-10-21T09:00:00+09:00')),
       BoardCard.fromJson(card(2, inAt: '2026-10-21T09:30:00+09:00')),
       BoardCard.fromJson(card(3, inAt: '2026-10-21T09:00:00+09:00')),
+      BoardCard.fromJson(card(1, state: 'home', inAt: '2026-10-21T08:00:00+09:00', homeAt: '2026-10-21T09:00:00+09:00')),
     ];
-    expect(orderedCards(cs).map((c) => c.visitId), [3, 2, 1]);
+    expect(orderedCards(cs).map((c) => c.visitId), [2, 3, 1]);
   });
 
-  test('카드 배지 — 확인 필요 > 귀가 대기 > 마취 중 > 상태', () {
+  test('카드 배지 — 확인 필요(danger · 점) > 마취 중(purple) > 2계층(점 없음)', () {
     final bb = board(calls: [openCall(1, 1, 'one', target: 1)]);
     expect(cardBadge(bb, BoardCard.fromJson(card(1, need: {'why': 'call', 'since': '', 'limitMin': 5}))).text, '가 원장 지정 호출 · 수락 전');
     expect(cardBadge(bb, BoardCard.fromJson(card(2, anesSince: '2026-10-21T09:50:00+09:00'))).variant, BadgeVariant.purple);
-    expect(cardBadge(bb, BoardCard.fromJson(card(3, state: 'doing'))).text, '시술 진행');
-    // E2E A6 — 귀가 대기 전 확인 필요는 짧게
-    expect(cardBadge(bb, BoardCard.fromJson(card(4, need: {'why': 'home', 'since': '', 'limitMin': 0}))).text, '시술 완료');
+    final doing = cardBadge(bb, BoardCard.fromJson(card(3, state: 'doing')));
+    expect(doing.text, '시술 · 진행');
+    expect(doing.dot, isFalse);
+    expect(cardBadge(bb, BoardCard.fromJson(card(5, state: 'home'))).text, '귀가 · 대기');
+    // 「시술 완료」 배지 없음(D7-63) — 웹 needView.state 글자
+    final home = cardBadge(bb, BoardCard.fromJson(card(4, need: {'why': 'home', 'since': '', 'limitMin': 0})));
+    expect(home.text, '시술 모두 완료 · 귀가 대기 전');
+    expect(home.text, isNot('시술 완료'));
+  });
+
+  test('되돌리기 켜짐 = 스냅샷 값 그대로', () {
+    final c = BoardCard.fromJson(card(1, procs: [
+      proc(1, 'doing', canUndoStart: true),
+      proc(2, 'done', canUndoFinish: false),
+    ]));
+    expect(c.procedures[0].canUndoStart, isTrue);
+    expect(c.procedures[1].canUndoFinish, isFalse);
+    expect(BoardCard.fromJson(card(2, procs: [proc(3, 'done')])).procedures.single.canUndoFinish, isFalse); // 옛 back(필드 없음) = 꺼짐
   });
 
   test('모르는 필드 · 빠진 필드가 있어도 읽힌다', () {

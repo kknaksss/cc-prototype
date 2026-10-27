@@ -1,4 +1,4 @@
-# procedure/back — FastAPI 이미지(arm64 · GHCR procedure-back). 데이터 · 비밀은 넣지 않는다(DB = /data 볼륨 · env = 런타임)
+# procedure/back — FastAPI 이미지(arm64 · GHCR procedure-back). 데이터 · 비밀은 넣지 않는다(DB = /data 볼륨 · 신분증 사진 = /photos 볼륨(PROC_PHOTO_DIR) · env = 런타임)
 # 배포(WP10):
 # - env = k8s Secret(KOS_* · CCC_* · PROC_SESSION_SECRET · SONIOX_API_KEY · APNS_*) · PROC_FRONT_ORIGIN = 배포 주소
 # - APNs 키 = Secret 을 파일로 마운트(예: /run/secrets/apns.p8 · uid 10001 이 읽을 수 있게) → APNS_KEY_PATH 에 그 경로
@@ -14,7 +14,7 @@ COPY app ./app
 
 FROM python:3.12-slim
 RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin app \
- && mkdir -p /data && chown app:app /data
+ && mkdir -p /data /photos && chown app:app /data /photos
 WORKDIR /app
 COPY --from=build --chown=app:app /app /app
 ENV PATH="/app/.venv/bin:$PATH" \

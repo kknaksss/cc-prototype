@@ -31,12 +31,28 @@ class Account:
 
     id: int
     login_id: str
-    role: str  # admin | doctor | nurse | coordinator
+    role: str  # admin | doctor | nurse | coordinator | counselor
     name: str
     staff_id: int | None
     active: bool
     card: bool
     password_hash: str | None = None  # bcrypt — 없으면 로그인 불가(OQ-601)
+
+
+ROLES = ("admin", "doctor", "nurse", "coordinator", "counselor")  # SPEC-004 §3.4 0.4.0 — 역할 다섯
+MANAGER_ROLES = ("admin", "coordinator", "counselor")  # 수락 = 원장을 골라 doctorId 필수(관리자 묶음 · D7-23)
+
+
+@dataclass
+class Device:
+    """푸시 기기(SPEC-004 §5-1.1) — id 가 앱의 deviceId."""
+
+    id: int
+    account_id: int
+    token: str
+    name: str | None
+    kind: str | None  # phone | tablet
+    last_seen_at: datetime | None
 
 
 @dataclass
@@ -251,6 +267,25 @@ class FunnelCode:
 class IdentityCheck:
     customer_id: int
     status: str
-    method: str
+    method: str  # web_manual | app_scan | app_manual
     checked_at: datetime
     actor: str
+    device: str | None = None  # 앱 스캔 기기 이름(SPEC-004 §6.16 ④-d)
+    photo_id: int | None = None
+
+
+@dataclass
+class DisplayRequest:
+    """띄우기 요청(SPEC-004 §5-3) — 문진 · 스캔을 기기로. QR 토큰은 해시만 저장."""
+
+    id: int
+    reservation_id: int
+    customer_id: int | None
+    kind: str  # questionnaire | scan
+    device_id: int | None  # None = QR 만
+    status: str  # pending | opened | done | canceled | expired
+    created_by: str
+    created_at: datetime
+    expires_at: datetime
+    opened_at: datetime | None
+    closed_at: datetime | None

@@ -32,6 +32,10 @@ abstract final class Ms {
   static const purple100 = Color(0xFFF8F0FF);
   static const purple500 = Color(0xFFBF71FF);
 
+  // 상담(cons) — 웹 예약 현황 2계층 색(procedure/front ceramique-theme · SPEC-005 §5.1)
+  static const cons = Color(0xFF15803D);
+  static const cons100 = Color(0xFFE7F4EC);
+
   static const dim = Color(0x52000000); // rgba(0,0,0,0.32) — 시트 · 드로어 뒤
 }
 

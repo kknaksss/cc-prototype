@@ -52,6 +52,7 @@ class ReceptionService:
         self.follow_up_sec = FOLLOW_UP_SEC
         self._bg: set[asyncio.Task] = set()
         self.spawn = self._spawn  # 응답 뒤 할 일 — 시험이 바꿔 끼운다
+        self.on_counselor_call = lambda reservation_id, staff_id: None  # 상담사 호출 푸시(SPEC-004 §5-2) — 컨테이너가 끼운다
 
     # ------------------------------------------------------------------ 공통
     @property
@@ -222,6 +223,7 @@ class ReceptionService:
             PATH_UPDATE, {"scheduleId": r.kos_id, "counselor": {"id": st.kos_id, "name": st.name}}), reservation_id=r.id)
         with self.repo.tx() as tx:
             self.resv._event(tx, actor, "counselor_call", {"reservationId": r.id, "counselorStaffId": st.id})
+        self.on_counselor_call(r.id, st.id)  # KOS 200 + 커밋 뒤에만 · 누를 때마다(D7-38)
         self._after(r)
 
     # ------------------------------------------------------------------ §5.10 [귀가 완료]

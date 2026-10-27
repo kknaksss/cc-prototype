@@ -3,9 +3,9 @@ import UIKit
 import UserNotifications
 
 // 원장 호출 푸시(SPEC-004 §5-1) — APNs 직접(Firebase 0). Dart 와는 채널 "procedure/push" 하나로:
-//   Dart → 앱: ready(눌러서 연 알림이 있으면 그 payload 를 돌려줌) · requestPermission · status · register
+//   Dart → 앱: ready(눌러서 연 알림이 있으면 그 payload 를 돌려줌) · requestPermission · status · register · deviceName · appVersion
 //             · setAuth({base, token}) · clearAuth — 알림 [수락] 을 앱 없이 보내려고 키체인에 둔다
-//   앱 → Dart: onToken(16진 기기 토큰) · onTokenError · onTap({visitId, callId})
+//   앱 → Dart: onToken(16진 기기 토큰) · onTokenError · onTap({kind?, visitId?, callId?, reservationId?, requestId?})
 // 알림에서 바로 수락(카테고리 CALL · 액션 ACCEPT「수락」 — 앱을 안 열고 · 잠금 해제 요구 없음 · 워치에서도)
 //   → 백그라운드에서 POST /api/calls/{callId}/accept(doctorId 없음 = 의사 자기 자신) → 로컬 알림으로 결과
 @main
@@ -13,6 +13,7 @@ import UserNotifications
   private var channel: FlutterMethodChannel?
   private var dartReady = false
   private var pendingTap: [String: Any]?
+  private let scanner = TextScanner() // QR · 여권 사진 · 글자 인식(채널 procedure/scan)
 
   override func application(
     _ application: UIApplication,
@@ -33,6 +34,7 @@ import UserNotifications
     let ch = FlutterMethodChannel(name: "procedure/push", binaryMessenger: registrar.messenger())
     ch.setMethodCallHandler { [weak self] call, result in self?.handle(call, result) }
     channel = ch
+    if let r = engineBridge.pluginRegistry.registrar(forPlugin: "ProcedureScan") { scanner.attach(r.messenger()) }
   }
 
   private func handle(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {
@@ -68,6 +70,13 @@ import UserNotifications
     case "clearAuth":
       AuthKeychain.clear()
       result(nil)
+    case "deviceName":
+      // 기기 이름(설정 「이 기기」 처음 값 · SPEC-004 §5-1.1 D7-27)
+      result(UIDevice.current.name)
+    case "appVersion":
+      // 설정 「앱 정보」 — 버전 · 빌드(§6.14)
+      let b = Bundle.main.infoDictionary
+      result(["version": b?["CFBundleShortVersionString"] as? String ?? "", "build": b?["CFBundleVersion"] as? String ?? ""])
     case "register":
       // 이미 허용된 상태에서 앱 시작 · 서버 주소 바뀜 — 토큰을 다시 받는다(멱등)
       UIApplication.shared.registerForRemoteNotifications()
@@ -99,7 +108,7 @@ import UserNotifications
     }
   }
 
-  // 알림을 누름 → payload visitId · callId 를 Dart 로(아직 준비 전이면 ready 때 넘김)
+  // 알림을 누름 → payload(kind · visitId · callId · reservationId · requestId)를 Dart 로(아직 준비 전이면 ready 때 넘김)
   override func userNotificationCenter(
     _ center: UNUserNotificationCenter,
     didReceive response: UNNotificationResponse,
@@ -111,8 +120,9 @@ import UserNotifications
       return
     }
     var tap: [String: Any] = [:]
-    if let v = info["visitId"] { tap["visitId"] = v }
-    if let c = info["callId"] { tap["callId"] = c }
+    for key in ["kind", "visitId", "callId", "reservationId", "requestId"] {
+      if let v = info[key] { tap[key] = v }
+    }
     if dartReady, let ch = channel {
       ch.invokeMethod("onTap", arguments: tap)
     } else {

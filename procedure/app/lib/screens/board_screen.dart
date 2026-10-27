@@ -1,4 +1,4 @@
-// 시술실 현황 — 목록(SPEC-004 §6.2). 모바일 = 한 줄 1장 · 태블릿 = 격자 minmax(270px,1fr)
+// 시술실 현황 — 시술 현황 탭 루트(SPEC-004 §6.2 · §6.8). 모바일 = 한 줄 1장 · 태블릿 = 격자 minmax(270px,1fr)
 import 'package:flutter/material.dart';
 
 import '../app_state.dart';
@@ -10,6 +10,7 @@ import '../widgets/accept.dart';
 import '../widgets/header.dart';
 import '../widgets/ui.dart';
 import 'room_screen.dart';
+import 'shell.dart' show TabScaffold;
 
 // 화면 짧은 변 < 600 = 모바일 배치(§6.0)
 bool isTablet(BuildContext context) => MediaQuery.sizeOf(context).shortestSide >= 600;
@@ -59,25 +60,15 @@ class _BoardScreenState extends State<BoardScreen> {
   Widget build(BuildContext context) {
     final app = AppScope.of(context);
     final tablet = isTablet(context);
-    return Scaffold(
-      backgroundColor: Ms.gray100,
-      body: SafeArea(
-        bottom: false,
-        child: ListenableBuilder(
-          listenable: app.stream,
-          builder: (context, _) {
-            final b = app.stream.board;
-            return Column(children: [
-              ListHeader(tablet: tablet, need: b?.counts.need ?? 0),
-              ConnectionLine(stream: app.stream),
-              if (b == null)
-                const Expanded(child: Center(child: CircularProgressIndicator(strokeWidth: 2)))
-              else
-                Expanded(child: _body(context, app, b, tablet)),
-            ]);
-          },
-        ),
-      ),
+    return ListenableBuilder(
+      listenable: app.stream,
+      builder: (context, _) {
+        final b = app.stream.board;
+        return TabScaffold(
+          head: ListHeader(tablet: tablet, need: b?.counts.need ?? 0),
+          body: b == null ? const Center(child: CircularProgressIndicator(strokeWidth: 2)) : _body(context, app, b, tablet),
+        );
+      },
     );
   }
 
@@ -106,12 +97,11 @@ class _BoardScreenState extends State<BoardScreen> {
             for (final id in ids)
               Padding(
                 padding: const EdgeInsets.only(right: 6),
-                child: MsButton(
-                  '${filterName[id]} ${filterCount(id, b, me)}',
-                  size: BtnSize.sm,
-                  variant: filter == id ? BtnVariant.solid : BtnVariant.outlined,
-                  color: filter == id ? BtnColor.blue : BtnColor.gray,
-                  onPressed: () => setState(() => _filter = id),
+                child: FilterChipButton(
+                  id: id,
+                  label: '${filterName[id]} ${filterCount(id, b, me)}',
+                  on: filter == id,
+                  onTap: () => setState(() => _filter = id),
                 ),
               ),
           ],
@@ -204,10 +194,21 @@ class RoomCard extends StatelessWidget {
             Row(children: [
               Text(c.room.title, style: Typo.headingMd500),
               const SizedBox(width: 8),
-              Expanded(child: Text(c.customer.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: Typo.caption600)),
+              // 고객 이름 + 한글 발음(없으면 안 그림 · 발음이 먼저 말줄임 — §6.2 · SPEC-003 §10.1 #5)
+              Expanded(
+                child: Text.rich(
+                  TextSpan(children: [
+                    TextSpan(text: c.customer.name, style: Typo.caption600),
+                    if ((c.customer.phoneticName ?? '').trim().isNotEmpty)
+                      TextSpan(text: '  ${c.customer.phoneticName!.trim()}', style: Typo.caption400.copyWith(color: Ms.gray600)),
+                  ]),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
               const SizedBox(width: 8),
               // 배지는 flex 를 받지 않는다 — Expanded 와 나눠 가지면 짧은 배지가 가운데쯤 뜬다(E2E A1)
-              ConstrainedBox(constraints: const BoxConstraints(maxWidth: 190), child: MsBadge(badge.text, badge.variant)),
+              ConstrainedBox(constraints: const BoxConstraints(maxWidth: 190), child: MsBadge.of(badge)),
             ]),
             if (tablet) ...[
               const SizedBox(height: 6),
@@ -295,4 +296,43 @@ BoardCard? pushTarget(Board b, int visitId) {
     if (c.visitId == visitId) return c;
   }
   return null;
+}
+
+// 필터 칸 — 점 꼴은 웹(SPEC-003 §5.14 #4 · D7-64): 대기 = ○(흰 속 primary 테두리) · 진행 = ● · 칸 이름 · 「귀가」 · 「수락 대기」는 앱 그대로
+class FilterChipButton extends StatelessWidget {
+  final FilterId id;
+  final String label;
+  final bool on;
+  final VoidCallback onTap;
+  const FilterChipButton({super.key, required this.id, required this.label, required this.on, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final d = filterDot[id];
+    final h = 33 * uiScale(MediaQuery.sizeOf(context));
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Container(
+        height: h,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: BoxDecoration(
+          color: on ? Ms.primary100 : Ms.white,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: on ? Ms.primary : Ms.gray300),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          if (d != null) ...[
+            Container(
+              width: 10,
+              height: 10,
+              decoration: BoxDecoration(color: d.fill, shape: BoxShape.circle, border: d.ring != null ? Border.all(color: d.ring!, width: 2) : null),
+            ),
+            const SizedBox(width: 6),
+          ],
+          Text(label, style: Typo.caption600.copyWith(fontSize: 13, color: on ? Ms.primary : Ms.gray800)),
+        ]),
+      ),
+    );
+  }
 }

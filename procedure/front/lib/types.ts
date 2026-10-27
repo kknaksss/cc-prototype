@@ -154,8 +154,8 @@ export interface BoardEvent extends Board {
   version: number;
 }
 
-// 계정 역할(SPEC-004 §3.1 · SPEC-005 §3.4 코디 더함)
-export type Role = 'admin' | 'doctor' | 'nurse' | 'coordinator';
+// 계정 역할(SPEC-004 §3.1 · SPEC-005 §3.4 코디 · SPEC-004 0.4.0 §3.7 상담사 더함)
+export type Role = 'admin' | 'doctor' | 'nurse' | 'coordinator' | 'counselor';
 
 // POST /api/auth/login(SPEC-004 §3.3)
 export interface LoginResult {
@@ -351,7 +351,10 @@ export interface Identity {
   status: 'confirmed' | 'unconfirmed';
   checkedAt: string | null;
   checkedBy: string | null;
-  method: string | null;
+  method: string | null; // web_manual | app_scan | app_manual(SPEC-004 §6.16 ④-d)
+  device?: string | null; // 앱 스캔 기기 이름
+  photoId?: number | null; // 사진 열람 = GET /api/id-photos/{photoId}(Bearer)
+  photoKos?: 'ok' | 'failed' | 'skipped' | null; // KOS 사진 올리기 결과(app-spec-followups · 코디 2026-10-27)
   kind: 'foreign' | 'domestic';
   fields: IdentityField[];
   complete: boolean;
@@ -461,6 +464,36 @@ export interface ResvDetail {
   receiveMode: 'new' | 'resume' | null;
   counselors: { staffId: number; name: string; busyRoom: string | null }[];
   can: ResvCan;
+  displays?: DisplayItem[]; // 띄우기 요청(SPEC-004 §5-3 · 오늘 그 예약 것)
+}
+
+// ─── 띄우기 요청(SPEC-004 §5-3 · §6.17)
+export type DisplayKind = 'questionnaire' | 'scan';
+export type DisplayStatus = 'pending' | 'opened' | 'done' | 'canceled' | 'expired';
+
+export interface DisplayItem {
+  id: number;
+  kind: DisplayKind;
+  status: DisplayStatus;
+  deviceName: string | null;
+  createdAt: string;
+  closedAt: string | null;
+}
+
+// GET /api/devices/targets — 코디 계정 기기 · last_seen_at 24시간 · 최근 순
+export interface DisplayTarget {
+  deviceId: number;
+  name: string;
+  kind: 'phone' | 'tablet' | string | null;
+  lastSeenAt: string | null;
+  online: boolean;
+}
+
+// POST /api/display-requests
+export interface DisplayCreated {
+  id: number;
+  qrToken: string;
+  expiresAt: string;
 }
 
 // §7.4 등록 모달

@@ -244,6 +244,7 @@ class ReservationService:
         self._kos = kos  # () → KosRuntime | None(시험이 런타임을 바꿔 끼워도 따라간다)
         self._gone_logged: set[str] = set()  # 404 를 이미 로그에 남긴 일정
         self._pins: dict[str, tuple[str, datetime, datetime]] = {}  # kos_id → (단계, 실은 시각, 풀 시각) — 반영 지연 창
+        self.displays_of: Callable[[Tx, int], list[dict[str, Any]]] = lambda tx, rid: []  # 띄우기 요청(SPEC-004 §5-3)
 
     # ------------------------------------------------------------------ KOS
     @property
@@ -498,6 +499,8 @@ class ReservationService:
             rooms_all = tx.rooms()
             system = tx.token("internal")
             health = self._health(tx, r, cust, reads)
+            displays = self.displays_of(tx, r.id)
+            photo = tx.id_photo(check.photo_id) if check and check.photo_id else None
         staff_by_kos = {x.kos_id: x for x in staff}
         kind, fields, complete = identity_fields(visitor)
         confirmed = bool(check and check.status == "confirmed")
@@ -542,7 +545,10 @@ class ReservationService:
                 "identity": {"status": "confirmed" if confirmed else "unconfirmed",
                              "checkedAt": iso(check.checked_at) if check else None,
                              "checkedBy": accounts.get(check.actor, check.actor) if check else None,
-                             "method": check.method if check else None, "kind": kind, "fields": fields, "complete": complete}},
+                             "method": check.method if check else None, "device": check.device if check else None,
+                             "photoId": check.photo_id if check else None,
+                             "photoKos": photo["kos_status"] if photo else None,
+                             "kind": kind, "fields": fields, "complete": complete}},
             "reservation": {
                 "sedationRequired": r.sedation_required, "memo": r.memo,
                 "funnel": funnel_of(r.funnel), "connectedChannel": r.connected_channel or None,
@@ -552,7 +558,7 @@ class ReservationService:
                 "desiredDischargeAt": iso(r.desired_discharge_at)},
             "health": health, "previousVisits": previous_visits(reads["previous"], day, ctx), "flow": flow,
             "settlement": settlement, "rooms": rooms, "roomLocked": bool(locked_room), "receiveMode": mode,
-            "counselors": counselors,
+            "counselors": counselors, "displays": displays,
             "can": can(main, r.flow_step, payment_required=pay, identity_confirmed=confirmed,
                        identity_locked=identity_locked(today_resvs, cust.id if cust else None)),
         })

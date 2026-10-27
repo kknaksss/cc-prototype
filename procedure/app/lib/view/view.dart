@@ -1,12 +1,16 @@
 // 표시 매핑 — 웹 components/procedures/view.ts 를 Dart 로(SPEC-004 §6.0 · 리포트 §7-1).
 // 규칙(pickable · canStart · canCall · need · counts …)은 back 스냅샷 값을 그대로 쓴다. 여기는 문구 · 순서 · 고르기만.
+import 'dart:ui' show Color;
+
 import '../model/board.dart';
+import '../theme/tokens.dart';
+import 'state.dart';
 import 'time.dart';
+
+export 'state.dart' show ChipLook;
 
 enum BadgeVariant { neutral, primary, warning, danger, purple }
 
-const stateName = {'waiting': '시술 대기', 'doing': '시술 진행', 'home': '귀가 대기'};
-const stateBadge = {'waiting': BadgeVariant.warning, 'doing': BadgeVariant.primary, 'home': BadgeVariant.neutral};
 
 // 필터 6칸(웹과 같음 · 겹쳐 셈) + 의사 계정만 「수락 대기」
 enum FilterId { all, need, waiting, anes, call, doing, home, mine }
@@ -20,6 +24,23 @@ const filterName = {
   FilterId.doing: '진행',
   FilterId.home: '귀가',
   FilterId.mine: '수락 대기',
+};
+
+// 칸 점(웹 FILTERS) — fill · 테두리(○). 수락 대기는 점 없음(앱 칸)
+class Dot {
+  final Color fill;
+  final Color? ring;
+  const Dot(this.fill, [this.ring]);
+}
+
+final filterDot = <FilterId, Dot>{
+  FilterId.all: const Dot(Ms.gray300),
+  FilterId.need: const Dot(Ms.red),
+  FilterId.waiting: Dot(phaseStyle(ResvMain.procedure, Phase.waiting).dotFill, phaseStyle(ResvMain.procedure, Phase.waiting).dotBorder),
+  FilterId.anes: const Dot(Ms.purple),
+  FilterId.call: const Dot(Ms.primary500),
+  FilterId.doing: const Dot(Ms.primary),
+  FilterId.home: Dot(phaseStyle(ResvMain.home, Phase.waiting).dotFill, phaseStyle(ResvMain.home, Phase.waiting).dotBorder),
 };
 
 int filterCount(FilterId id, Board b, Me me) => switch (id) {
@@ -54,25 +75,20 @@ String docName(Board b, int? id) {
   return '';
 }
 
-// 입실순 · 귀가 대기는 맨 뒤(귀가 대기 시각 순) — SPEC-003 §6.3
-List<BoardCard> orderedCards(List<BoardCard> cards) {
-  int key(String? v) => toMs(v) ?? 1 << 52;
-  final live = cards.where((c) => c.state != 'home').toList()..sort((a, b) => key(a.inAt).compareTo(key(b.inAt)));
-  final home = cards.where((c) => c.state == 'home').toList()..sort((a, b) => key(a.homeAt).compareTo(key(b.homeAt)));
-  return [...live, ...home];
-}
+// 카드 순서 = 스냅샷 cards[] 순서 그대로(웹 드래그 공유 순서 · back 이 정렬 — 귀가 대기 맨 뒤 포함). 앱은 정렬하지 않는다(§6.2 · D7-21)
+List<BoardCard> orderedCards(List<BoardCard> cards) => cards;
 
-// 앱이 그리는 시술 = kind=procedure 만(etc 「방 배정」 줄은 그리지 않는다 — E2E-10)
-List<Procedure> procsOnly(BoardCard c) => c.procedures.where((p) => !p.isEtc).toList();
+// 보이는 작업 = 「방 배정」(isRoomTask)만 뺀 전부 — type(PROCEDURE · ETCETERA) 무관 같은 시술 줄(§6.0 · 웹 procsOf)
+List<Procedure> procsOnly(BoardCard c) => c.procedures.where((p) => !p.isRoomTask).toList();
 
-// 시술 표시 순서 — 완료(완료 시각 순) → 진행 → 대기(sequence 순) · etc 빼고
+// 시술 표시 순서 — 진행 → 대기(sequence 순) → 완료(완료 시각 순) — 웹 orderedProcs(SPEC-003 §5.9)
 List<Procedure> orderedProcs(BoardCard c) {
   final procs = procsOnly(c);
   final done = procs.where((p) => p.state == 'done').toList()
     ..sort((a, b) => (toMs(a.completedAt) ?? 0).compareTo(toMs(b.completedAt) ?? 0));
   final doing = procs.where((p) => p.state == 'doing').toList();
   final wait = procs.where((p) => p.state == 'wait').toList()..sort((a, b) => a.sequence.compareTo(b.sequence));
-  return [...done, ...doing, ...wait];
+  return [...doing, ...wait, ...done];
 }
 
 String callText(Board b, String kind, int? target) => kind == 'all' ? '전체 호출' : '${docName(b, target)} 지정 호출';
@@ -138,30 +154,32 @@ List<OpenCall> myCalls(Board b, Me me) =>
 // 원장 고르기 목록 — 비어 있는 원장 먼저(웹 호출 탭 · 호출 시트와 같음)
 List<Doctor> doctorsFreeFirst(Board b) => [...b.doctors]..sort((x, y) => (x.busy ? 1 : 0) - (y.busy ? 1 : 0));
 
-// 카드 상태 Badge — 확인 필요 > 귀가 대기 > 마취 중 > 상태(웹 OrderCard 와 같음)
+// 카드 상태 Badge(웹 OrderCard) — 덮어쓰기(확인 필요 danger · 마취 중 purple · 점 있음)가 있으면 그것, 없으면 2계층(점 없음 · §6.9)
 class BadgeView {
   final String text;
   final BadgeVariant variant;
-  const BadgeView(this.text, this.variant);
+  final ChipLook? look; // 2계층 칩 색(덮어쓰기 아닐 때)
+  const BadgeView(this.text, this.variant, {this.look});
+  bool get dot => look == null;
 }
 
 BadgeView cardBadge(Board b, BoardCard c) {
   final home = c.state == 'home';
   final anesOn = c.anesthesia.runningSince != null;
   if (c.need != null) return BadgeView(needState(b, c, c.need!), BadgeVariant.danger);
-  if (home) return const BadgeView('귀가 대기', BadgeVariant.neutral);
-  if (anesOn) return const BadgeView('마취 중', BadgeVariant.purple);
-  return BadgeView(stateName[c.state] ?? c.state, stateBadge[c.state] ?? BadgeVariant.neutral);
+  if (!home && anesOn) return const BadgeView('마취 중', BadgeVariant.purple);
+  final v = visitBadge(c.state);
+  return BadgeView(v.text, home ? BadgeVariant.neutral : BadgeVariant.primary, look: v);
 }
 
-// 「확인 필요」 배지 문구(웹 needView.state)
+// 「확인 필요」 배지 문구(웹 needView.state) — 「시술 완료」 배지는 없다(D7-63)
 String needState(Board b, BoardCard c, Need need) {
   if (need.why == 'anes') return '마취 중';
   if (need.why == 'call') {
     final k = firstOpenCall(b, c.visitId);
     return '${k != null ? callText(b, k.kind, k.targetDoctorId) : '호출'} · 수락 전';
   }
-  return '시술 완료'; // E2E A6 — 머리 · 카드 배지가 잘리지 않게 짧게
+  return '시술 모두 완료 · 귀가 대기 전';
 }
 
 // 카드 「지금」 상자 — 보이는 순서: 귀가 대기 > 진행 > 모두 완료 > 호출 > 마취 > 대기(시안 M9 의 표시 순서만)

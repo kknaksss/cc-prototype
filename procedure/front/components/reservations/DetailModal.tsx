@@ -12,6 +12,7 @@ import { hm, pad } from '@/lib/time';
 import type { Personal, PreviousVisit, ReceiveRoute, ResvBoard, ResvDetail, ResvMain, ResvState } from '@/lib/types';
 import { Flag, NATION_OPTIONS, genderIcon, headOf, moneyOf, nationName, phaseStyle, type Phase } from './view';
 import { DsDate, DsSelect, snsOptions } from './controls';
+import { ScanSteps, useQuestionnaireRequest } from './Display';
 
 const SETTLE_MS = 2000;
 const POLL_MS = 5000; // 열려 있는 동안 다시 부름(E2E #17 — 코디 기본값 5초)
@@ -399,7 +400,7 @@ function Body({
             </div>
           </div>
 
-          <PersonalBlock d={d} s={s} busy={busy} run={run} reload={reload} />
+          <PersonalBlock d={d} s={s} busy={busy} run={run} reload={reload} onError={onError} />
 
           {/* 신분 확인 · 유입 채널 */}
           <div className="border-ms-gray-200" style={{ flexShrink: 0, padding: '12px 20px', display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 16, borderBottomWidth: 1, borderBottomStyle: 'solid' }}>
@@ -431,6 +432,8 @@ function Body({
                   </Button>
                 )}
               </div>
+              {/* [스캔할 기기](SPEC-004 §6.17 · W:308-342) — 여권만 스캔(D7-17) · 이미 앱 스캔된 신분은 그대로 보임 */}
+              {!isClosedMain(d.state.main) && (id.kind === 'foreign' || id.method === 'app_scan' || id.method === 'app_manual') && <ScanSteps d={d} onError={onError} />}
             </div>
             <div className="border-ms-gray-200" style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0, paddingLeft: 16, borderLeftWidth: 1, borderLeftStyle: 'solid' }}>
               <span className="text-typo-heading-sm-600 text-ms-gray-800">유입 채널</span>
@@ -636,14 +639,19 @@ function PersonalBlock({
   busy,
   run,
   reload,
+  onError,
 }: {
   d: ResvDetail;
   s: UiState;
   busy: string | null;
   run: (key: string, fn: () => Promise<unknown>, toast: string, after?: () => void) => Promise<boolean>;
   reload: () => void;
+  onError: (e: unknown) => void;
 }) {
   const p = d.customer.personal;
+  // [QR로 고객 입력 요청] · QR 상자(SPEC-004 §6.17) — 취소 · 부도 예약에는 없음
+  const qr = useQuestionnaireRequest({ d, onError });
+  const showQr = !isClosedMain(d.state.main);
   const kr = (p?.nationality ?? d.customer.nationality) === 'KR';
   // 접수 뒤에는 회색 읽기 전용 + [수정] 하나로 풀기(시안 M:2067 · 기본값)
   const locked = !d.can.editPersonal || (d.flow !== null && !s.unlock);
@@ -688,6 +696,7 @@ function PersonalBlock({
           )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {showQr && qr.toggle}
           {p && d.can.editPersonal && d.flow !== null && !s.unlock && (
             <Button variant="outlined" color="gray" size="sm" onClick={() => s.setUnlock(true)}>
               수정
@@ -700,6 +709,7 @@ function PersonalBlock({
           )}
         </div>
       </div>
+      {showQr && qr.box}
       {!p ? (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span className="text-typo-body-400 text-red" title={d.customer.personalError ?? undefined}>

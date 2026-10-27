@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     ccc_coord_id: str = ""  # 코디 계정(SPEC-005 §3.4) — 비면 만들지 않는다
     ccc_coord_password: str = ""
     ccc_coord_name: str = ""
+    ccc_counselor_id: str = ""  # PoC 상담사 계정(SPEC-004 §3.7) — 비면 카드 없음(상담사 행은 내부 login_id 로 생긴다)
+    ccc_counselor_password: str = ""
+    ccc_counselor_kos_account_id: str = ""  # 연결할 KOS 데모 지점 상담사(getAccounts id)
     # 원장 호출 푸시(SPEC-004 §5-1 · APNs 직접) — 하나라도 비면 발송을 끈다. 키 파일은 레포 밖
     apns_key_path: str = ""
     apns_key_id: str = ""
@@ -58,6 +61,9 @@ class Settings(BaseSettings):
     proc_db_path: str = "data/procedure.db"
     proc_back_port: int = 8700
     proc_front_origin: str = "http://localhost:3700"
+    # 앱 다음 판(SPEC-004 §2.3) — 사진 폴더(비면 사진 저장 끔) · 띄우기 요청 유효 분
+    proc_photo_dir: str = ""
+    proc_display_ttl_min: float = 10
     # 개발용 — 1 이면 GET /api/board · /stream 이 WP1 가짜 스냅샷을 준다(front 단독 작업용). 기본 0
     proc_fake_board: bool = False
 

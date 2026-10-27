@@ -3,6 +3,7 @@
 // - version: 가진 것보다 작거나 같으면 버림 · 새 연결의 첫 board 는 무조건 받음(back 재시작이면 0 부터)
 // - 끊기면 retry(기본 3000ms) 뒤 다시 · 연속 실패면 3s → 6s → 12s … 최대 30s · 45초 동안 바이트가 없으면 끊긴 것으로
 // - 401 이면 onUnauthorized(토큰 지우고 로그인으로)
+// - board 말고 display · notification(0.4.0 · `id:` 없음 · version 안 올림)은 version 규칙 없이 onEvent 로(§7.1 r2)
 import 'dart:async';
 import 'dart:convert';
 
@@ -35,10 +36,13 @@ class BoardStream extends ChangeNotifier {
   final VoidCallback onUnauthorized;
   final http.Client Function() clientFactory;
   final Duration idleTimeout;
+  // board 밖 이벤트(display · notification) — data 를 JSON 으로 풀어서
+  void Function(String event, Map<String, dynamic> data)? onEvent;
 
   BoardStream({
     required this.uri,
     required this.onUnauthorized,
+    this.onEvent,
     http.Client Function()? clientFactory,
     this.idleTimeout = const Duration(seconds: 45),
   }) : clientFactory = clientFactory ?? http.Client.new;
@@ -120,7 +124,10 @@ class BoardStream extends ChangeNotifier {
           if (gen != _gen) return;
           _armIdle(gen);
           for (final ev in parser.addBytes(bytes)) {
-            if (ev.event != 'board') continue;
+            if (ev.event != 'board') {
+              _other(ev.event, ev.data);
+              continue;
+            }
             Board b;
             try {
               b = Board.fromJson((jsonDecode(ev.data) as Map).cast<String, dynamic>());
@@ -145,6 +152,14 @@ class BoardStream extends ChangeNotifier {
     } catch (_) {
       if (gen == _gen) _lost(gen);
     }
+  }
+
+  void _other(String event, String data) {
+    if (event != 'display' && event != 'notification') return;
+    try {
+      final j = jsonDecode(data);
+      if (j is Map) onEvent?.call(event, j.cast<String, dynamic>());
+    } catch (_) {}
   }
 
   void _armIdle(int gen) {

@@ -54,6 +54,8 @@ void main() {
     await t.enterText(find.byKey(const Key('login-id')), loginId);
     await t.enterText(find.byKey(const Key('login-password')), loginPw);
     await t.tap(find.text('로그인'));
+    await wait(t, find.text('시술 현황'));
+    await t.tap(find.text('시술 현황').last); // 첫 화면 = 예약 현황(§6.8) → 시술 현황 탭
     await wait(t, find.byType(RoomCard));
     await settle(t, 2000);
     await take('02_list_${scene}_$role');

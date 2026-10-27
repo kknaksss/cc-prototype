@@ -20,11 +20,15 @@ async def board_order(body: BoardOrderRequest, c: Ctr, actor: Actor) -> BoardOrd
 
 
 @router.get("/stream")
-async def stream(c: Ctr, token: str | None = None) -> StreamingResponse:
-    """SSE(§7.5) — 인증은 `?token=`(EventSource 는 헤더를 못 싣는다). 틀리면 401."""
-    c.auth.verify(token)
+async def stream(c: Ctr, token: str | None = None, deviceId: int | None = None) -> StreamingResponse:  # noqa: N803
+    """SSE(§7.5) — 인증은 `?token=`(EventSource 는 헤더를 못 싣는다). 틀리면 401.
+
+    앱은 `deviceId` 를 붙인다(SPEC-004 §7.1) — 그 계정 기기면 last_seen_at · online · `display` 대상 · 아니면 무시.
+    """
+    actor = c.auth.verify(token)
+    device = c.devices.own(actor, deviceId)
     return StreamingResponse(
-        c.hub.frames(),
+        c.hub.frames(account_id=actor.id, device_id=device.id if device else None),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
     )

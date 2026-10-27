@@ -14,7 +14,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.api import actions, auth, board, devices, interpret, reservations
+from app.api import (
+    actions,
+    auth,
+    board,
+    devices,
+    display,
+    interpret,
+    notifications,
+    photos,
+    questionnaire,
+    reservations,
+)
 from app.config import Settings, get_settings
 from app.container import Container, build_container
 from app.domain.errors import DomainError
@@ -76,7 +87,7 @@ def create_app(settings: Settings | None = None, container: Container | None = N
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[settings.proc_front_origin],
-        allow_methods=["GET", "POST", "PUT", "OPTIONS"],  # PUT = 카드 순서(§7.3)
+        allow_methods=["GET", "POST", "PUT", "OPTIONS"],  # PUT = 카드 순서(§7.3) · 알림 설정
         allow_headers=["*"],
     )
 
@@ -94,7 +105,8 @@ def create_app(settings: Settings | None = None, container: Container | None = N
     async def http_error(_: Request, exc: StarletteHTTPException) -> JSONResponse:
         return _error(exc.status_code, "not_found" if exc.status_code == 404 else "http_error", str(exc.detail))
 
-    for r in (auth.router, board.router, actions.router, interpret.router, devices.router, reservations.router):
+    for r in (auth.router, board.router, actions.router, interpret.router, devices.router, reservations.router,
+              notifications.router, display.router, questionnaire.router, photos.router):
         app.include_router(r)
 
     @app.get("/api/health", response_model=HealthResponse)

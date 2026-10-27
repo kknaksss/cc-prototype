@@ -54,6 +54,8 @@ RESV_NAMES = {
     "find-duplicated-visitor", "create-visitor", "reserve", "update-reservation", "cancel-reservation",
     "change-reservation-memo", "update-visitor-personal-information", "update-visitor-management-information",
     "recept", "add-flow-tasks", "change-content", "create-notice", "delete-notice",
+    "get-questionnaire-agreements", "submit-visitor-questionnaire",  # 앱 문진(SPEC-004 §6.15)
+    "generate-uploading-url", "register-visitor-images",  # 앱 여권 사진(SPEC-004 §6.16 ④-c)
 }
 DAY = datetime(2026, 10, 21, tzinfo=UTC)  # 시험 날짜(수요일) — KST 하루 = 전날 15:00Z ~ 15:00Z
 
@@ -152,6 +154,18 @@ class ResvFake:
                                                {"questionId": f"q{i}", "title": f"질문{i}", "sequence": i, "answers": []}
                                                for i in range(1, 4)]}]}
         self.submits: dict[str, dict] = {}
+        self.agreements = [{"id": "ag-1", "title": "개인정보 수집 동의", "link": "", "required": True,
+                            "type": "PERSONAL_INFORMATION", "translsMap": {"title": {"translation": {"ja": "同意", "en": "Agree",
+                                                                                                      "zh": "同意"}}}}]
+        self.submitted: list[dict] = []  # 받은 문진 제출 본문
+        # 이미지 장비 코드(WP-KOS K3 모양 · id 지어냄) · 받은 presigned PUT · 등록
+        self.equipment = [{"id": "eq-1", "category": "IMAGE_EQUIPMENT", "name": "태블릿", "order": 0, "closed": False,
+                           "default": False},
+                          {"id": "eq-2", "category": "IMAGE_EQUIPMENT", "name": "DSLR", "order": 2, "closed": False,
+                           "default": True}]
+        self.uploads: list[dict] = []  # {url, content, contentType}
+        self.registered: list[dict] = []
+        self.submit_at = "2026-10-21T02:05:00Z"  # 다음 제출본 createdDateTimeUtc
         self.purchases: dict[str, dict] = {}
         self.delay: dict[str, int] = {}  # 쓰기 이름 → 그 결과가 보이기까지 get-schedule-detail 읽기 수
         self._pending: list[list] = []  # [남은 읽기, 적용 함수]
@@ -190,7 +204,13 @@ class ResvFake:
         if name == "get-reservation-groups":
             return httpx.Response(200, json={"data": deepcopy(self.groups)})
         if name == "get-codes":
-            return httpx.Response(200, json={"data": deepcopy(self.funnels) if body.get("category") == "FUNNEL" else []})
+            codes = {"FUNNEL": self.funnels, "IMAGE_EQUIPMENT": self.equipment}.get(body.get("category"), [])
+            return httpx.Response(200, json={"data": deepcopy(codes)})
+        if name == "generate-uploading-url":
+            return httpx.Response(200, json={"data": f"https://s3.fake.test/bucket/{body['fileName']}?X-Amz-Signature=sig"})
+        if name == "register-visitor-images":
+            self.registered.append(deepcopy(body))
+            return ok
         if name == "get-etcetera-tasks":
             return httpx.Response(200, json={"data": deepcopy(self.etc_tasks)})
         if name == "get-schedules-for-reservation":
@@ -222,6 +242,23 @@ class ResvFake:
             return httpx.Response(200, json={"data": deepcopy(found[page * size:(page + 1) * size]), "count": len(found)})
         if name == "get-visitor-questionnaire":
             return httpx.Response(200, json=deepcopy(self.form))
+        if name == "get-questionnaire-agreements":
+            return httpx.Response(200, json={"data": deepcopy(self.agreements)})
+        if name == "submit-visitor-questionnaire":  # 공개 제출 — 고객 값을 바꾼다(AK§5.3 · 휴대폰 맨 앞 0 뺌)
+            self.submitted.append(deepcopy(body))
+            v = self.visitors[body["visitorId"]]
+            d = body["dateOfBirth"]
+            v.update({"gender": body["gender"], "dateOfBirth": f"{d[:4]}-{d[4:6]}-{d[6:]} 00:00:00.000Z",
+                      "phoneNumber": {"countryCode": body["phone"]["countryCode"],
+                                      "phoneNumber": body["phone"]["phoneNumber"].lstrip("0")},
+                      "address": {"address": body.get("address", ""), "detailedAddress": body.get("addressDetail", ""),
+                                  "zipCode": ""}})
+            self.submits[body["visitorId"]] = {
+                "createdDateTimeUtc": self.submit_at, "visitorName": body["name"],
+                "answers": [{"seq": "", "questionId": a["parentQuestionId"], "questionTitle": a["parentQuestionTitle"],
+                             "answerId": a["id"], "answerTitle": a["title"], "memo": a.get("inputText") or a.get("subText")}
+                            for a in body["answers"]]}
+            return httpx.Response(200, json={"questionnaireId": f"qn-{len(self.submitted)}"})
         if name == "get-questionnaire-submit":
             sub = self.submits.get(body.get("visitorId"))
             if sub is None:
@@ -426,6 +463,10 @@ class FakeKos(ResvFake):
 
     def handle(self, req: httpx.Request) -> httpx.Response:
         path = req.url.path
+        if req.url.host == "s3.fake.test":  # presigned PUT(인증 헤더 없음)
+            self.uploads.append({"url": str(req.url), "content": req.content, "contentType": req.headers.get("content-type"),
+                                 "auth": req.headers.get("authorization")})
+            return httpx.Response(self.fail_paths.get("s3-put", 200))
         body = json.loads(req.content or b"{}")
         self.calls.append((path, body))
         name = path.rsplit("/", 1)[-1]

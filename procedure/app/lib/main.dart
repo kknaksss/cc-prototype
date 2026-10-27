@@ -1,10 +1,10 @@
-// 시술 현황 — 시술실 앱(Flutter · iOS · SPEC-004)
+// Céramique — 의료진 앱(Flutter · iOS · SPEC-004) · 4탭(예약 · 내원 · 시술 현황 · 설정)
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'app_state.dart';
-import 'screens/board_screen.dart';
 import 'screens/login_screen.dart';
+import 'screens/shell.dart';
 import 'theme/tokens.dart';
 import 'widgets/ui.dart';
 
@@ -25,7 +25,7 @@ class ProcedureApp extends StatelessWidget {
     return AppScope(
       state: state,
       child: MaterialApp(
-        title: '시술 현황',
+        title: 'Céramique',
         debugShowCheckedModeBanner: false,
         theme: ceramiqueTheme(),
         locale: const Locale('ko'),
@@ -57,12 +57,12 @@ class _Root extends StatelessWidget {
   }
 }
 
-// 로그인 뒤 — 로그아웃하면 쌓인 룸 상세도 같이 닫히게 Navigator 를 새로
+// 로그인 뒤 — 공통 틀(탭 4). 로그아웃하면 쌓인 화면도 같이 닫히게 Navigator 를 새로
 class _Home extends StatelessWidget {
   const _Home();
   @override
   Widget build(BuildContext context) => Navigator(
         key: ValueKey(AppScope.of(context).session?.id),
-        onGenerateRoute: (_) => MaterialPageRoute(builder: (_) => const BoardScreen()),
+        onGenerateRoute: (_) => MaterialPageRoute(builder: (_) => const Shell()),
       );
 }

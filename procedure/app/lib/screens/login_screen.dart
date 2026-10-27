@@ -1,4 +1,4 @@
-// 로그인(SPEC-004 §6.1 · 2026-10-21 사용자 결정) — 로고 · 「시술 현황」 / 서버 주소 입력칸 · [연결 확인] / 아이디 · 비밀번호 → [로그인]
+// 로그인(SPEC-004 §6.1 · 2026-10-21 사용자 결정) — 로고 · 「예약 · 시술 현황」 / 서버 주소 입력칸 · [연결 확인] / 아이디 · 비밀번호 → [로그인]
 // 계정 카드 없음. 실패 401 · 잠금 429 = 폼 아래 빨간 한 줄. 아이디만 기억(키체인) — 비밀번호는 저장하지 않는다
 import 'package:flutter/material.dart';
 
@@ -192,7 +192,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   children: [
                     const Center(child: CeramiqueLogo(size: 26)),
                     const SizedBox(height: 6),
-                    Center(child: Text('시술 현황', style: Typo.titleMd600)),
+                    Center(child: Text('예약 · 시술 현황', style: Typo.titleMd600)),
                     const SizedBox(height: 28),
                     // 서버 주소 · [연결 확인] — debug 빌드만(로컬 시뮬레이터 확인용)
                     if (AppScope.read(context).server.editable) ..._serverRow(label),

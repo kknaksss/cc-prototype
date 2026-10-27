@@ -14,6 +14,7 @@ import type {
   ResvBoard,
   ResvDetail,
   ResvForm,
+  ResvNotice,
 } from './types';
 
 // NEXT_PUBLIC_* 는 Next 가 빌드(또는 dev 시작) 때 번들에 박는다 — 값은 둘 중 하나로 들어온다
@@ -131,3 +132,6 @@ export const discharge = (id: number) => post<Ok>(`/api/reservations/${id}/disch
 export const savePersonal = (customerId: number, personal: Partial<Personal>) => put<Ok>(`/api/customers/${customerId}/personal`, { personal });
 export const saveRemark = (customerId: number, memo: string) => put<Ok>(`/api/customers/${customerId}/remark`, { memo });
 export const setIdentity = (customerId: number, status: 'confirmed' | 'unconfirmed') => put<Ok>(`/api/customers/${customerId}/identity`, { status });
+// §5.15 공지 저장 — back 이 그 날 공지를 다시 읽어 고침 · 새로 · 지우기(빈 내용). noticeId = 화면이 고친 ccc 행 id(기록용)
+export const saveNotice = (date: string, noticeId: number | null, content: string) =>
+  put<{ ok: true; notice: ResvNotice | null }>('/api/reservations/notice', { date, noticeId, content });

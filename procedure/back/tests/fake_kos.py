@@ -53,7 +53,7 @@ RESV_NAMES = {
     "get-visitor-questionnaire", "get-questionnaire-submit", "get-schedules-by-visitor", "get-schedule-detail",
     "find-duplicated-visitor", "create-visitor", "reserve", "update-reservation", "cancel-reservation",
     "change-reservation-memo", "update-visitor-personal-information", "update-visitor-management-information",
-    "recept", "add-flow-tasks",
+    "recept", "add-flow-tasks", "change-content", "create-notice", "delete-notice",
 }
 DAY = datetime(2026, 10, 21, tzinfo=UTC)  # 시험 날짜(수요일) — KST 하루 = 전날 15:00Z ~ 15:00Z
 
@@ -203,7 +203,8 @@ class ResvFake:
         if name == "get-notices":
             lo, hi = _rng(body)
             return httpx.Response(200, json={"data": [deepcopy(n) for n in self.notices
-                                                      if lo <= datetime.fromisoformat(n["releaseDateTimeUtc"]
+                                                      if not (n["deleted"] and body.get("deleted") is False)
+                                                      and lo <= datetime.fromisoformat(n["releaseDateTimeUtc"]
                                                                                      .replace("Z", "+00:00")) < hi]})
         if name == "get-purchase-summaries":
             return httpx.Response(200, json={"data": [deepcopy(self.purchases[i]) for i in body["purchaseIds"]
@@ -249,6 +250,8 @@ class ResvFake:
             return httpx.Response(200, json={"data": {"id": vid}})
         if name == "reserve":
             return self._reserve(body)
+        if name in ("change-content", "create-notice", "delete-notice"):
+            return self._notice(name, body)
         sch = self._resv_sch(body.get("scheduleId") or body.get("id"))
         if name in ("update-visitor-personal-information", "update-visitor-management-information"):
             v = self.visitors[body["id"]]
@@ -294,6 +297,24 @@ class ResvFake:
                     sch["reservation"]["status"] = "COMPLETED"
             self._later(name, f)
         return ok
+
+    def _notice(self, name, body):
+        """공지 쓰기(notice 리포트 §1 · §2 — 데모 실호출 모양). 지우기 = 소프트 삭제 · 빈 고치기는 거절."""
+        if name == "create-notice":
+            self._new += 1
+            n = {"id": f"ntc-new-{self._new}", "content": body["content"],
+                 "releaseDateTimeUtc": body["releaseDateTimeUtc"].replace(".000Z", "Z"), "deleted": False}
+            self.notices.append(n)
+            return httpx.Response(200, json={"data": deepcopy(n)})
+        n = next((x for x in self.notices if x["id"] == body.get("id") and not x["deleted"]), None)
+        if n is None or (name == "change-content" and not (body.get("content") or "").strip()):
+            return httpx.Response(400, json={"className": "InvalidRequestException",
+                                             "errorProperties": [{"key": "content" if n else "id", "reason": "NotAvailable"}]})
+        if name == "change-content":
+            n["content"] = body["content"]
+        else:
+            n["deleted"] = True
+        return httpx.Response(200, json={})
 
     def _reserve(self, body):
         self._new += 1

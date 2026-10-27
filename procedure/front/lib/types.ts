@@ -309,7 +309,8 @@ export interface ResvBoard {
   slots: ResvSlot[];
   rows: ResvRow[];
   counts: ResvCounts;
-  notices: ResvNotice[];
+  notices: ResvNotice[]; // 0.4.0: 화면은 첫 번째 하나만(§5.15)
+  noticeEditable: boolean; // 0.4.0 — 보는 날짜 ≥ 오늘(KST) · [수정하기] 보임(§5.15)
   requests: unknown[]; // D-07 자리만 — 늘 빈 배열
   clinic: Clinic | null; // 오늘만
 }

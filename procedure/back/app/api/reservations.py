@@ -1,7 +1,7 @@
 """예약 현황 API(SPEC-005 §7) — HTTP 만. 규칙 · KOS 호출은 service 가 한다.
 
 GET 넷(§7.2 ~ §7.4)은 `PROC_FAKE_BOARD` 면 지어낸 값 · 조작(§7.5)은 `require_real_board`(403 fake_board).
-10-27 E2E: PUT route 없앰(진행 경로 = 접수 본문 route) · POST consultation-add 넣음.
+10-27 E2E: PUT route 없앰(진행 경로 = 접수 본문 route) · POST consultation-add 넣음 · 0.4.0 PUT notice(D-61).
 역할은 네 개 모두 ○(§7.1 · D-30) — 로그인만 본다.
 """
 
@@ -18,6 +18,8 @@ from app.schemas.reservations import (
     IdentityRequest,
     MemoRequest,
     MoveRequest,
+    NoticeRequest,
+    NoticeResponse,
     PersonalRequest,
     ReceptionRequest,
     ReceptionResponse,
@@ -67,6 +69,11 @@ async def search(c: Ctr, _: Actor, name: str | None = None, phone: str | None = 
 @router.post("/reservations", response_model=CreateReservationResponse, dependencies=write)
 async def create(body: CreateReservationRequest, c: Ctr, actor: Actor) -> CreateReservationResponse:
     return await c.resv.create(actor, body)
+
+
+@router.put("/reservations/notice", response_model=NoticeResponse, dependencies=write)
+async def notice(body: NoticeRequest, c: Ctr, actor: Actor) -> NoticeResponse:
+    return await c.resv.notice(actor, body)
 
 
 @router.post("/reservations/{reservation_id}/move", response_model=OkResponse, dependencies=write)

@@ -234,13 +234,14 @@ def test_old_schema_db_keeps_rows(tmp_path):
 
 
 # ------------------------------------------------------------------ 경로 수(§7.4)
-def test_route_count_34(client):
-    """back 경로 34 = HTTP 33(router 32 + health) + 통역 WS 1 — 시술 현황 19 에 예약 현황 HTTP 15 더함(SPEC-005 §7.6)."""
+def test_route_count_35(client):
+    """back 경로 35 = HTTP 34(router 33 + health) + 통역 WS 1 — 시술 현황 19 에 예약 현황 HTTP 16 더함(SPEC-005 §7.6 0.4.0)."""
     from app.api import interpret
 
     http = {(m.upper(), p) for p, ops in client.app.openapi()["paths"].items() for m in ops}
     ws = [r.path for r in interpret.router.routes if type(r).__name__ == "APIWebSocketRoute"]
     assert ("PUT", URL) in http and ws == ["/api/interpret"]
     assert {("POST", "/api/procedures/{procedure_id}/undo-start"), ("POST", "/api/procedures/{procedure_id}/undo-finish")} <= http
-    assert len([x for x in http if "/reservations" in x[1] or "/customers" in x[1]]) == 15
-    assert len(http) + len(ws) == 34, sorted(http)
+    assert ("PUT", "/api/reservations/notice") in http
+    assert len([x for x in http if "/reservations" in x[1] or "/customers" in x[1]]) == 16
+    assert len(http) + len(ws) == 35, sorted(http)

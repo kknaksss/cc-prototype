@@ -210,7 +210,7 @@ def board(now: datetime, date_value: str | None) -> ReservationBoard:
         "axis": {"start": AXIS[0], "end": AXIS[1]},
         "zones": ZONES, "columns": columns, "cards": cards, "slots": slots, "rows": rows, "counts": counts,
         "notices": [{"id": 1, "content": "공지 예시입니다.\n오후 2시 레이저실 점검이 있어요.", "releasedAt": at("09:30")}],
-        "requests": [], "clinic": clinic,
+        "noticeEditable": day >= today, "requests": [], "clinic": clinic,
     })
 
 

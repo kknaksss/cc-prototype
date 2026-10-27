@@ -1,10 +1,11 @@
 'use client';
 
 // 오른쪽 패널(SPEC-005 §6.4 · 시안 M:164-243) — 폭 340 · 넓은 화면만
-// 「예약 요청」 = 그 날짜 KOS 공지(읽기만) + 예약 요청 자리(빈 상태 · D-07) / 「원내 현황」 = 오늘만 · 구역별 묶음 · 필터 5 · 금액 3칸
+// 「예약 요청」 = 그 날짜 KOS 공지 하나(제자리 편집 [수정하기] — §5.15) + 예약 요청 자리(빈 상태 · D-07) / 「원내 현황」 = 오늘만 · 구역별 묶음 · 필터 5 · 금액 3칸
 import { useState } from 'react';
-import { Badge, Tabs, type BadgeVariant } from '@medisolve-ai/medikit';
-import type { ClinicItem, ResvBoard, ResvMain } from '@/lib/types';
+import { Badge, Button, Tabs, Textarea, type BadgeVariant } from '@medisolve-ai/medikit';
+import * as api from '@/lib/api';
+import type { ClinicItem, ResvBoard, ResvMain, ResvNotice } from '@/lib/types';
 import { Flag, moneyOf, phaseOfSub, phaseStyle, stateText } from './view';
 
 export type ResvTab = 'requests' | 'clinic';
@@ -25,10 +26,33 @@ const FILTERS: { id: ClinicFilter; name: string; dot: string }[] = [
 
 // 공지 영역 = 패널 높이의 이 비율(시안 420 고정 → 화면 높이에 비례 · E2E #20 「지금보다 크게」)
 const NOTICE_SHARE = '55%';
+const NOTICE_MAX = 2000; // 공지 글자 수 상한(trim 길이 — §5.15 · KOS 웹과 같음)
 
 const BADGE: Partial<Record<ResvMain, BadgeVariant>> = { reception: 'warning', consultation: 'primary', procedure: 'primary', home: 'neutral' };
 
-export function ResvAside({ board, tab, onTab, onOpen }: { board: ResvBoard; tab: ResvTab; onTab: (t: ResvTab) => void; onOpen: (reservationId: number) => void }) {
+export function ResvAside({
+  board,
+  tab,
+  onTab,
+  onOpen,
+  draft,
+  onDraft,
+  isShownDate,
+  onNoticeSaved,
+  onToast,
+  onError,
+}: {
+  board: ResvBoard;
+  tab: ResvTab;
+  draft: NoticeDraft | null;
+  onDraft: (d: NoticeDraft | null) => void;
+  isShownDate: (date: string) => boolean; // 지금 보는 날짜인가 — 늦은 다시 읽기 응답 거르기(리뷰 r3 W3)
+  onTab: (t: ResvTab) => void;
+  onOpen: (reservationId: number) => void;
+  onNoticeSaved: () => void;
+  onToast: (text: string) => void;
+  onError: (e: unknown) => void;
+}) {
   const [filter, setFilter] = useState<ClinicFilter>('all');
   const select = (t: string) => {
     // 탭을 옮기면 필터는 「전체」로(시안)
@@ -43,29 +67,138 @@ export function ResvAside({ board, tab, onTab, onOpen }: { board: ResvBoard; tab
       <div style={{ padding: '8px 16px 0' }}>
         <Tabs tabs={TABS} selectedTab={tab} onSelectTab={select} />
       </div>
-      {tab === 'requests' ? <RequestsTab board={board} /> : <ClinicTab board={board} filter={filter} onFilter={setFilter} onOpen={onOpen} />}
+      {tab === 'requests' ? (
+        <RequestsTab
+          key={board.date}
+          board={board}
+          draft={draft?.date === board.date ? draft : null}
+          onDraft={onDraft}
+          isShownDate={isShownDate}
+          onNoticeSaved={onNoticeSaved} onToast={onToast} onError={onError} />
+      ) : (
+        <ClinicTab board={board} filter={filter} onFilter={setFilter} onOpen={onOpen} />
+      )}
     </aside>
   );
 }
 
-function RequestsTab({ board }: { board: ResvBoard }) {
+// 공지 편집 상태 — noticeId = 다시 읽은 그 날 첫 공지의 ccc 행 id(없으면 null · 기록용)
+// 편집 글자는 페이지가 든다 — 탭을 옮겨도 남고, 날짜를 옮기면 페이지가 버린다 + 토스트(추가 지시 1)
+export interface NoticeDraft {
+  date: string;
+  noticeId: number | null;
+  text: string;
+}
+
+function RequestsTab({
+  board,
+  draft,
+  onDraft: setDraft,
+  isShownDate,
+  onNoticeSaved,
+  onToast,
+  onError,
+}: {
+  board: ResvBoard;
+  draft: NoticeDraft | null;
+  onDraft: (d: NoticeDraft | null) => void;
+  isShownDate: (date: string) => boolean;
+  onNoticeSaved: () => void;
+  onToast: (text: string) => void;
+  onError: (e: unknown) => void;
+}) {
+  const [busy, setBusy] = useState<'open' | 'save' | null>(null);
+  // 저장 직후 응답의 공지를 다음 표 응답이 올 때까지 보인다(그 사이 앞 내용이 번쩍이지 않게)
+  const [saved, setSaved] = useState<{ base: ResvBoard; notice: ResvNotice | null } | null>(null);
+  const notice = saved && saved.base === board ? saved.notice : (board.notices[0] ?? null); // 그 날 공지 하나 = 첫 번째(§5.15)
+  const editable = board.noticeEditable;
+  const len = draft ? draft.text.trim().length : 0;
+  const over = len > NOTICE_MAX;
+
+  // [수정하기] — 그 날 공지를 다시 불러 편집 시작(누를 때 다시 읽기 — KOS 웹과 같음 · §5.15)
+  const open = async () => {
+    setBusy('open');
+    try {
+      const date = board.date;
+      const b = await api.reservationBoard(date);
+      if (!isShownDate(date)) return; // 응답 전에 날짜를 옮겼으면 버린다(리뷰 r3 W3)
+      const n = b.notices[0] ?? null;
+      setDraft({ date, noticeId: n?.id ?? null, text: n?.content ?? '' });
+    } catch (e) {
+      onError(e);
+    } finally {
+      setBusy(null);
+    }
+  };
+  // [저장] — 빈 내용 = 지우기(back 이 정함). 실패면 편집 상태 그대로(쓴 글자 유지)
+  const save = async () => {
+    if (!draft || over) return;
+    setBusy('save');
+    try {
+      const r = await api.saveNotice(board.date, draft.noticeId, draft.text);
+      setSaved({ base: board, notice: r.notice });
+      setDraft(null);
+      onToast('공지를 저장했어요');
+      onNoticeSaved();
+    } catch (e) {
+      onError(e);
+    } finally {
+      setBusy(null);
+    }
+  };
+
   return (
     <>
-      {/* 공지사항 — 그 날짜 KOS 공지 목록 · 읽기만([수정하기] 없음 — OQ-737)
-          높이 = 패널의 고정 비율(공지 없어도 자리 유지 · 넘치면 안에서 스크롤 — E2E #5 · #20) · 시각 글자 없음(E2E #19) */}
+      {/* 공지사항 — 그 날짜 KOS 공지 하나(첫 번째 · §5.15) · 오늘 · 앞날만 [수정하기] → 제자리 편집 · 「저장」 · [취소] · 글자 수
+          높이 = 패널의 고정 비율(공지 없어도 자리 유지 · 넘치면 안에서 스크롤 — E2E #5 · #20) · 시각 글자 없음(E2E #19)
+          편집 중에는 10초 폴링이 공지 칸을 덮지 않는다(편집 글자는 이 칸의 상태) */}
       <div style={{ flex: `0 0 ${NOTICE_SHARE}`, minHeight: 0, boxSizing: 'border-box', padding: '12px 16px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <span className="text-typo-heading-sm-600 text-ms-gray-800">공지사항</span>
-        <div style={{ flex: 1, overflowY: 'auto', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {board.notices.length ? (
-            board.notices.map((n) => (
-              <span key={n.id} className="text-typo-body-400 text-ms-gray-800" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                {n.content}
-              </span>
-            ))
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, minHeight: 32 }}>
+          <span className="text-typo-heading-sm-600 text-ms-gray-800">공지사항</span>
+          {draft ? (
+            <div style={{ display: 'flex', gap: 6 }}>
+              <Button variant="text" color="gray" size="sm" disabled={busy !== null} onClick={() => setDraft(null)}>
+                취소
+              </Button>
+              <Button variant="outlined" color="blue" size="sm" disabled={busy !== null || over} onClick={() => void save()}>
+                {busy === 'save' ? '저장 중…' : '저장'}
+              </Button>
+            </div>
           ) : (
-            <span className="text-typo-body-400 text-ms-gray-500">이 날짜 공지가 없어요</span>
+            editable && (
+              <Button variant="outlined" color="gray" size="sm" disabled={busy !== null} onClick={() => void open()}>
+                {busy === 'open' ? '불러오는 중…' : '수정하기'}
+              </Button>
+            )
           )}
         </div>
+        {draft ? (
+          <>
+            <Textarea
+              aria-label="공지 내용"
+              autoFocus
+              value={draft.text}
+              onChange={(e) => setDraft({ ...draft, text: e.target.value })}
+              placeholder="이 날짜 공지를 적어 주세요 · 비우고 저장하면 공지가 지워져요"
+              isError={over}
+              containerClassName="flex-1 min-h-0"
+              textareaClassName="text-ms-gray-800"
+            />
+            <span className={'text-typo-caption-md-400 ' + (over ? 'text-red' : 'text-ms-gray-500')} style={{ alignSelf: 'flex-end', fontVariantNumeric: 'tabular-nums' }}>
+              {len.toLocaleString()} / {NOTICE_MAX.toLocaleString()}
+            </span>
+          </>
+        ) : (
+          <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+            {notice ? (
+              <span className="text-typo-body-400 text-ms-gray-800" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                {notice.content}
+              </span>
+            ) : (
+              <span className="text-typo-body-400 text-ms-gray-500">이 날짜 공지가 없어요</span>
+            )}
+          </div>
+        )}
       </div>
       {/* 예약 요청 — 자리만(D-07 · 요청 카드 · 승인/반려 없음) */}
       <div

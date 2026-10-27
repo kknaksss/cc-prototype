@@ -437,6 +437,14 @@ class Tx:
                                 "ORDER BY released_at, id", (to_db(start), to_db(end)))
         return [Notice(r["id"], r["kos_id"], r["content"], parse(r["released_at"])) for r in rows]
 
+    def notice_row(self, *, id_: int | None = None, kos_id: str | None = None) -> Notice | None:
+        """ccc 행 하나(지운 행 포함) — 행 id 또는 kos_id 로."""
+        if id_ is None and kos_id is None:
+            return None
+        r = self.con.execute("SELECT * FROM notice WHERE " + ("id = ?" if id_ is not None else "kos_id = ?"),
+                             (id_ if id_ is not None else kos_id,)).fetchone()
+        return Notice(r["id"], r["kos_id"], r["content"], parse(r["released_at"])) if r else None
+
     def funnel_codes(self) -> list[FunnelCode]:
         return [FunnelCode(r["id"], r["kos_id"], r["name"], r["order"], bool(r["closed"]), bool(r["is_default"]))
                 for r in self.con.execute('SELECT * FROM funnel_code ORDER BY "order", id')]

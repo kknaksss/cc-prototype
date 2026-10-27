@@ -92,24 +92,24 @@ export function ScheduleTable({
     return out;
   }, [a0, a1]);
 
-  // 칸 · 줄별 카드(시작 순). 끄는 중 놓을 수 있는 칸이면 그 카드를 그 칸으로 옮겨 미리 보인다(시안 bkOverCell → preview)
+  // 칸 · 줄별 카드(시작 순)
+  // 끄는 카드(원본)는 끄는 동안 제자리에 그대로 둔다 — 원본 DOM 을 다른 칸으로 옮기거나 순서를 바꾸면 브라우저가 끌기를 바로 끝낸다
+  // (b4 #1 「카드가 안 잡혀」 원인). 놓을 칸 미리보기는 따로 그리는 복제 카드(시안 bkOverCell → preview)
   const dragKey = drag ? cardKey(drag) : null;
   const cells = useMemo(() => {
     const m = new Map<string, ResvCard[]>();
-    const put = (gid: number | null, slot: number, c: ResvCard) => {
-      const k = gid + '|' + slot;
-      m.set(k, [...(m.get(k) ?? []), c]);
-    };
     const sorted = [...board.cards].sort((a, b) => (kstMin(a.start) ?? 0) - (kstMin(b.start) ?? 0) || a.reservationId - b.reservationId);
     for (const c of sorted) {
       const slot = slotOf(c);
       if (slot === null) continue;
-      if (dragKey && cardKey(c) === dragKey && over?.allowed) continue; // 미리보기 자리로 옮김
-      put(c.groupId, slot, c);
+      const k = c.groupId + '|' + slot;
+      m.set(k, [...(m.get(k) ?? []), c]);
     }
-    if (drag && over?.allowed) put(board.columns[over.ci]?.groupId ?? null, over.m, drag);
     return m;
-  }, [board.cards, board.columns, drag, dragKey, over]);
+  }, [board.cards]);
+  // 미리보기 자리 = 놓을 수 있는 칸 · 제자리가 아닌 곳
+  const previewAt =
+    drag && over?.allowed && !(board.columns[over.ci]?.groupId === drag.groupId && over.m === slotOf(drag)) ? (board.columns[over.ci]?.groupId ?? null) + '|' + over.m : null;
   const cellCards = (gid: number | null, m: number) => cells.get(gid + '|' + m) ?? [];
 
   // 칸 폭 — mx = 그 칸 한 줄에 놓인 카드 최대 수(최소 1) · perRow 상한(시안 M:1722-1726)
@@ -117,11 +117,14 @@ export function ScheduleTable({
     () =>
       board.columns.map((col) => {
         let mx = 1;
-        for (const m of times) mx = Math.max(mx, (cells.get(col.groupId + '|' + m) ?? []).length);
+        for (const m of times) {
+          const k = col.groupId + '|' + m;
+          mx = Math.max(mx, (cells.get(k) ?? []).length + (k === previewAt ? 1 : 0));
+        }
         mx = Math.min(mx, perRow);
         return 13 + mx * CARD_W + (mx - 1) * GAP;
       }),
-    [board.columns, times, cells, perRow],
+    [board.columns, times, cells, perRow, previewAt],
   );
   const grid = LABEL_W + 'px ' + widths.map((w) => w + 'px').join(' ');
 
@@ -273,24 +276,27 @@ export function ScheduleTable({
                   >
                     {list.map((c) => {
                       const k = cardKey(c);
-                      const preview = !!drag && k === dragKey && !!ov?.allowed;
                       return (
                         <CardView
                           key={k}
                           card={c}
-                          preview={preview}
+                          dragging={k === dragKey}
                           focused={focusId === c.reservationId}
                           onOpen={() => onOpen(c.reservationId)}
                           onDragStart={(e) => {
                             e.dataTransfer.effectAllowed = 'move';
                             e.dataTransfer.setData('text/plain', k);
-                            setHover(null);
-                            setDrag(c);
+                            // 상태 바꿈(다시 그림)은 끌기가 시작된 다음 틱에 — dragstart 안에서 DOM 을 바꾸면 끌기가 취소되는 브라우저가 있다
+                            setTimeout(() => {
+                              setHover(null);
+                              setDrag(c);
+                            }, 0);
                           }}
                           onDragEnd={endDrag}
                         />
                       );
                     })}
+                    {drag && previewAt === gid + '|' + m && <CardView key="preview" card={drag} preview />}
                     {/* 빈 자리 호버 [+] — 카드 뒤 같은 흐름 · 폭 196 · 최소 높이 50 · 위 검은 툴팁(시안 M:151-156) */}
                     {showAdd && (
                       <div style={{ position: 'relative', flex: '0 0 196px', minHeight: 50 }}>
@@ -328,21 +334,25 @@ export function ScheduleTable({
 }
 
 // 예약 카드(§6.3 · 시안 M:130-149) — 폭 196 · 반경 6 · 왼쪽 막대 4px = 주 상태 색 · 내용 2줄(시간 길이로 늘리지 않는다)
+// preview = 놓을 칸에 그리는 복제(점선 · 누를 수 없음) · dragging = 끄는 중인 원본(제자리에 흐리게)
 function CardView({
   card,
-  preview,
-  focused,
+  preview = false,
+  dragging = false,
+  focused = false,
   onOpen,
   onDragStart,
   onDragEnd,
 }: {
   card: ResvCard;
-  preview: boolean;
-  focused: boolean;
-  onOpen: () => void;
-  onDragStart: (e: React.DragEvent) => void;
-  onDragEnd: () => void;
+  preview?: boolean;
+  dragging?: boolean;
+  focused?: boolean;
+  onOpen?: () => void;
+  onDragStart?: (e: React.DragEvent) => void;
+  onDragEnd?: () => void;
 }) {
+  const canDrag = card.draggable && !preview;
   const c = card.customer;
   const bar = barStyle(card.state);
   const g = genderIcon(c.gender);
@@ -350,15 +360,16 @@ function CardView({
   const closed = isClosed(card.state);
   return (
     <div
-      data-resv={card.reservationId}
-      role="button"
-      tabIndex={0}
+      data-resv={preview ? undefined : card.reservationId}
+      role={preview ? undefined : 'button'}
+      tabIndex={preview ? undefined : 0}
+      aria-hidden={preview || undefined}
       onClick={onOpen}
       onKeyDown={(e) => {
-        if (e.key === 'Enter') onOpen();
+        if (e.key === 'Enter') onOpen?.();
       }}
-      draggable={card.draggable}
-      onDragStart={card.draggable ? onDragStart : undefined}
+      draggable={canDrag}
+      onDragStart={canDrag ? onDragStart : undefined}
       onDragEnd={onDragEnd}
       className={preview ? 'bg-primary-100 border-primary' : 'bg-ms-white border-ms-gray-300'}
       style={{
@@ -370,8 +381,9 @@ function CardView({
         borderStyle: preview ? 'dashed' : 'solid',
         borderRadius: 6,
         overflow: 'hidden',
-        cursor: card.draggable ? 'grab' : 'pointer',
-        opacity: closed ? 0.5 : 1,
+        cursor: canDrag ? 'grab' : 'pointer',
+        opacity: dragging ? 0.4 : closed ? 0.5 : 1,
+        pointerEvents: preview ? 'none' : undefined,
         outline: focused ? '2px solid var(--ms-primary, #2498bd)' : 'none',
       }}
     >

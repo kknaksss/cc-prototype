@@ -49,9 +49,10 @@ from app.domain.reservation_rules import (
     sum_amounts,
 )
 from app.kos.client import KosError
-from app.kos.reservation_sync import PATH_DETAIL, PATH_PURCHASES, apply_schedule, upsert_customer
+from app.kos.reservation_sync import PATH_DETAIL, PATH_NOTICES, PATH_PURCHASES, apply_schedule, upsert_customer
 from app.repository.repo import Repository, Tx
 from app.schemas.reservations import (
+    NOTICE_MAX,
     SNS_TYPES,
     CreateReservationRequest,
     CreateReservationResponse,
@@ -60,6 +61,8 @@ from app.schemas.reservations import (
     MoveRequest,
     NewCustomer,
     NewCustomerRef,
+    NoticeRequest,
+    NoticeResponse,
     PersonalIn,
     ReservationBoard,
     ReservationDetail,
@@ -84,6 +87,9 @@ PATH_DUPLICATED = "visitor/v1/queries/find-duplicated-visitor"
 PATH_CREATE_VISITOR = "v1/visitor/commands/create-visitor"
 PATH_PERSONAL = "visitor/v2/commands/update-visitor-personal-information"
 PATH_MANAGEMENT = "visitor/v2/commands/update-visitor-management-information"
+PATH_NOTICE_CHANGE = "meta/notice/v1/commands/change-content"
+PATH_NOTICE_CREATE = "meta/notice/v1/commands/create-notice"
+PATH_NOTICE_DELETE = "meta/notice/v1/commands/delete-notice"
 NO_KOS = "KOS 설정이 비어 있어요"
 
 
@@ -344,7 +350,7 @@ class ReservationService:
             "zones": [{"zoneId": z.id, "title": z.title, "order": z.order, "isDefault": z.is_default} for z in ctx.zones],
             "columns": columns, "cards": cards, "slots": slot_rows, "rows": rows, "counts": counts,
             "notices": [{"id": n.id, "content": n.content, "releasedAt": iso(n.released_at)} for n in notices],
-            "requests": [], "clinic": self._clinic(ctx, resvs) if day == today else None,
+            "noticeEditable": day >= today, "requests": [], "clinic": self._clinic(ctx, resvs) if day == today else None,
         })
 
     def _clinic(self, ctx: ResvContext, resvs: list[Reservation]) -> dict[str, Any]:
@@ -967,6 +973,51 @@ class ReservationService:
         with self.repo.tx() as tx:
             self._event(tx, actor, "resv_memo", {"reservationId": r.id})
         self.after_write(r.day)
+
+    # ------------------------------------------------------------------ §5.15 공지 [저장]
+    async def notice(self, actor: Account, body: NoticeRequest) -> NoticeResponse:
+        """그 날 공지 하나 저장 — 저장 직전 KOS 를 다시 읽어(캐시 없음) 고치기 · 새로 쓰기 · 비우기(§5.15 표 · §8)."""
+        if not body.date:
+            raise BadRequest("invalid_request", "date: YYYY-MM-DD 꼴이어야 해요")
+        now = self.clock.now()
+        day = parse_day(body.date, now)
+        text = body.content.strip()
+        if len(text) > NOTICE_MAX:
+            raise BadRequest("invalid_request", f"content: {NOTICE_MAX}자까지 쓸 수 있어요")
+        if day < now.astimezone(KST).date():
+            raise Conflict("notice_past_date", "지난 날짜 공지는 고칠 수 없어요")
+        start, end = day_range(day)
+        client = self.client()
+        resp = await self.kos_write(actor, "get-notices", client.internal(
+            PATH_NOTICES, {"startDateTimeUtc": kos_utc(start), "endDateTimeUtc": kos_utc(end), "deleted": False}))
+        rows = [n for n in (resp.get("data") if isinstance(resp.get("data"), list) else [])
+                if isinstance(n, dict) and n.get("id") and not n.get("deleted")]
+        with self.repo.tx() as tx:  # 화면이 고른 행(ccc id → kos_id · Q-143)
+            picked = tx.notice_row(id_=body.noticeId) if body.noticeId is not None else None
+        # 저장 대상 = 고른 행이 다시 읽은 목록에 있으면 그것 · 없으면 KOS 응답 첫 번째(추가 지시 1 W1)
+        target = next((n for n in rows if picked and str(n["id"]) == picked.kos_id), rows[0] if rows else None)
+        if target is None and not text:
+            return NoticeResponse(notice=None)  # 공지 없음 + 빈 값 = 호출 없음 · event_log 없음
+        if target is None:
+            action, path, req = "create", PATH_NOTICE_CREATE, {"content": text, "releaseDateTimeUtc": kos_utc(start)}
+        elif text:
+            # 고치기 = trim 안 한 값(KOS 웹과 같음)
+            action, path, req = "change", PATH_NOTICE_CHANGE, {"id": str(target["id"]), "content": body.content}
+        else:
+            action, path, req = "delete", PATH_NOTICE_DELETE, {"id": str(target["id"])}  # 비우기 = 지우기(소프트 삭제)
+        out = await self.kos_write(actor, path.rsplit("/", 1)[-1], client.internal(path, req))
+        made = out.get("data") if isinstance(out, dict) and isinstance(out.get("data"), dict) else {}
+        kos_id = str(target["id"]) if target is not None else (str(made["id"]) if made.get("id") else None)
+        self.after_write(day.isoformat())
+        await self.ensure_day(day)  # 다시 읽기 → 사본(create = 새 행 · delete = 지운 행 표시)
+        with self.repo.tx() as tx:
+            n = tx.notice_row(kos_id=kos_id) if kos_id else None
+            # event_log noticeId = 저장 뒤 다시 읽은 행의 ccc id(추가 지시 1 W2-2)
+            self._event(tx, actor, "notice_save", {"date": day.isoformat(), "op": action, "noticeId": n.id if n else None,
+                                                   "requestedNoticeId": body.noticeId, "length": len(text)})
+        if action == "delete" or n is None:
+            return NoticeResponse(notice=None)  # 지웠으면 null(§7.5)
+        return NoticeResponse.model_validate({"notice": {"id": n.id, "content": n.content, "releasedAt": iso(n.released_at)}})
 
     # ------------------------------------------------------------------ §5.13 고객 정보 · 특이사항
     async def personal(self, actor: Account, customer_id: int, personal: PersonalIn) -> None:

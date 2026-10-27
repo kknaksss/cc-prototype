@@ -19,6 +19,7 @@ OPS = [
     ("put", "/api/customers/1/personal", {"personal": {"passportNumber": "X1"}}),
     ("put", "/api/customers/1/remark", {"memo": "m"}),
     ("put", "/api/customers/1/identity", {"status": "confirmed"}),
+    ("put", "/api/reservations/notice", {"date": "2026-10-26", "noticeId": 1, "content": "공지"}),
 ]
 
 
@@ -34,8 +35,8 @@ def test_board_shape(fake):
     body = fake.get("/api/reservations/board").json()
     ReservationBoard.model_validate(body)
     assert set(body) == {"date", "isToday", "now", "sync", "axis", "zones", "columns", "cards", "slots", "rows", "counts",
-                         "notices", "requests", "clinic"}
-    assert body["isToday"] and body["now"].endswith("+09:00") and body["requests"] == []
+                         "notices", "noticeEditable", "requests", "clinic"}
+    assert body["isToday"] and body["noticeEditable"] is True and body["now"].endswith("+09:00") and body["requests"] == []
     cols = body["columns"]
     assert len(cols) == 14 and cols[-1]["groupId"] is None and cols[-1]["title"] == "그룹 없음"
     assert sum(1 for c in cols if len(c["capacities"]) == 2) == 1 and len(body["zones"]) == 2
@@ -51,6 +52,8 @@ def test_board_shape(fake):
 def test_board_other_day_has_no_clinic(fake):
     body = fake.get("/api/reservations/board?date=2030-01-01").json()
     assert body["date"] == "2030-01-01" and body["isToday"] is False and body["clinic"] is None
+    assert body["noticeEditable"] is True  # 앞날 = [수정하기] 보임(§5.15)
+    assert fake.get("/api/reservations/board?date=2020-01-01").json()["noticeEditable"] is False
 
 
 @pytest.mark.parametrize("bad", ["2026-1-1", "x", "2026-13-01"])

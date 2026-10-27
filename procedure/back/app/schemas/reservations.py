@@ -162,7 +162,8 @@ class ReservationBoard(BaseModel):
     slots: list[Slot]
     rows: list[PlusRow]
     counts: BoardCounts
-    notices: list[Notice]
+    notices: list[Notice]  # 0.4.0: front 는 첫 번째 하나만(§5.15)
+    noticeEditable: bool  # 0.4.0 — 보는 날짜 ≥ 오늘(KST) · [수정하기] 보임(§5.15)
     requests: list[dict]  # D-07 자리만 — 늘 빈 배열
     clinic: Clinic | None
 
@@ -493,6 +494,22 @@ class CancelRequest(_Req):
 
 class MemoRequest(_Req):
     memo: str
+
+
+NOTICE_MAX = 2000  # trim 길이 상한(§5.15 · Q-142)
+
+
+class NoticeRequest(_Req):
+    """§7.5 `PUT /api/reservations/notice` — `noticeId` = 화면이 고친 ccc 행 id(기록용 · Q-143)."""
+
+    date: str
+    noticeId: StrictInt | None = None
+    content: str
+
+
+class NoticeResponse(BaseModel):
+    ok: Literal[True] = True
+    notice: Notice | None  # 지웠거나 빈 날 = null
 
 
 class ReceptionRequest(_Req):

@@ -80,8 +80,10 @@ def test_scan_photo_kos_image_body(env):
     assert up["content"] == JPEG and up["contentType"] == "image/jpeg" and up["auth"] is None
     assert sent(fake, "generate-uploading-url")[-1] == {"fileName": row["file_name"]}
     reg = fake.registered[-1]["images"]
-    assert len(reg) == 1 and set(reg[0]) == {"fileName", "visitorId", "source", "shootingDateTimeUtc", "equipment", "memo"}
-    assert "category" not in reg[0] and "scheduleId" not in reg[0] and "path" not in reg[0]
+    assert len(reg) == 1 and set(reg[0]) == {"fileName", "visitorId", "source", "scheduleId", "shootingDateTimeUtc",
+                                             "equipment", "memo"}
+    assert reg[0]["scheduleId"] == "s1"  # 그 예약 일정(E2E batch 2 #5 — KOS 일정 「사진 · 펜차트」)
+    assert "category" not in reg[0] and "path" not in reg[0]
     assert (reg[0]["fileName"], reg[0]["visitorId"], reg[0]["source"], reg[0]["memo"]) == (
         row["file_name"], "vis-1", "HOSPITAL", "ccc 여권 스캔")
     assert reg[0]["equipment"] == fake.equipment[0]  # get-codes 「태블릿」 객체 그대로(6키)
@@ -290,3 +292,15 @@ def test_scan_api_manual_without_photo(api):
     assert r.status_code == 200 and r.json()["photo"] is None and r.json()["photoId"] is None
     r = client.post(f"/api/customers/{cid}/passport-scan", data={**data, "manual": "false"}, headers=auth)
     assert (r.status_code, r.json()["error"]["code"]) == (400, "invalid_request")
+
+
+def test_scan_photo_kos_schedule_id(env):
+    """E2E batch 2 #5 — 예약 없는 스캔 = scheduleId 없음 · kos-retry 도 그 사진의 예약 일정을 싣는다."""
+    c, fake, coord, rid, cid, tab, photos = env
+    scan(c, coord, cid, None, tab)
+    assert "scheduleId" not in fake.registered[-1]["images"][0]
+    fake.fail_paths["s3-put"] = 500
+    out = scan(c, coord, cid, rid, tab)
+    fake.fail_paths.pop("s3-put")
+    assert run(c.photos.retry(coord, out["photoId"])) == "ok"
+    assert fake.registered[-1]["images"][0]["scheduleId"] == "s1"

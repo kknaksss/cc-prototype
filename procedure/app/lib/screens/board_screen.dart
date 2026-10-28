@@ -8,6 +8,7 @@ import '../view/time.dart';
 import '../view/view.dart';
 import '../widgets/accept.dart';
 import '../widgets/header.dart';
+import '../widgets/resv_ui.dart' show ChipRow, StatusChip;
 import '../widgets/ui.dart';
 import 'room_screen.dart';
 import 'shell.dart' show TabScaffold;
@@ -91,25 +92,17 @@ class _BoardScreenState extends State<BoardScreen> {
     final pick = filterFn(filter, b, me);
     final cards = orderedCards(b.cards).where(pick).toList();
     return Column(children: [
-      SizedBox(
-        height: 43,
-        child: ListView(
-          scrollDirection: Axis.horizontal,
-          padding: EdgeInsets.fromLTRB(tablet ? 24 : 16, 10, tablet ? 24 : 16, 0),
-          children: [
-            for (final id in ids)
-              Padding(
-                padding: const EdgeInsets.only(right: 6),
-                child: FilterChipButton(
-                  id: id,
-                  label: '${filterName[id]} ${filterCount(id, b, me)}',
-                  on: filter == id,
-                  onTap: () => setState(() => _filter = id),
-                ),
-              ),
-          ],
-        ),
-      ),
+      // 필터(점 · 이름 · 수) — 공통 StatusChip 한 줄(넘치면 가로 스크롤 · 2026-10-28)
+      ChipRow([
+        for (final id in ids)
+          StatusChip(filterName[id]!,
+              key: ValueKey('filter-$id'),
+              count: filterCount(id, b, me),
+              dot: filterDot[id]?.fill,
+              dotRing: filterDot[id]?.ring,
+              selected: filter == id,
+              onTap: () => setState(() => _filter = id)),
+      ], left: tablet ? 24 : 16, right: tablet ? 24 : 16), // 위 · 아래 여백은 ChipRow
       Expanded(
         child: cards.isEmpty
             ? Center(child: Text('시술 중인 방이 없어요', style: Typo.body500.copyWith(color: Ms.gray600)))
@@ -119,7 +112,7 @@ class _BoardScreenState extends State<BoardScreen> {
                   Widget card(BoardCard c) => RoomCard(board: b, card: c, now: now, me: me);
                   if (!tablet) {
                     return ListView.separated(
-                      padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 24), // 칩 줄 아래 여백은 ChipRow 가
                       itemCount: cards.length,
                       separatorBuilder: (_, _) => const SizedBox(height: 8),
                       itemBuilder: (_, i) => card(cards[i]),
@@ -133,7 +126,7 @@ class _BoardScreenState extends State<BoardScreen> {
                     final cols = ((w + gap) / (minW + gap)).floor().clamp(1, 8);
                     final cw = (w - gap * (cols - 1)) / cols;
                     return SingleChildScrollView(
-                      padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
+                      padding: const EdgeInsets.fromLTRB(24, 0, 24, 24), // 칩 줄 아래 여백은 ChipRow 가
                       // 폭 전체 · 왼쪽 위부터(T5) — 내용 폭으로 줄면 카드 1장이 가운데 뜬다
                       child: SizedBox(
                         width: double.infinity,
@@ -301,41 +294,3 @@ BoardCard? pushTarget(Board b, int visitId) {
   return null;
 }
 
-// 필터 칸 — 점 꼴은 웹(SPEC-003 §5.14 #4 · D7-64): 대기 = ○(흰 속 primary 테두리) · 진행 = ● · 칸 이름 · 「귀가」 · 「수락 대기」는 앱 그대로
-class FilterChipButton extends StatelessWidget {
-  final FilterId id;
-  final String label;
-  final bool on;
-  final VoidCallback onTap;
-  const FilterChipButton({super.key, required this.id, required this.label, required this.on, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    final d = filterDot[id];
-    final h = 33 * uiScale(MediaQuery.sizeOf(context));
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: Container(
-        height: h,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        decoration: BoxDecoration(
-          color: on ? Ms.primary100 : Ms.white,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: on ? Ms.primary : Ms.gray300),
-        ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          if (d != null) ...[
-            Container(
-              width: 10,
-              height: 10,
-              decoration: BoxDecoration(color: d.fill, shape: BoxShape.circle, border: d.ring != null ? Border.all(color: d.ring!, width: 2) : null),
-            ),
-            const SizedBox(width: 6),
-          ],
-          Text(label, style: Typo.caption600.copyWith(fontSize: 13, color: on ? Ms.primary : Ms.gray800)),
-        ]),
-      ),
-    );
-  }
-}

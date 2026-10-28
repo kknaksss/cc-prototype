@@ -101,26 +101,7 @@ Bar barOf(ResvMain main, ResvSub? sub) => switch (main) {
       _ => Bar(mainTone[main]!.fill),
     };
 
-// 상세 머리(웹 headOf) — 바탕 · 글자 · 제목
-class Head {
-  final Color bg, fg;
-  final Color? outline;
-  final String title;
-  const Head(this.bg, this.fg, this.title, {this.outline});
-}
-
-Head headOf(ResvMain main, ResvSub? sub) {
-  final s = sub != null ? subName[sub]! : '';
-  return switch (main) {
-    ResvMain.reserved => const Head(Ms.purple, Ms.white, '접수 전'),
-    ResvMain.reception => const Head(Ms.yellow, Ms.gray800, '접수 완료'),
-    ResvMain.consultation => Head(Ms.cons, Ms.white, '상담 ${s.isEmpty ? '대기' : s}'),
-    ResvMain.procedure => Head(Ms.primary, Ms.white, '시술 ${s.isEmpty ? '대기' : s}'),
-    ResvMain.home => Head(sub == ResvSub.done ? Ms.gray400 : Ms.gray600, Ms.white, '귀가 ${sub == ResvSub.done ? '완료' : '대기'}'),
-    ResvMain.canceled => const Head(Ms.red, Ms.white, '예약 취소'),
-    ResvMain.noshow => const Head(Ms.white, Ms.red, '예약 부도', outline: Ms.red),
-  };
-}
+// 상세 머리 = 흰 바탕 · 제목 「예약 상세」(2026-10-28 사용자) — 상태 색 머리(웹 headOf)는 없앰 · 상태는 본문 StateChip 으로만
 
 // 범례 Badge 7(웹 LEGEND) — 바탕 · 글자 · 외곽선
 class LegendItem {

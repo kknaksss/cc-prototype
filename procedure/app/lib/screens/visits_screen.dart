@@ -91,7 +91,7 @@ class _VisitsScreenState extends State<VisitsScreen> with TabPolling {
   }
 
   void _open(ClinicItem i) =>
-      Navigator.of(context).push(MaterialPageRoute(builder: (_) => ReservationDetailScreen(reservationId: i.reservationId)));
+      Navigator.of(context).push(MaterialPageRoute(builder: (_) => ReservationDetailScreen(reservationId: i.reservationId, back: '내원 현황')));
 
   @override
   Widget build(BuildContext context) {
@@ -114,29 +114,17 @@ class _VisitsScreenState extends State<VisitsScreen> with TabPolling {
           final w = (box.maxWidth - pad * 2 - 12 * (cols - 1)) / cols;
           return ListView(
             physics: const AlwaysScrollableScrollPhysics(),
-            padding: EdgeInsets.fromLTRB(pad, 12, pad, 24),
+            padding: EdgeInsets.fromLTRB(pad, 0, pad, 24), // 칩 줄 위 · 아래 여백은 ChipRow 가(모든 탭 같게 · batch 4 #2)
             children: [
-              // 필터 3칸 + 2칸(점 · 이름 · 수)
-              GridView.count(
-                crossAxisCount: tablet ? 5 : 3,
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                childAspectRatio: tablet ? 5 : 3.6,
-                children: [
-                  for (var i = 0; i < clinicFilters.length; i++)
-                    _FilterCell(
-                      dot: clinicFilters[i].$3,
-                      label: '${clinicFilters[i].$2} ${c.counts[clinicFilters[i].$1] ?? 0}',
-                      on: _filter == clinicFilters[i].$1,
-                      divider: i % (tablet ? 5 : 3) != 0,
-                      onTap: () => setState(() => _filter = clinicFilters[i].$1),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              for (final g in groups) ...[
+              // 필터(점 · 이름 · 수) — 공통 StatusChip 한 줄(넘치면 가로 스크롤 · 2026-10-28)
+              ChipRow([
+                for (final f in clinicFilters)
+                  StatusChip(f.$2,
+                      count: c.counts[f.$1] ?? 0, dot: f.$3, selected: _filter == f.$1, onTap: () => setState(() => _filter = f.$1)),
+              ]),
+              for (final (gi, g) in groups.indexed) ...[
                 Padding(
-                  padding: const EdgeInsets.only(top: 4, bottom: 8),
+                  padding: EdgeInsets.only(top: gi == 0 ? 0 : 4, bottom: 8), // 첫 묶음 머리는 칩 줄 바로 아래
                   child: Text('${g.$1} ${g.$2.length}명', style: Typo.caption600.copyWith(color: Ms.gray700)),
                 ),
                 Wrap(spacing: 12, runSpacing: 8, children: [
@@ -158,32 +146,4 @@ class _VisitsScreenState extends State<VisitsScreen> with TabPolling {
     }
     return TabScaffold(tab: AppTab.visits, body: body);
   }
-}
-
-class _FilterCell extends StatelessWidget {
-  final Color dot;
-  final String label;
-  final bool on, divider;
-  final VoidCallback onTap;
-  const _FilterCell({required this.dot, required this.label, required this.on, required this.divider, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) => GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.only(left: 10),
-          decoration: BoxDecoration(border: divider ? const Border(left: BorderSide(color: Ms.gray300)) : null),
-          child: Row(children: [
-            Container(width: 6, height: 6, decoration: BoxDecoration(color: dot, shape: BoxShape.circle)),
-            const SizedBox(width: 4),
-            Flexible(
-              child: Text(label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: (on ? Typo.body600 : Typo.body400).copyWith(color: on ? Ms.gray800 : Ms.gray500)),
-            ),
-          ]),
-        ),
-      );
 }

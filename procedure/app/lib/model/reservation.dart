@@ -228,7 +228,9 @@ class DetailCustomer {
   final int? age;
   final Personal? personal;
   final Identity identity;
-  const DetailCustomer({required this.customerId, required this.name, this.phoneticName, this.gender, this.nationality, this.chartNumber, this.remark, this.personalError, this.isNew = false, this.age, this.personal, required this.identity});
+  final int? funnelId; // KOS 고객 유입 채널(customer.funnel · E2E batch 3 #2) — 코드 목록에 없으면 null
+  final String? funnelName;
+  const DetailCustomer({required this.customerId, required this.name, this.phoneticName, this.gender, this.nationality, this.chartNumber, this.remark, this.personalError, this.isNew = false, this.age, this.personal, required this.identity, this.funnelId, this.funnelName});
   factory DetailCustomer.fromJson(Object? v) {
     final j = _o(v);
     return DetailCustomer(
@@ -244,8 +246,17 @@ class DetailCustomer {
       age: _i(j['age']),
       personal: _on(j['personal']) == null ? null : Personal(_o(j['personal'])),
       identity: Identity.fromJson(j['identity']),
+      funnelId: _i(_o(j['funnel'])['funnelId']),
+      funnelName: _s(_o(j['funnel'])['name']),
     );
   }
+}
+
+// 유입 채널 코드(상세 funnelCodes — 예약 등록과 같은 KOS FUNNEL 코드 · 닫힌 것 뺌)
+class FunnelCode {
+  final int funnelId;
+  final String name;
+  const FunnelCode(this.funnelId, this.name);
 }
 
 class HealthItem {
@@ -380,6 +391,7 @@ class ResvDetail {
   final List<CounselorItem> counselors;
   final Map<String, bool> can;
   final List<DisplayItem> displays;
+  final List<FunnelCode> funnelCodes;
   const ResvDetail({
     required this.reservationId,
     required this.day,
@@ -406,6 +418,7 @@ class ResvDetail {
     this.counselors = const [],
     this.can = const {},
     this.displays = const [],
+    this.funnelCodes = const [],
   });
 
   bool canDo(String k) => can[k] == true;
@@ -440,6 +453,10 @@ class ResvDetail {
       counselors: _l(j['counselors'], CounselorItem.fromJson),
       can: {for (final e in _o(j['can']).entries) e.key: e.value == true},
       displays: _l(j['displays'], DisplayItem.fromJson),
+      funnelCodes: [
+        for (final e in (j['funnelCodes'] is List ? j['funnelCodes'] as List : const []))
+          if (e is Map && _i(e['funnelId']) != null) FunnelCode(_i(e['funnelId'])!, _s(e['name']) ?? ''),
+      ],
     );
   }
 }

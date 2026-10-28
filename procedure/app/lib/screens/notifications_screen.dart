@@ -7,6 +7,7 @@ import '../app_state.dart';
 import '../model/notification.dart';
 import '../theme/tokens.dart';
 import '../view/time.dart';
+import '../widgets/header.dart' show DetailHeader;
 
 class NotificationsScreen extends StatefulWidget {
   final bool sheet;
@@ -69,21 +70,15 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   Widget build(BuildContext context) {
     final l = _list;
     final hasUnread = (l?.items ?? const []).any((n) => n.unread);
-    final head = Container(
-      height: 56,
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      decoration: const BoxDecoration(color: Ms.white, border: Border(bottom: BorderSide(color: Ms.gray200))),
-      child: Row(children: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(widget.sheet ? '닫기' : '‹ 닫기', style: Typo.body500.copyWith(color: Ms.gray700)),
-        ),
-        Expanded(child: Text('알림', textAlign: TextAlign.center, style: Typo.headingMd600)),
-        TextButton(
-          onPressed: hasUnread ? _readAll : null,
-          child: Text('모두 읽음', style: Typo.body500.copyWith(color: hasUnread ? Ms.primary : Ms.gray500)),
-        ),
-      ]),
+    // 머리 = 다른 상세와 같은 꼴 — [‹ 닫기] · 「알림」 정가운데 · [모두 읽음]
+    final head = DetailHeader(
+      back: '닫기',
+      chevron: !widget.sheet,
+      title: '알림',
+      trailing: TextButton(
+        onPressed: hasUnread ? _readAll : null,
+        child: Text('모두 읽음', style: Typo.headingMd500.copyWith(color: hasUnread ? Ms.primary : Ms.gray500)),
+      ),
     );
     Widget body;
     if (l == null && _error == null) {

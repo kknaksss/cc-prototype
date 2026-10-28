@@ -13,6 +13,7 @@ import 'package:procedure_app/push/push.dart';
 import 'package:procedure_app/scan/scan_channel.dart';
 import 'package:procedure_app/screens/launchers.dart';
 import 'package:procedure_app/screens/scan_screen.dart';
+import 'package:procedure_app/widgets/header.dart' show HeaderBack;
 import 'package:procedure_app/widgets/resv_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -68,6 +69,65 @@ void main() {
     await t.tap(find.text('로그인'));
     await wait(t, find.text('설정'));
     await settle(t, 2500);
+    // P(2026-10-28 · 운영 읽기만) — 4탭 + 예약 상세 위 · 가운데 · 아래. 누르는 것 = 탭 · 카드 하나 · 끌어 내리기만(저장 · 삭제 · 띄우기 없음)
+    if (wp == 'P') {
+      await take('reservations');
+      await tab(t, '내원 현황');
+      await take('visits');
+      await tab(t, '시술 현황');
+      await take('board');
+      await tab(t, '설정');
+      await take('settings');
+      await tab(t, '예약 현황');
+      await settle(t, 1500);
+      // 시간축은 지금 시각으로 내려가 있다 — 위로 끌어 올려 이른 시각 카드를 찾는다(끌기만 · 누름 없음)
+      for (var i = 0; i < 6 && find.byType(ResvCardTile).hitTestable().evaluate().isEmpty; i++) {
+        await t.drag(find.text('16:00').hitTestable().first, const Offset(0, 600));
+        await settle(t, 600);
+      }
+      final cards = find.byType(ResvCardTile).hitTestable();
+      if (cards.evaluate().isEmpty) return; // 오늘 예약 없음 — 상세 생략
+      await t.tap(cards.first);
+      await settle(t, 3000);
+      await take('detail_top');
+      final list = find.byType(ListView).hitTestable().first;
+      await t.drag(list, const Offset(0, -700));
+      await settle(t, 1000);
+      await take('detail_mid');
+      await t.drag(list, const Offset(0, -1400));
+      await settle(t, 1000);
+      await take('detail_bottom');
+      return;
+    }
+    // H2(2026-10-28) — 헤더 [Céramique][메뉴명][알림] · 높이 48 · 예약 현황 날짜 줄([‹ 날짜 ›][오늘] … 총 N건) · 범례 한 줄 ·
+    // 예약 상세 흰 머리(상태 제목 · [‹ 목록])
+    if (wp == 'H2') {
+      await take('reservations');
+      await t.tap(find.byType(ResvCardTile).hitTestable().first);
+      for (var i = 0; i < 3; i++) {
+        await t.pump(const Duration(milliseconds: 100));
+      }
+      await settle(t, 2000);
+      await take('detail');
+      // 자동 저장 칸 · 입력 테두리 · 유입 채널 드롭다운이 보이게
+      await t.drag(find.byType(ListView).hitTestable().first, const Offset(0, -900));
+      await settle(t, 800);
+      await take('detail_fields');
+      await t.tap(find.byType(HeaderBack).hitTestable().first);
+      await settle(t, 1200);
+      await tab(t, '내원 현황');
+      await take('visits');
+      await tab(t, '시술 현황');
+      await take('board');
+      await t.tap(find.textContaining('A-룸').hitTestable().first);
+      await settle(t, 1500);
+      await take('room_detail');
+      await t.tap(find.byType(HeaderBack).hitTestable().first);
+      await settle(t, 1200);
+      await tab(t, '설정');
+      await take('settings');
+      return;
+    }
     // 헤더 한 줄 [메뉴명][Céramique][알림] · 예약 현황 [QR 읽기] 없음(2026-10-28)
     if (wp == 'H') {
       await take('reservations');

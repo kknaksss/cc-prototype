@@ -24,13 +24,7 @@ void main() {
     expect((home.chipBg, home.chipFg), (Ms.gray200, Ms.gray700));
   });
 
-  test('headOf · barOf — 귀가 대기 gray-600 / 완료 gray-400(머리) · gray-300(막대) · 부도 외곽선', () {
-    expect(headOf(ResvMain.home, ResvSub.waiting).bg, Ms.gray600);
-    expect(headOf(ResvMain.home, ResvSub.done).bg, Ms.gray400);
-    expect(headOf(ResvMain.home, ResvSub.done).title, '귀가 완료');
-    expect(headOf(ResvMain.reception, null).title, '접수 완료');
-    expect(headOf(ResvMain.consultation, null).title, '상담 대기');
-    expect(headOf(ResvMain.noshow, null).outline, Ms.red);
+  test('barOf — 귀가 완료 gray-300(막대) · 예약 보라', () {
     expect(barOf(ResvMain.home, ResvSub.done).color, Ms.gray300);
     expect(barOf(ResvMain.reserved, null).color, Ms.purple);
   });

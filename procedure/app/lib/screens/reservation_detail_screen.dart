@@ -5,6 +5,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../api/api.dart';
 import '../app_state.dart' hide Phase;
@@ -16,12 +17,16 @@ import '../view/time.dart';
 import '../widgets/resv_ui.dart';
 import '../widgets/ui.dart';
 import 'board_screen.dart' show isTablet;
+import '../widgets/header.dart' show DetailHeader;
+import '../widgets/autosave.dart';
 import 'launchers.dart';
 
 class ReservationDetailScreen extends StatefulWidget {
   final int reservationId;
   final bool focusConsultation; // 상담사 호출 푸시로 열림 — 상담 카드가 보이게
-  const ReservationDetailScreen({super.key, required this.reservationId, this.focusConsultation = false});
+  // 머리 [‹ 들어온 탭 이름](예약 현황 · 내원 현황 — 사용자 2026-10-28) · 제목 「예약 상세」 고정 · 상태는 본문 StateChip
+  final String back;
+  const ReservationDetailScreen({super.key, required this.reservationId, this.focusConsultation = false, this.back = '예약 현황'});
   @override
   State<ReservationDetailScreen> createState() => _ReservationDetailScreenState();
 }
@@ -40,9 +45,7 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
   int? _room;
   int? _counselor;
 
-  final _memo = TextEditingController();
-  final _remark = TextEditingController();
-  bool _memoDirty = false, _remarkDirty = false;
+  SaveState _funnelState = SaveState.idle; // 유입 채널 드롭다운 — 바로 저장
 
   @override
   void initState() {
@@ -60,8 +63,6 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
   @override
   void dispose() {
     _poll?.cancel();
-    _memo.dispose();
-    _remark.dispose();
     super.dispose();
   }
 
@@ -72,8 +73,6 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
       setState(() {
         _d = d;
         _error = null;
-        if (!_memoDirty) _memo.text = d.memo ?? '';
-        if (!_remarkDirty) _remark.text = d.customer.remark ?? '';
       });
       if (widget.focusConsultation && !_focused) {
         _focused = true;
@@ -94,7 +93,7 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
   }
 
   // 쓰기 — 성공 토스트 · 실패(409 · 403)는 app.run 이 message 토스트. 어느 쪽이든 다시 부름
-  Future<bool> _write(Future<void> Function() f, String ok) async {
+  Future<bool> _write(Future<void> Function() f, String? ok) async {
     setState(() => _busy = true);
     final res = await _app.run(f, ok);
     if (mounted) setState(() => _busy = false);
@@ -107,14 +106,10 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
     final d = _d;
     final tablet = isTablet(context);
     if (d == null) {
-      return Scaffold(
-        backgroundColor: Ms.gray100,
-        appBar: AppBar(backgroundColor: Ms.white, title: Text('예약 상세', style: Typo.headingMd600)),
-        body: Center(
-            child: _error != null ? Text(_error!, style: Typo.body500.copyWith(color: Ms.gray600)) : const CircularProgressIndicator(strokeWidth: 2)),
+      return _frame(
+        Center(child: _error != null ? Text(_error!, style: Typo.body500.copyWith(color: Ms.gray600)) : const CircularProgressIndicator(strokeWidth: 2)),
       );
     }
-    final head = headOf(d.state.main, d.state.sub);
     // 폰 = 지금 할 일(접수 · 내원 현황 단계) 먼저 → 고객 · 메모 · 건강 · 이전 방문
     final left = <Widget>[
       _customerHead(d),
@@ -128,40 +123,32 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
       if (d.canDo('cancel')) _cancelRow(d),
     ];
     final right = <Widget>[..._flowAll(d), _health(d)];
-    final top = MediaQuery.paddingOf(context).top;
-    return Scaffold(
-      backgroundColor: Ms.gray100,
-      body: Column(children: [
-        // 위 막대 = 상태 색(M:205 · M:229)
-        Container(
-          padding: EdgeInsets.fromLTRB(4, top + 4, 16, 10),
-          decoration: BoxDecoration(color: head.bg, border: head.outline != null ? Border(bottom: BorderSide(color: head.outline!, width: 2)) : null),
-          child: Row(children: [
-            TextButton(
-              onPressed: () => Navigator.of(context).maybePop(),
-              child: Text('‹ 목록', style: Typo.body500.copyWith(color: head.fg)),
-            ),
-            Expanded(child: Text(head.title, textAlign: TextAlign.center, style: Typo.headingMd600.copyWith(color: head.fg))),
-            SizedBox(
-              width: 72,
-              child: Text(d.start != null ? hm(d.start) : '', textAlign: TextAlign.right, style: Typo.body500.copyWith(color: head.fg, fontFeatures: tabular)),
-            ),
-          ]),
-        ),
-        Expanded(
-          child: RefreshIndicator(
-            onRefresh: _load,
-            child: tablet
-                ? Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Expanded(child: _col(left)),
-                    Expanded(child: _col(right)),
-                  ])
-                : _col(left),
-          ),
-        ),
-      ]),
+    return _frame(
+      RefreshIndicator(
+        onRefresh: _load,
+        child: tablet
+            ? Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Expanded(child: _col(left)),
+                Expanded(child: _col(right)),
+              ])
+            : _col(left),
+      ),
     );
   }
+
+  // 위 막대 = 흰 바탕 · 공통 헤더 높이 · [‹ 들어온 탭] 「예약 상세」(정가운데) — 상태 색 · 상태 제목 · 시각 없음(사용자 2026-10-28
+  // 「보라 상태 색 헤더가 다른 앱 같다」) · 상태는 본문 고객 머리의 2계층 StateChip 으로만 · iOS 상태 바 = 어두운 글자
+  Widget _frame(Widget body) => AnnotatedRegion<SystemUiOverlayStyle>(
+        value: SystemUiOverlayStyle.dark,
+        child: Scaffold(
+          backgroundColor: Ms.gray100,
+          body: Column(children: [
+            Container(color: Ms.white, height: MediaQuery.paddingOf(context).top),
+            DetailHeader(back: widget.back, title: '예약 상세'),
+            Expanded(child: body),
+          ]),
+        ),
+      );
 
   Widget _col(List<Widget> kids) => ListView(
         physics: const AlwaysScrollableScrollPhysics(),
@@ -223,7 +210,6 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
         const SizedBox(height: 6),
         Text(line, style: Typo.body400.copyWith(color: Ms.gray600)),
         if (d.sedationRequired) ...[const SizedBox(height: 4), Text('수면 마취 필요', style: Typo.caption600.copyWith(color: Ms.purple))],
-        if ((d.funnel ?? '').isNotEmpty) ...[const SizedBox(height: 4), Text('유입 채널 · ${d.funnel}', style: Typo.caption400.copyWith(color: Ms.gray600))],
       ]),
     );
   }
@@ -273,9 +259,43 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
                 color: BtnColor.gray,
                 onPressed: _busy ? null : () => _write(() => _app.api.setIdentity(d.customer.customerId, 'unconfirmed'), '저장했어요')),
           MsButton('여권 스캔', size: BtnSize.sm, onPressed: _busy ? null : () => _scan(d)),
+          if (id.photoId != null)
+            MsButton('사진 삭제', size: BtnSize.sm, variant: BtnVariant.outlined, color: BtnColor.red, onPressed: _busy ? null : () => _deletePhoto(id.photoId!)),
         ]),
       ],
     );
+  }
+
+  // 여권 사진 [삭제](웹 E2E batch 3 #1 과 같음) — 확인 한 번 → ccc 사진 · 그 사진으로 한 확인(→ 미확인) · KOS 이미지. 고객 값은 그대로
+  // 실패(409 · 502) = 아무것도 안 지워짐 → 다시 누르면 됨
+  Future<void> _deletePhoto(int photoId) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Ms.white,
+        title: Text('여권 사진을 지울까요?', style: Typo.headingMd600),
+        content: Text('KOS 사진도 지워지고 신분 확인이 「미확인」으로 바뀌어요. 고객 정보(여권번호 등)는 그대로예요.', style: Typo.body400),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('취소')),
+          TextButton(onPressed: () => Navigator.of(ctx).pop(true), child: Text('삭제', style: TextStyle(color: Ms.red))),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    String kos = '';
+    await _write(() async => kos = await _app.api.deleteIdPhoto(photoId), null);
+    if (kos.isNotEmpty) {
+      _app.toaster.show(switch (kos) {
+        'deleted' => '사진을 지웠어요 · KOS 사진도 지움',
+        'not_found' => '사진을 지웠어요 · KOS 에는 없었어요',
+        _ => '사진을 지웠어요',
+      });
+    }
+  }
+
+  // 자동 저장 실패 중 401 = 로그인 풀림
+  void _saveError(ApiError e) {
+    if (e.status == 401) _app.logout(message: '로그인이 풀렸어요 — 다시 로그인하세요');
   }
 
   Future<void> _scan(ResvDetail d) async {
@@ -291,42 +311,101 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
     await _load();
   }
 
-  // 고객 기본 정보 — 웹과 같은 칸 · 연락처 보임(D7-32) · [수정](can.editPersonal) · [태블릿에 띄우기] · [이 기기에 QR 보이기]
+  // 고객 기본 정보 — 웹과 같은 칸 · 연락처 보임(D7-32) · **늘 편집 · 칸마다 자동 저장**(웹 E2E batch 3 #4 — [수정] 없음) ·
+  // 유입 채널 드롭다운(바로 저장 · #2) · [태블릿에 띄우기] · [이 기기에 QR 보이기]
   Widget _personal(ResvDetail d) {
     final p = d.customer.personal;
+    final cid = d.customer.customerId;
+    final edit = d.canDo('editPersonal') && p != null;
     String v(String? x) => (x ?? '').trim().isEmpty ? '-' : x!.trim();
+    Widget row(String k, String val) => Padding(
+          padding: const EdgeInsets.symmetric(vertical: 3),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            SizedBox(width: 104, child: Text(k, style: Typo.body400.copyWith(color: Ms.gray600))),
+            Expanded(child: Text(val, style: Typo.body500.copyWith(color: val == '-' ? Ms.gray400 : Ms.gray800))),
+          ]),
+        );
+    // 고칠 수 있는 글자 칸 — 그 칸 하나만 보낸다(back = 다시 읽은 묶음 전체 + 그 칸 · 같은 값이면 KOS 안 부름)
+    Widget field(String key, String label, {String? hint, TextInputType? type}) => Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: AutoSaveField(
+            key: ValueKey('personal-$cid-$key'),
+            label: label,
+            hint: hint,
+            keyboardType: type,
+            enabled: edit,
+            value: p?.s(key) ?? '',
+            onSave: (x) => _app.api.savePersonal(cid, {key: x.trim().isEmpty ? null : x.trim()}),
+            onError: _saveError,
+          ),
+        );
     final ph = p?.phone;
-    final rows = <(String, String)>[
-      ('이름', v(p?.s('name') ?? d.customer.name)),
-      ('한글 발음', v(p?.s('phoneticName'))),
-      ('성별', switch (p?.s('gender')) { 'MALE' => '남성', 'FEMALE' => '여성', _ => '-' }),
-      ('생년월일', v(p?.s('dateOfBirth'))),
-      ('국적', v(nationName(p?.s('nationality')))),
-      ('휴대폰', ph == null || (ph.number ?? '').isEmpty ? '-' : '${(ph.countryCode ?? '').isEmpty ? '' : '${ph.countryCode!.startsWith('+') ? '' : '+'}${ph.countryCode} '}${ph.number}'),
-      ('SNS', [p?.sns['type'], p?.sns['accountId']].whereType<String>().where((x) => x.isNotEmpty).join(' · ').ifEmpty('-')),
-      ('이메일', v(p?.s('email'))),
-      ('여권 영문 성', v(p?.s('passportSurname'))),
-      ('여권 영문 이름', v(p?.s('passportGivenNames'))),
-      ('여권번호', v(p?.s('passportNumber'))),
-      ('여권 만료일', v(p?.s('passportExpiryDate'))),
-    ];
+    final codes = d.funnelCodes;
+    final funnel = codes.any((c) => c.funnelId == d.customer.funnelId) ? d.customer.funnelId : null;
     return _box(
       title: '고객 기본 정보',
-      trailing: d.canDo('editPersonal') && p != null
-          ? MsButton('수정', size: BtnSize.sm, variant: BtnVariant.outlined, color: BtnColor.gray, onPressed: _busy ? null : () => _editPersonal(d))
-          : null,
       children: [
         if (d.customer.personalError != null)
           Text(d.customer.personalError!, style: Typo.caption600.copyWith(color: Ms.red))
-        else
-          for (final r in rows)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 3),
-              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                SizedBox(width: 104, child: Text(r.$1, style: Typo.body400.copyWith(color: Ms.gray600))),
-                Expanded(child: Text(r.$2, style: Typo.body500.copyWith(color: r.$2 == '-' ? Ms.gray400 : Ms.gray800))),
-              ]),
+        else ...[
+          field('name', '이름'),
+          field('phoneticName', '한글 발음'),
+          row('성별', switch (p?.s('gender')) { 'MALE' => '남성', 'FEMALE' => '여성', _ => '-' }),
+          field('dateOfBirth', '생년월일', hint: 'yyyy-MM-dd'),
+          row('국적', v(nationName(p?.s('nationality')))),
+          Padding(
+            padding: const EdgeInsets.only(top: 4, bottom: 8),
+            child: AutoSaveField(
+              key: ValueKey('personal-$cid-phone'),
+              label: '휴대폰${(ph?.countryCode ?? '').isEmpty ? '' : ' (+${ph!.countryCode!.replaceAll('+', '')})'}',
+              keyboardType: TextInputType.phone,
+              enabled: edit,
+              value: ph?.number ?? '',
+              onSave: (x) => _app.api.savePersonal(cid, {'phone': {'countryCode': ph?.countryCode, 'number': x.trim()}}),
+              onError: _saveError,
             ),
+          ),
+          row('SNS', [p?.sns['type'], p?.sns['accountId']].whereType<String>().where((x) => x.isNotEmpty).join(' · ').ifEmpty('-')),
+          const SizedBox(height: 6),
+          field('email', '이메일', type: TextInputType.emailAddress),
+          field('passportSurname', '여권 영문 성'),
+          field('passportGivenNames', '여권 영문 이름'),
+          field('passportNumber', '여권번호'),
+          field('passportExpiryDate', '여권 만료일', hint: 'yyyy-MM-dd'),
+          // 유입 채널(KOS 고객 칸 · 예약 등록과 같은 코드) — 고르면 바로 저장
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Row(children: [
+              Expanded(child: Text('유입 채널', style: Typo.body400.copyWith(color: Ms.gray600))),
+              SaveStatus(_funnelState, onRetry: null),
+            ]),
+          ),
+          DropdownButtonFormField<int?>(
+            key: ValueKey('funnel-$cid-$funnel'),
+            initialValue: funnel,
+            isExpanded: true,
+            hint: Text(d.customer.funnelName ?? '-', style: Typo.body400.copyWith(color: Ms.gray400)),
+            items: [
+              DropdownMenuItem<int?>(value: null, child: Text('-', style: Typo.body400)),
+              for (final c in codes) DropdownMenuItem<int?>(value: c.funnelId, child: Text(c.name, style: Typo.body400)),
+            ],
+            onChanged: !edit || _funnelState == SaveState.saving
+                ? null
+                : (x) async {
+                    if (x == funnel) return;
+                    setState(() => _funnelState = SaveState.saving);
+                    try {
+                      await _app.api.saveFunnel(cid, x);
+                      if (mounted) setState(() => _funnelState = SaveState.saved);
+                      await _load();
+                    } on ApiError catch (e) {
+                      if (mounted) setState(() => _funnelState = SaveState.failed);
+                      _saveError(e);
+                      _app.toaster.show(e.message);
+                    }
+                  },
+          ),
+        ],
         const SizedBox(height: 10),
         Wrap(spacing: 8, runSpacing: 8, children: [
           MsButton('태블릿에 띄우기', size: BtnSize.sm, variant: BtnVariant.outlined, onPressed: _busy ? null : () => sendQuestionnaireToDevice(context, d).then((_) => _load())),
@@ -341,97 +420,35 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
     );
   }
 
-  // 고객 기본 정보 고치기 — 바꾼 키만 보낸다(back PersonalIn 「보낸 키만 바꾼다」)
-  Future<void> _editPersonal(ResvDetail d) async {
-    final p = d.customer.personal!;
-    final keys = <(String, String)>[
-      ('name', '이름'),
-      ('phoneticName', '한글 발음'),
-      ('dateOfBirth', '생년월일(yyyy-MM-dd)'),
-      ('email', '이메일'),
-      ('passportSurname', '여권 영문 성'),
-      ('passportGivenNames', '여권 영문 이름'),
-      ('passportNumber', '여권번호'),
-      ('passportExpiryDate', '여권 만료일(yyyy-MM-dd)'),
-    ];
-    final ctl = {for (final k in keys) k.$1: TextEditingController(text: p.s(k.$1) ?? '')};
-    final phone = TextEditingController(text: p.phone?.number ?? '');
-    final saved = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Ms.white,
-      barrierColor: Ms.dim,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(ctx).bottom),
-        child: SafeArea(
-          top: false,
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
-            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              const SheetHandle(),
-              Text('고객 기본 정보 수정', style: Typo.titleSm600),
-              const SizedBox(height: 8),
-              for (final k in keys)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: TextField(controller: ctl[k.$1], decoration: InputDecoration(labelText: k.$2, isDense: true)),
-                ),
-              TextField(controller: phone, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: '휴대폰 번호', isDense: true)),
-              const SizedBox(height: 16),
-              MsButton('저장', size: BtnSize.lg, expand: true, onPressed: () => Navigator.of(ctx).pop(true)),
-            ]),
-          ),
-        ),
-      ),
-    );
-    if (saved != true) return;
-    final out = <String, dynamic>{};
-    for (final k in keys) {
-      final nv = ctl[k.$1]!.text.trim();
-      if (nv != (p.s(k.$1) ?? '')) out[k.$1] = nv.isEmpty ? null : nv;
-    }
-    if (phone.text.trim() != (p.phone?.number ?? '')) out['phone'] = {'countryCode': p.phone?.countryCode, 'number': phone.text.trim()};
-    if (out.isEmpty) return;
-    await _write(() => _app.api.savePersonal(d.customer.customerId, out), '저장했어요');
-  }
-
+  // 예약 메모 · 주의사항 — [저장] 없음 · 자동 저장(웹 E2E batch 3 #3 · #5)
   Widget _memoBox(ResvDetail d) => _box(
         title: '예약 메모',
-        trailing: d.canDo('editMemo')
-            ? MsButton('저장', size: BtnSize.sm, onPressed: !_memoDirty || _busy ? null : () async {
-                if (await _write(() => _app.api.saveMemo(d.reservationId, _memo.text), '저장했어요')) setState(() => _memoDirty = false);
-              })
-            : null,
         children: [
-          TextField(
-            controller: _memo,
+          AutoSaveField(
+            key: ValueKey('memo-${d.reservationId}'),
+            value: d.memo ?? '',
             enabled: d.canDo('editMemo'),
             minLines: 2,
             maxLines: 6,
-            style: Typo.body400,
-            decoration: const InputDecoration(hintText: '예약 메모 없음', border: OutlineInputBorder(), isDense: true),
-            onChanged: (_) => setState(() => _memoDirty = true),
+            hint: '예약 메모 없음',
+            onSave: (x) => _app.api.saveMemo(d.reservationId, x),
+            onError: _saveError,
           ),
         ],
       );
 
   Widget _remarkBox(ResvDetail d) => _box(
         title: '주의사항',
-        trailing: d.canDo('editRemark')
-            ? MsButton('저장', size: BtnSize.sm, onPressed: !_remarkDirty || _busy ? null : () async {
-                if (await _write(() => _app.api.saveRemark(d.customer.customerId, _remark.text), '저장했어요')) setState(() => _remarkDirty = false);
-              })
-            : null,
         children: [
-          TextField(
-            controller: _remark,
+          AutoSaveField(
+            key: ValueKey('remark-${d.customer.customerId}'),
+            value: d.customer.remark ?? '',
             enabled: d.canDo('editRemark'),
             minLines: 2,
             maxLines: 6,
-            style: Typo.body400,
-            decoration: const InputDecoration(hintText: '주의사항 없음', border: OutlineInputBorder(), isDense: true),
-            onChanged: (_) => setState(() => _remarkDirty = true),
+            hint: '주의사항 없음',
+            onSave: (x) => _app.api.saveRemark(d.customer.customerId, x),
+            onError: _saveError,
           ),
         ],
       );

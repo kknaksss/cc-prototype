@@ -44,7 +44,7 @@ class Container:
     notifications: NotificationService
     hub: StreamHub = field(init=False)
     display: Any = None  # DisplayService — 띄우기 요청(SPEC-004 §5-3)
-    questionnaire: Any = None  # QuestionnaireService — QR 문진(SPEC-004 §6.15)
+    questionnaire: Any = None  # QuestionnaireService — 고객 문진 웹(SPEC-006)
     photos: Any = None  # PhotoService — 신분증 사진(SPEC-004 §6.16)
     scan: Any = None  # PassportScanService
     resv: Any = None  # ReservationService — 예약 현황(SPEC-005)
@@ -115,7 +115,7 @@ def build_container(settings: Settings, clock: Clock | None = None) -> Container
     c.resv = ReservationService(settings, repo, clock, lambda: c.kos)
     c.resv.displays_of = c.display.of_reservation  # 상세 응답 displays[](§5-3 「닫기」)
     c.reception = ReceptionService(c.resv)
-    c.questionnaire = QuestionnaireService(repo, clock, c.resv, c.devices, c.display)
+    c.questionnaire = QuestionnaireService(repo, clock, settings, c.resv, c.display)  # 고객 문진 웹(SPEC-006)
     c.photos = PhotoService(repo, clock, settings, c.resv.client)
     c.scan = PassportScanService(repo, c.resv, c.devices, c.photos, c.display)
     if not settings.proc_photo_dir:

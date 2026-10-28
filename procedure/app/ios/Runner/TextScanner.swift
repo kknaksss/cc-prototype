@@ -3,7 +3,7 @@ import Flutter
 import UIKit
 import Vision
 
-// 카메라 · 글자 인식(SPEC-004 §5-3 QR · §6.16 여권 스캔) — 채널 "procedure/scan". 외부 서비스 0 · 기기 안에서만(D7-49).
+// 카메라 · 글자 인식(SPEC-004 §5-3 QR · §6.16 여권 스캔) · 문진 QR 그리기 · 화면 꺼짐 막기(SPEC-006 §8.2) — 채널 "procedure/scan". 외부 서비스 0 · 기기 안에서만(D7-49).
 //   scanQr → QR 글자(취소 = nil)
 //   scanPassport({windows, windowSec, debug}) → 여권 연속 스캔(E2E batch 1 #6 · batch 2 #4): AVCaptureSession 영상 프레임에서 가이드 틀의
 //     MRZ 자리만 잘라 Vision 으로 계속 읽고 → 줄마다 Dart(checkMrz — mrz.dart 보정 · 검사 숫자 · 연속 두 번 확정)에 물어
@@ -72,9 +72,33 @@ final class TextScanner: NSObject {
         vc.modalPresentationStyle = .fullScreen
         self.top?.present(vc, animated: true)
       }
+    case "qrImage":
+      // 문진 QR 화면(SPEC-006 §8.2) — 글자(qrUrl)를 QR PNG 로. 기기 안 CoreImage · 외부 서비스 0 · 파일 · 로그에 쓰지 않는다
+      let a = call.arguments as? [String: Any]
+      guard let text = a?["text"] as? String, let png = Self.qrPng(text, size: (a?["size"] as? Double) ?? 600) else {
+        return result(FlutterError(code: "qr_failed", message: "QR 을 만들지 못했어요", details: nil))
+      }
+      result(FlutterStandardTypedData(bytes: png))
+    case "keepAwake":
+      // QR 화면이 떠 있는 동안 화면 꺼짐 막기(wakelock) — 닫힐 때 false
+      UIApplication.shared.isIdleTimerDisabled = (call.arguments as? Bool) == true
+      result(nil)
     default:
       result(FlutterMethodNotImplemented)
     }
+  }
+
+  // QR — 오류 정정 M · 칸을 정수 배로 키워 흐림 없이(긴 변 size px 안팎) · 흰 바탕 검은 칸
+  static func qrPng(_ text: String, size: Double) -> Data? {
+    guard let f = CIFilter(name: "CIQRCodeGenerator") else { return nil }
+    f.setValue(Data(text.utf8), forKey: "inputMessage")
+    f.setValue("M", forKey: "inputCorrectionLevel")
+    guard let raw = f.outputImage else { return nil }
+    let k = max(1, floor(size / raw.extent.width))
+    let img = raw.transformed(by: CGAffineTransform(scaleX: k, y: k))
+    let ctx = CIContext()
+    guard let cg = ctx.createCGImage(img, from: img.extent) else { return nil }
+    return UIImage(cgImage: cg).pngData()
   }
 }
 

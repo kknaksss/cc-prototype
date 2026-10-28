@@ -139,6 +139,8 @@ CREATE TABLE IF NOT EXISTS identity_check (    -- 신분 확인 표시(표시만
     id INTEGER PRIMARY KEY, customer_id INTEGER NOT NULL REFERENCES customer(id), status TEXT NOT NULL,
     method TEXT NOT NULL, device TEXT, checked_at TEXT NOT NULL, actor TEXT NOT NULL, event_id INTEGER
 );
+-- 법적 검토 필요: 고객 공개 웹 문진 — 개인정보(이름 · 생년월일 · 성별 · 휴대폰 · 주소 · 건강 답) 수집 · 동의 · 보관 · 링크 노출
+-- source = read(상세 읽기) | app_submit(옛 앱 문진) | web_submit(고객 웹 · SPEC-006 §6.4) — 보관 기간 미정
 CREATE TABLE IF NOT EXISTS questionnaire_history (   -- 문진 방문별 이력(D-24)
     id INTEGER PRIMARY KEY, customer_id INTEGER NOT NULL REFERENCES customer(id), reservation_id INTEGER,
     kos_submitted_at TEXT NOT NULL, answers TEXT NOT NULL DEFAULT '[]', fetched_at TEXT NOT NULL,
@@ -196,7 +198,8 @@ MIGRATIONS = (("procedure", "room_kos_id", "TEXT"), ("visit", "open_task_seqs", 
               ("device", "install_id", "TEXT"),  # 앱 설치 단위 id(E2E batch 1 #1) — 토큰이 바뀌어도 행 하나
               ("questionnaire_history", "source", "TEXT NOT NULL DEFAULT 'read'"), ("questionnaire_history", "language", "TEXT"),
               ("questionnaire_history", "device_id", "INTEGER"), ("questionnaire_history", "display_request_id", "INTEGER"),
-              ("identity_check", "photo_id", "INTEGER"))
+              ("identity_check", "photo_id", "INTEGER"),
+              ("display_request", "qr_nonce", "TEXT"))  # 고객 문진 웹 토큰(SPEC-006 §3.1) — 스캔 · 옛 행 null
 
 
 class Database:

@@ -347,14 +347,16 @@ class CounselorItem {
   factory CounselorItem.fromJson(Json j) => CounselorItem(_i(j['staffId']) ?? 0, _s(j['name']) ?? '', _s(j['busyRoom']));
 }
 
+// 상세 displays[] — 문진 종류는 qrUrl(pending 일 때만) · openedAt(고객이 엶) 더함(SPEC-006 §6.6)
 class DisplayItem {
   final int id;
   final String kind, status;
-  final String? deviceName, closedAt;
+  final String? deviceName, closedAt, openedAt, qrUrl;
   final String createdAt;
-  const DisplayItem(this.id, this.kind, this.status, this.deviceName, this.createdAt, this.closedAt);
-  factory DisplayItem.fromJson(Json j) =>
-      DisplayItem(_i(j['id']) ?? 0, _s(j['kind']) ?? '', _s(j['status']) ?? '', _s(j['deviceName']), _s(j['createdAt']) ?? '', _s(j['closedAt']));
+  const DisplayItem(this.id, this.kind, this.status, this.deviceName, this.createdAt, this.closedAt, {this.openedAt, this.qrUrl});
+  factory DisplayItem.fromJson(Json j) => DisplayItem(
+      _i(j['id']) ?? 0, _s(j['kind']) ?? '', _s(j['status']) ?? '', _s(j['deviceName']), _s(j['createdAt']) ?? '', _s(j['closedAt']),
+      openedAt: _s(j['openedAt']), qrUrl: _s(j['qrUrl']));
 }
 
 class ResvDetail {

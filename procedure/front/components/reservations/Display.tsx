@@ -1,13 +1,13 @@
 'use client';
 
 // 예약 상세 — 띄우기 · 여권 스캔 자리(SPEC-004 §6.17 · §5-3 · 시안 W:276-289 QR 상자 · W:308-342 스캔 단계)
-// 단계는 상세 응답 displays[](5초 폴링)로만 그린다. QR 내용 = 앱 스킴 ccc://display?t= · [링크 복사] · [메신저 전송] 없음(D7-44)
+// 단계는 상세 응답 displays[](5초 폴링)로만 그린다. QR 내용 = 문진 qrUrl(고객 웹 · SPEC-006 §8.1) / 스캔 앱 스킴 ccc://display?t= · [링크 복사] · [메신저 전송] 없음(D7-44)
 import { useCallback, useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import { Badge, Button, Popover, PopoverContent, PopoverTrigger } from '@medisolve-ai/medikit';
 import * as api from '@/lib/api';
 import { hm, pad, toMs } from '@/lib/time';
-import type { DisplayItem, DisplayKind, DisplayTarget, ResvDetail } from '@/lib/types';
+import type { DisplayCreated, DisplayItem, DisplayKind, DisplayTarget, ResvDetail } from '@/lib/types';
 
 // 지금 화면이 만든 요청(QR 은 만들 때 받은 토큰으로만 그린다 — 다시 읽을 수 없음)
 interface Active {
@@ -17,7 +17,8 @@ interface Active {
   deviceName: string | null;
 }
 
-const OPEN = (x: DisplayItem | undefined) => !!x && (x.status === 'pending' || x.status === 'opened');
+const OPEN_STATUS = new Set<DisplayItem['status']>(['pending', 'opened']);
+const OPEN = (x: DisplayItem | undefined) => !!x && OPEN_STATUS.has(x.status);
 const kindName = (k: DisplayTarget['kind']) => (k === 'tablet' ? '태블릿' : k === 'phone' ? '폰' : '기기');
 
 // 이 예약 · 종류의 가장 최근 요청
@@ -117,48 +118,74 @@ function TargetList({ targets, error, onPick }: { targets: DisplayTarget[] | nul
   );
 }
 
-// 요청 단계 글(웹 상세 · 5초 폴링)
-function stepText(x: DisplayItem | undefined, deviceName: string | null): string {
-  const dev = x?.deviceName ?? deviceName;
-  switch (x?.status) {
-    case 'opened':
-      return (dev ? dev + '에서 ' : '') + '열림 · 고객 입력 중';
-    case 'done':
-      return '제출됨 · ' + hm(x.closedAt);
-    case 'canceled':
-      return '닫힘';
-    case 'expired':
-      return '만료됨';
-    default:
-      return dev ? dev + '에 표시 중 · 대기' : 'QR 대기 중';
-  }
-}
-const stepBadge = (x: DisplayItem | undefined): { v: 'primary' | 'warning' | 'neutral' | 'purple'; t: string } =>
-  x?.status === 'done'
-    ? { v: 'primary', t: '제출됨' }
-    : x?.status === 'opened'
-      ? { v: 'purple', t: '열림' }
-      : x?.status === 'canceled' || x?.status === 'expired'
-        ? { v: 'neutral', t: x.status === 'expired' ? '만료' : '닫힘' }
-        : { v: 'warning', t: '대기' };
+// ── 「고객 기본 정보」 머리 [QR로 고객 입력 요청] + QR 상자(SPEC-006 §8.1 · S4§6.17 자리) — 머리 버튼(toggle)과 상자(box)를 따로 돌려준다.
+// QR = qrUrl(https://…/q#<토큰> · 고객 휴대폰 카메라로) · 단계 = displays[] 5초 폴링: pending(QR · 남은 시간) → opened 「고객이 입력 중」(QR 숨김) →
+// done 「제출됨」 · expired [다시 만들기] · canceled = 상자 닫힘. 새로고침해도 displays[].qrUrl 로 다시 그린다
+const Q_TTL_MS = 10 * 60 * 1000; // 여는 시한(PROC_DISPLAY_TTL_MIN 기본) — displays[] 에 expiresAt 이 없을 때 남은 시간 계산용
 
-// ── 「고객 기본 정보」 머리 [QR로 고객 입력 요청] + QR 상자(§6.17 · W:276-289) — 머리 버튼(toggle)과 상자(box)를 따로 돌려준다
+interface QReq {
+  id: number;
+  status: DisplayItem['status'];
+  qrUrl: string | null;
+  expiresAt: string | null;
+  openedAt: string | null;
+  closedAt: string | null;
+  deviceName: string | null;
+}
+
 export function useQuestionnaireRequest({ d, onError }: { d: ResvDetail; onError: (e: unknown) => void }) {
-  const [open, setOpen] = useState(false);
-  const [active, setActive] = useState<Active | null>(null);
+  const [made, setMade] = useState<(DisplayCreated & { deviceName: string | null }) | null>(null);
+  const [want, setWant] = useState(false); // [QR로 고객 입력 요청]을 눌러 상자를 연 채
+  const [hiddenId, setHiddenId] = useState<number | null>(null); // [QR 닫기]로 접은 요청(요청은 살아 있음)
   const [busy, setBusy] = useState(false);
   const [pickOpen, setPickOpen] = useState(false);
   const { targets, error, load } = useTargets();
-  const remain = useRemain(active?.qrToken ? active.expiresAt : null);
-  const last = latest(d, 'questionnaire');
-  const mine = active ? (d.displays ?? []).find((x) => x.id === active.id) : undefined;
+
+  const items = (d.displays ?? []).filter((x) => x.kind === 'questionnaire').sort((a, b) => b.id - a.id);
+  const last = items[0];
+  // 지금 상자의 요청 — 이 화면이 방금 만든 것(폴링 전) 또는 상세의 가장 최근 것
+  const req: QReq | null =
+    made && (!last || made.id >= last.id)
+      ? (() => {
+          const it = items.find((x) => x.id === made.id);
+          return {
+            id: made.id,
+            status: it?.status ?? 'pending',
+            qrUrl: it ? (it.qrUrl ?? null) : (made.qrUrl ?? null),
+            expiresAt: made.expiresAt,
+            openedAt: it?.openedAt ?? null,
+            closedAt: it?.closedAt ?? null,
+            deviceName: it?.deviceName ?? made.deviceName,
+          };
+        })()
+      : last
+        ? {
+            id: last.id,
+            status: last.status,
+            qrUrl: last.qrUrl ?? null,
+            expiresAt: new Date((toMs(last.createdAt) ?? 0) + Q_TTL_MS).toISOString(),
+            openedAt: last.openedAt ?? null,
+            closedAt: last.closedAt,
+            deviceName: last.deviceName,
+          }
+        : null;
+  const remain = useRemain(req?.status === 'pending' ? req.expiresAt : null);
+  const expired = req?.status === 'expired' || (req?.status === 'pending' && remain === 0);
+  const live = !!req && OPEN_STATUS.has(req.status) && !expired;
+  const doneToday = items.find((x) => x.status === 'done'); // 오늘 이미 제출(displays[] = 오늘 것)
+  // 이 화면에서 살아 있는 채 본 요청 — 그 뒤 done · expired 가 돼도 상자에 「제출됨」 · 「시간이 지났어요」를 남긴다(이전 렌더 값 저장 꼴)
+  const [seenId, setSeenId] = useState<number | null>(null);
+  if (live && req && seenId !== req.id) setSeenId(req.id);
+  // 상자 = 눌러서 열었거나 · 살아 있는(또는 살아 있는 채 본) 요청이 접히지 않았을 때 · canceled = 닫힘
+  const open = req ? req.status !== 'canceled' && hiddenId !== req.id && (want || live || seenId === req.id) : want;
 
   const make = useCallback(
     async (t?: DisplayTarget) => {
       setBusy(true);
       try {
         const r = await api.createDisplay(d.reservationId, 'questionnaire', t?.deviceId);
-        setActive({ id: r.id, qrToken: r.qrToken, expiresAt: r.expiresAt, deviceName: t?.name ?? null });
+        setMade({ ...r, deviceName: t?.name ?? null });
+        setWant(true);
       } catch (e) {
         onError(e);
       } finally {
@@ -170,20 +197,22 @@ export function useQuestionnaireRequest({ d, onError }: { d: ResvDetail; onError
 
   const toggle = () => {
     if (open) {
-      setOpen(false);
+      setWant(false);
+      if (req) setHiddenId(req.id);
       return;
     }
-    setOpen(true);
-    if (!active || !OPEN(mine)) void make();
+    setWant(true);
+    setHiddenId(null);
+    if (!live) void make();
   };
 
   const close = async () => {
-    if (!active) return;
+    if (!req) return;
     setBusy(true);
     try {
-      if (!mine || OPEN(mine)) await api.closeDisplay(active.id, 'canceled');
-      setActive(null);
-      setOpen(false);
+      if (live) await api.closeDisplay(req.id, 'canceled'); // 고객 폰 링크 = 「새 QR …」 화면
+      setWant(false);
+      setHiddenId(req.id);
     } catch (e) {
       onError(e);
     } finally {
@@ -191,22 +220,44 @@ export function useQuestionnaireRequest({ d, onError }: { d: ResvDetail; onError
     }
   };
 
-  const expired = mine?.status === 'expired' || (mine?.status === 'pending' && remain === 0);
-  const b = stepBadge(open ? mine : last);
+  const doneLine = doneToday && (
+    <span className="text-typo-body-500 text-primary" style={{ whiteSpace: 'nowrap' }}>
+      오늘 이미 제출함 · {hm(doneToday.closedAt)}
+    </span>
+  );
+
+  // 단계 글
+  const step = !req
+    ? busy
+      ? '만드는 중…'
+      : '요청을 만들지 못했어요'
+    : expired
+      ? '시간이 지났어요'
+      : req.status === 'opened'
+        ? '고객이 입력 중' + (req.openedAt ? ' · ' + hm(req.openedAt) : '')
+        : req.status === 'done'
+          ? '제출됨 · ' + hm(req.closedAt)
+          : '고객 휴대폰 카메라로 찍어 주세요' + (remain !== null ? ' · 남은 시간 ' + mmss(remain) : '');
+  const badge: { v: 'primary' | 'warning' | 'neutral' | 'purple'; t: string } | null = !req
+    ? null
+    : expired
+      ? { v: 'neutral', t: '만료' }
+      : req.status === 'opened'
+        ? { v: 'purple', t: '입력 중' }
+        : req.status === 'done'
+          ? { v: 'primary', t: '제출됨' }
+          : { v: 'warning', t: '대기' };
+  const showQr = !!req && req.status === 'pending' && !expired && !!req.qrUrl;
 
   return {
     toggle: (
       <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        {!open && last && last.status !== 'canceled' && (
-          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Badge variant={b.v} size="sm">
-              문진 {b.t}
-            </Badge>
-            <span className="text-typo-body-400 text-ms-gray-500" style={{ whiteSpace: 'nowrap' }}>
-              {stepText(last, null)}
-            </span>
-          </span>
+        {!open && live && badge && (
+          <Badge variant={badge.v} size="sm">
+            문진 {badge.t}
+          </Badge>
         )}
+        {!open && doneLine}
         <button type="button" onClick={toggle} className="text-typo-body-500 text-primary" style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}>
           {open ? 'QR 닫기' : 'QR로 고객 입력 요청'}
         </button>
@@ -214,29 +265,25 @@ export function useQuestionnaireRequest({ d, onError }: { d: ResvDetail; onError
     ),
     box: open ? (
       <div className="bg-ms-gray-100" style={{ padding: 14, borderRadius: 8, display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-        {active?.qrToken && !expired && mine?.status !== 'done' ? (
-          <QrImage text={api.displayQrText(active.qrToken)} size={104} />
+        {showQr ? (
+          <QrImage text={req.qrUrl!} size={104} />
         ) : (
-          <span className="bg-ms-white text-typo-body-400 text-ms-gray-500" style={{ width: 120, height: 120, flexShrink: 0, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
-            {busy ? '만드는 중…' : mine?.status === 'done' ? '제출됨' : expired ? '만료됨' : 'QR 없음'}
+          <span className="bg-ms-white text-typo-body-500 text-ms-gray-500" style={{ width: 120, height: 120, flexShrink: 0, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: 8, boxSizing: 'border-box' }}>
+            {busy && !req ? '만드는 중…' : expired ? '만료됨' : req?.status === 'opened' ? '입력 중' : req?.status === 'done' ? '제출됨' : 'QR 없음'}
           </span>
         )}
         <div style={{ flex: 1, minWidth: 200, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {doneLine}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <span className="text-typo-body-600 text-ms-gray-800">고객이 직접 입력 (QR)</span>
-            {active && (
-              <Badge variant={b.v} size="sm">
-                {b.t}
+            {badge && (
+              <Badge variant={badge.v} size="sm">
+                {badge.t}
               </Badge>
             )}
           </div>
-          <span className="text-typo-body-400 text-ms-gray-600">
-            {active
-              ? stepText(mine ?? { id: active.id, kind: 'questionnaire', status: 'pending', deviceName: active.deviceName, createdAt: '', closedAt: null }, active.deviceName)
-              : '요청을 만들지 못했어요'}
-            {active?.qrToken && remain !== null && !expired && (!mine || mine.status === 'pending') ? ' · 남은 시간 ' + mmss(remain) : ''}
-          </span>
-          <span className="text-typo-caption-md-400 text-ms-gray-500">코디 폰 앱 [QR 읽기]로 찍으면 문진이 열려요 · 10분 동안만 유효해요</span>
+          <span className="text-typo-body-400 text-ms-gray-600">{step}</span>
+          <span className="text-typo-caption-md-400 text-ms-gray-500">QR 은 10분 동안 열 수 있어요 · 고객이 연 뒤 60분 안에 제출</span>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             <Popover
               open={pickOpen}
@@ -247,7 +294,7 @@ export function useQuestionnaireRequest({ d, onError }: { d: ResvDetail; onError
             >
               <PopoverTrigger asChild>
                 <Button variant="solid" color="blue" size="sm" disabled={busy}>
-                  {active?.deviceName && (!mine || OPEN(mine)) ? active.deviceName + '에 표시 중' : '태블릿에 띄우기'}
+                  {req?.deviceName && live ? req.deviceName + '에 표시 중' : '태블릿에 띄우기'}
                 </Button>
               </PopoverTrigger>
               <PopoverContent align="start" side="bottom" avoidCollisions collisionPadding={12} className="p-0" style={{ width: 320 }}>
@@ -266,9 +313,9 @@ export function useQuestionnaireRequest({ d, onError }: { d: ResvDetail; onError
                 </div>
               </PopoverContent>
             </Popover>
-            {(expired || mine?.status === 'done' || mine?.status === 'canceled' || !active) && (
+            {(!req || !live) && (
               <Button variant="outlined" color="blue" size="sm" disabled={busy} onClick={() => void make()}>
-                새 QR
+                다시 만들기
               </Button>
             )}
             <Button variant="outlined" color="gray" size="sm" disabled={busy} onClick={() => void close()}>

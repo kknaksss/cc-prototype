@@ -234,18 +234,19 @@ def test_old_schema_db_keeps_rows(tmp_path):
 
 
 # ------------------------------------------------------------------ 경로 수(§7.4)
-# 앱 다음 판 새 HTTP 15(SPEC-004 0.4.1 §7.3)
+# 앱 다음 판 새 HTTP 14(SPEC-004 0.4.1 §7.3 · SPEC-006 §6.7)
 APP_ROUTES = {("GET", "/api/notifications"), ("POST", "/api/notifications/read"), ("GET", "/api/me/notification-settings"),
               ("PUT", "/api/me/notification-settings"), ("GET", "/api/devices/targets"), ("POST", "/api/display-requests"),
               ("GET", "/api/display-requests/pending"), ("POST", "/api/display-requests/claim"),
-              ("POST", "/api/display-requests/{request_id}/close"), ("GET", "/api/questionnaires/{reservation_id}"),
-              ("POST", "/api/questionnaires/{reservation_id}"), ("POST", "/api/auth/unlock"),
+              ("POST", "/api/display-requests/{request_id}/close"), ("GET", "/api/public/questionnaire"),
+              ("POST", "/api/public/questionnaire"),
               ("POST", "/api/customers/{customer_id}/passport-scan"), ("GET", "/api/id-photos/{photo_id}"),
               ("POST", "/api/id-photos/{photo_id}/kos-retry")}
 
-def test_route_count_50(client):
-    """back 경로 50 = HTTP 49 + 통역 WS 1 — 앞 판 35(SPEC-005 §7.6 · 시술 현황 19 + 예약 현황 HTTP 16)
-    + 앱 다음 판 새 HTTP 15(SPEC-004 0.4.1 §7.3 — 띄우기 5 · 문진 2 · 스캔 · 사진 3 · 알림 4 · unlock 1)."""
+def test_route_count_49(client):
+    """back 경로 49 = HTTP 48 + 통역 WS 1 — 앞 판 35(SPEC-005 §7.6 · 시술 현황 19 + 예약 현황 HTTP 16)
+    + 앱 다음 판 새 HTTP 14(띄우기 5 · 스캔 · 사진 3 · 알림 4 · 고객 문진 웹 공개 2 — SPEC-006 §6.7:
+    직원 문진 2 · unlock 1 없앰 · 공개 GET · POST 더함)."""
     from app.api import interpret
 
     http = {(m.upper(), p) for p, ops in client.app.openapi()["paths"].items() for m in ops}
@@ -254,5 +255,8 @@ def test_route_count_50(client):
     assert {("POST", "/api/procedures/{procedure_id}/undo-start"), ("POST", "/api/procedures/{procedure_id}/undo-finish")} <= http
     assert ("PUT", "/api/reservations/notice") in http
     assert len([x for x in http - APP_ROUTES if "/reservations" in x[1] or "/customers" in x[1]]) == 16
-    assert len(APP_ROUTES) == 15 and APP_ROUTES <= http
-    assert len(http) + len(ws) == 50, sorted(http)
+    assert len(APP_ROUTES) == 14 and APP_ROUTES <= http
+    gone = {("GET", "/api/questionnaires/{reservation_id}"), ("POST", "/api/questionnaires/{reservation_id}"),
+            ("POST", "/api/auth/unlock")}
+    assert not gone & http
+    assert len(http) + len(ws) == 49, sorted(http)

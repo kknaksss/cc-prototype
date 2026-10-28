@@ -94,10 +94,12 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       final n = data['unread'];
       if (n is num) unread.value = n.toInt();
     } else if (event == 'display' && isMyDisplay(data, deviceId)) {
-      // 프레임으로 바로 연다(pending 읽기가 실패해도 열림 · E2E batch 1 #3) — 이어서 pending 으로 opened 표시 · 놓친 것
+      // pending 으로 연다(만료 시각 · qrUrl 이 다 있음 — SSE 프레임엔 expiresAt 이 없어 QR 화면 남은 시간이 비었다 · WORK-010).
+      // pending 읽기가 실패하면 프레임으로라도 연다(E2E batch 1 #3)
       final r = DisplayReq.fromJson(data);
-      if (r != null) enqueueDisplays([r]);
-      refreshDisplays();
+      refreshDisplays().then((ok) {
+        if (!ok && r != null) enqueueDisplays([r]);
+      });
     }
   }
 
@@ -106,16 +108,12 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   // 이미 연 요청 id — pending 은 opened 도 돌려주므로(코디 확정 #1) 앞으로 올 때 · SSE 때 다시 열지 않게 거른다(r1 W1)
   final Set<int> _openedDisplays = {};
 
+  // 문진 종류 = pending(QR 이 아직 유효 · qrUrl 있음)만 — opened 는 고객 폰이 이미 연 것(SPEC-006 §8.2) · 스캔 = pending · opened
   void enqueueDisplays(List<DisplayReq> items) {
     final have = displays.value.map((x) => x.requestId).toSet();
-    final add = items.where((x) =>
-        !have.contains(x.requestId) && !_openedDisplays.contains(x.requestId) && (x.status == 'pending' || x.status == 'opened'));
+    bool open(DisplayReq x) => x.kind == 'questionnaire' ? x.status == 'pending' : (x.status == 'pending' || x.status == 'opened');
+    final add = items.where((x) => !have.contains(x.requestId) && !_openedDisplays.contains(x.requestId) && open(x));
     if (add.isNotEmpty) displays.value = [...displays.value, ...add];
-  }
-
-  void markDisplayOpened(int requestId) {
-    _openedDisplays.add(requestId);
-    displays.value = displays.value.where((x) => x.requestId != requestId).toList();
   }
 
   DisplayReq? takeDisplay() {
@@ -127,21 +125,22 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   // 이 기기 pending 읽기 — 로그인 · 앞으로 올 때 · SSE display · 띄우기 푸시. 기기 행 없는 앱은 부르지 않는다(r2)
-  Future<void> refreshDisplays() async {
+  Future<bool> refreshDisplays() async {
     final id = deviceId;
-    if (session == null || id == null) return;
+    if (session == null || id == null) return false;
     try {
       enqueueDisplays(await api.pendingDisplays(id));
+      return true;
     } on ApiError {
-      // 조용히 — 다음 기회에
+      return false; // 조용히 — 다음 기회에
     }
   }
 
-  // [QR 읽기] 결과 → claim → 연다(§5-3 QR · D7-44)
+  // [QR 읽기] 결과 → claim → 연다(§5-3 QR · D7-44) — 스캔 종류(ccc://)만 · 문진 QR(https)은 고객 폰용(SPEC-006 §8.2)
   Future<bool> claimQr(String raw) async {
     final t = qrTokenOf(raw);
     if (t == null) {
-      toaster.show('Céramique 고객 입력 QR 이 아니에요');
+      toaster.show(isCustomerQr(raw) ? '고객 폰으로 찍는 QR 이에요' : 'Céramique QR 이 아니에요');
       return false;
     }
     try {

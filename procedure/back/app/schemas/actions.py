@@ -27,13 +27,6 @@ class LoginResponse(BaseModel):
     staffId: int | None
 
 
-class UnlockRequest(_Req):
-    """문진 잠금 나가기(SPEC-004 §3.3 r2) — 지금 로그인 계정 비밀번호 확인만 · 새 토큰 없음."""
-
-    password: str
-    deviceId: StrictInt | None = None
-
-
 class MeResponse(BaseModel):
     id: str
     role: Role
@@ -217,7 +210,8 @@ class CreateDisplayRequest(_Req):
 
 class CreateDisplayResponse(BaseModel):
     id: int
-    qrToken: str
+    qrToken: str | None  # 스캔 종류만(`ccc://display?t=`) · 문진 종류 = null
+    qrUrl: str | None = None  # 문진 종류만 — 고객 웹 링크(SPEC-006 §6.6)
     expiresAt: str
 
 
@@ -231,6 +225,7 @@ class DisplayRequestItem(BaseModel):
     deviceId: int | None
     status: DisplayStatus
     expiresAt: str
+    qrUrl: str | None = None  # 문진 종류 · pending 일 때만(SPEC-006 §6.6)
 
 
 class DisplayPending(BaseModel):
@@ -246,19 +241,23 @@ class CloseDisplayRequest(_Req):
     status: Literal["done", "canceled"]
 
 
-# SPEC-004 §6.15 문진
-class QuestionnaireLanguage(BaseModel):
+# SPEC-006 고객 문진 웹 — 공개 응답은 허용 키 모델(extra 금지 · §7.1)
+class _Strict(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class QuestionnaireLanguage(_Strict):
     code: str
     source: Literal["kos_language", "nationality", "default"]
     options: list[str]
 
 
-class QuestionnairePhone(BaseModel):
+class QuestionnairePhone(_Strict):
     countryCode: str = ""
     phoneNumber: str = ""
 
 
-class QuestionnairePrefill(BaseModel):
+class QuestionnairePrefill(_Strict):
     name: str | None
     phone: QuestionnairePhone
     address: str
@@ -267,20 +266,19 @@ class QuestionnairePrefill(BaseModel):
     gender: str | None
 
 
-class QuestionnaireFormPages(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
-    pages: list[dict]  # KOS 양식 그대로(translsMap 포함)
+class PublicQuestionnairePages(_Strict):
+    pages: list[dict]  # KOS 양식 그대로(translsMap 포함 · 고객 값 칸 없음)
 
 
-class QuestionnaireForm(BaseModel):
-    reservationId: int
+class PublicQuestionnaireForm(_Strict):
+    """공개 GET 응답 — reservationId · customerId · KOS id 없음."""
+
     customerName: str
     language: QuestionnaireLanguage
-    form: QuestionnaireFormPages
-    agreements: list[dict]  # KOS 약관 그대로(translsMap · required · type)
+    form: PublicQuestionnairePages
+    agreements: list[dict]  # KOS 약관 그대로
     prefill: QuestionnairePrefill
-    todaySubmitted: bool
+    fillUntil: str  # 쓰는 시한(처음 연 뒤 PROC_QWEB_FILL_MIN)
 
 
 class _Loose(BaseModel):
@@ -300,13 +298,14 @@ class QuestionnaireAgreement(_Loose):
     agreed: bool
 
 
-class QuestionnaireSubmit(BaseModel):
-    """registrationNumber · phoneticName 을 보내면 400 questionnaire_field(그래서 extra 대신 이름으로 받아 거른다)."""
+class PublicQuestionnaireSubmit(BaseModel):
+    """공개 POST 본문 — 요청 행은 토큰이 정한다(deviceId · displayRequestId 등 그 밖 키 = 400 invalid_request).
+
+    registrationNumber · phoneticName 은 이름으로 받아 service 가 400 questionnaire_field 로 거른다.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    displayRequestId: StrictInt | None = None
-    deviceId: StrictInt | None = None
     language: str
     name: str
     dateOfBirth: str = Field(pattern=r"^\d{8}$")  # yyyyMMdd

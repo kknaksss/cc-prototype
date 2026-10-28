@@ -372,7 +372,9 @@ class DisplayItem(BaseModel):
     status: Literal["pending", "opened", "done", "canceled", "expired"]
     deviceName: str | None
     createdAt: str
+    openedAt: str | None = None  # 문진 = 고객이 처음 연 때(SPEC-006 §6.6)
     closedAt: str | None
+    qrUrl: str | None = None  # 문진 종류 · pending 일 때만 — 데스크 새로고침 때 QR 다시 그리기
 
 
 class ReservationDetail(BaseModel):

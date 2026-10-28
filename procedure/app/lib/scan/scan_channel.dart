@@ -27,6 +27,22 @@ class ScanChannel {
   // QR 글자(닫으면 null)
   Future<String?> scanQr() => _call<String>('scanQr');
 
+  // 문진 QR 화면(SPEC-006 §8.2) — qrUrl → QR PNG(기기 안 CoreImage) · 못 그리면 null
+  Future<Uint8List?> qrImage(String text, {double size = 600}) async {
+    try {
+      return await _ch.invokeMethod<Uint8List>('qrImage', {'text': text, 'size': size});
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // 화면 꺼짐 막기(QR 화면이 떠 있는 동안) — 시험 · 채널 없음 = 조용히
+  Future<void> keepAwake(bool on) async {
+    try {
+      await _ch.invokeMethod<void>('keepAwake', on);
+    } catch (_) {}
+  }
+
   // 여권 연속 스캔(E2E batch 1 #6 · batch 2 #4) — 네이티브가 영상 프레임의 MRZ 자리를 계속 읽어 줄마다 checkMrz 로 묻는다.
   // 답 = none(줄 없음) · lines(두 줄 읽음 · 검사 숫자 안 맞음) · pending(맞음 한 번 · 확인 중) · confirmed(같은 판독 연속 두 번 → 자동 촬영)
   // [촬영] = 사람이 찍은 그 사진의 글자(shutter) · [닫기] = null · windowSec 초씩 windows 번 못 읽음 · [손으로 입력] = failed

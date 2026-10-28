@@ -4,6 +4,7 @@ KOS 는 `KosRuntime` 을 통해서만 부른다(env 가 비면 없음 — 조회
 """
 
 import asyncio
+import json
 import logging
 import uuid
 from collections.abc import Callable
@@ -604,15 +605,25 @@ class ReservationService:
         return out
 
     def _health(self, tx: Tx, r: Reservation, cust, reads: dict[str, Any]) -> dict[str, Any]:
-        """§5.11 — 「건강 정보」 질문 × 제출본 · 확인 필요 · 제출본이 새로우면 이력 한 줄."""
-        if reads["form_err"] or reads["submit_err"]:
+        """§5.11 — 「건강 정보」 질문 × 제출본 · 확인 필요 · 제출본이 새로우면 이력 한 줄.
+
+        KOS 는 다시 제출해도 제출본 읽기(공개 · 내부 legacy 둘 다)가 첫 제출본을 준다(데모 2026-10-28 · Q-27) → ccc 고객 웹
+        제출(web_submit 행 — 받은 답을 KOS 제출본 꼴로 둔 것)이 KOS 제출본보다 새로우면 그것을 보인다(SPEC-006 §9 의 앞당김).
+        """
+        own = tx.latest_web_questionnaire(cust.id) if cust is not None else None
+        kos = reads["submit"]
+        kos_at = parse((kos or {}).get("createdDateTimeUtc"))
+        use_own = own is not None and (kos_at is None or (parse(own["kos_submitted_at"]) or kos_at) > kos_at)
+        if reads["form_err"] or (reads["submit_err"] and not use_own):
             return {"state": "error", "submittedAt": None, "needCount": 0, "items": []}
-        submit = reads["submit"]
+        submit = {"createdDateTimeUtc": own["kos_submitted_at"], "answers": json.loads(own["answers"] or "[]")} \
+            if use_own and own is not None else kos
         items = health_items(reads["form"], submit)
         if submit is None:
             return {"state": "none", "submittedAt": None, "needCount": 0, "items": items}
         submitted = submit.get("createdDateTimeUtc")
-        if cust is not None and isinstance(submitted, str) and submitted and tx.last_questionnaire_at(cust.id) != submitted:
+        if not use_own and cust is not None and isinstance(submitted, str) and submitted \
+                and tx.last_questionnaire_at(cust.id) != submitted:
             tx.add_questionnaire(cust.id, r.id, submitted, submit.get("answers") or [], self.clock.now())
         return {"state": "ok", "submittedAt": iso(parse(submitted)), "needCount": sum(1 for i in items if i["needsCheck"]),
                 "items": items}

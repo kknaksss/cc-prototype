@@ -35,6 +35,14 @@ class Conflict(DomainError):
     status = 409
 
 
+class Gone(DomainError):
+    status = 410
+
+
+class TooManyRequests(DomainError):
+    status = 429
+
+
 class BadGateway(DomainError):
     status = 502
 

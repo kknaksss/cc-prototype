@@ -1,4 +1,5 @@
-// 예약 상세에서 여는 것(SPEC-004 §6.11) — [태블릿에 띄우기](문진 → 기기) · [이 기기에서 열기](문진) · [여권 스캔](이 기기 카메라).
+// 예약 상세에서 여는 것(SPEC-004 §6.11 · SPEC-006 §8.2) — [태블릿에 띄우기](문진 QR → 기기) · [이 기기에 QR 보이기] · [여권 스캔](이 기기 카메라).
+// 문진은 고객이 자기 휴대폰 웹에서 한다 — 앱은 QR 만 보여 준다(문진 화면 · 잠금 · unlock 없음)
 // 앱엔 [스캔할 기기](다른 기기로 스캔 보내기) 없음 — 웹에서만(D7-72)
 import 'package:flutter/material.dart';
 
@@ -10,7 +11,7 @@ import '../theme/tokens.dart';
 import '../view/time.dart';
 import '../widgets/ui.dart';
 import 'board_screen.dart' show isTablet;
-import 'questionnaire_screen.dart' show showQuestionnaire;
+import 'qr_show_screen.dart' show showQrScreen;
 import 'scan_screen.dart' show showPassportScan;
 
 // [태블릿에 띄우기] — 기기 고르기 시트(§5-3 targets · 이름 · 폰/태블릿 · 접속 중 점) → POST /api/display-requests {deviceId}
@@ -76,21 +77,38 @@ Future<void> sendQuestionnaireToDevice(BuildContext context, ResvDetail d) async
   await app.run(() => app.api.createDisplay(d.reservationId, 'questionnaire', deviceId: pick.deviceId), '${pick.name}에 표시 중');
 }
 
-// [이 기기에서 열기] — 띄우기 요청 없이 문진 화면(§6.15 · WP-APP5)
-typedef QuestionnaireOpener = Future<void> Function(BuildContext context, int reservationId, {int? displayRequestId});
-QuestionnaireOpener? openQuestionnaire = showQuestionnaire;
+// 문진 QR 화면(SPEC-006 §8.2) — 시험 · 스크린샷이 바꿔 끼울 수 있게
+typedef QrOpener = Future<void> Function(BuildContext context, {required int requestId, required int reservationId, required String qrUrl, String? expiresAt});
+QrOpener openQrScreen = (context, {required requestId, required reservationId, required qrUrl, expiresAt}) =>
+    showQrScreen(context, requestId: requestId, reservationId: reservationId, qrUrl: qrUrl, expiresAt: expiresAt);
+
+// [이 기기에 QR 보이기] — POST /api/display-requests {kind: questionnaire}(deviceId 없이) → 응답 qrUrl 로 QR 화면
+Future<void> showQuestionnaireQrHere(BuildContext context, ResvDetail d) async {
+  final app = AppScope.read(context);
+  Map<String, dynamic> r;
+  try {
+    r = await app.api.createDisplay(d.reservationId, 'questionnaire');
+  } on ApiError catch (e) {
+    app.toaster.show(e.message);
+    return;
+  }
+  final id = r['id'], url = r['qrUrl'];
+  if (id is! num || url is! String || url.isEmpty) return app.toaster.show('문진 QR 을 받지 못했어요');
+  if (!context.mounted) return;
+  await openQrScreen(context, requestId: id.toInt(), reservationId: d.reservationId, qrUrl: url, expiresAt: r['expiresAt'] as String?);
+}
 
 // [여권 스캔] — 이 기기 카메라(§6.16 · WP-APP6)
 typedef ScanOpener = Future<void> Function(BuildContext context, ResvDetail d, {int? displayRequestId});
 ScanOpener? openPassportScan = showPassportScan;
 
-// 띄우기 요청 열기(§5-3 「열기」) — 문진 = 잠금 화면 · 스캔 = 그 예약 상세를 읽어 스캔 화면. 화면이 닫힐 때까지 기다린다
+// 띄우기 요청 열기(§5-3 「열기」) — 문진 = QR 화면(SPEC-006 §8.2) · 스캔 = 그 예약 상세를 읽어 스캔 화면. 화면이 닫힐 때까지 기다린다
 Future<void> openDisplay(BuildContext context, DisplayReq r) async {
   final app = AppScope.read(context);
   if (r.kind == 'questionnaire') {
-    final f = openQuestionnaire;
-    if (f == null) return;
-    await f(context, r.reservationId, displayRequestId: r.requestId);
+    final url = r.qrUrl;
+    if (url == null) return app.toaster.show('문진 QR 을 받지 못했어요');
+    await openQrScreen(context, requestId: r.requestId, reservationId: r.reservationId, qrUrl: url, expiresAt: r.expiresAt);
     return;
   }
   final f = openPassportScan;

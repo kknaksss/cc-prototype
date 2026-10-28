@@ -9,7 +9,6 @@ import 'package:http_parser/http_parser.dart' show MediaType;
 import '../model/account.dart';
 import '../model/board.dart' show Json;
 import '../model/display.dart';
-import '../model/questionnaire.dart';
 import '../model/reservation.dart';
 
 class ApiError implements Exception {
@@ -150,11 +149,7 @@ class Api {
       DisplayReq.fromJson(await _post('/api/display-requests/claim', {'qrToken': qrToken, 'deviceId': ?deviceId}));
   Future<void> closeDisplay(int requestId, String status) => _post('/api/display-requests/$requestId/close', {'status': status});
 
-  // §6.15 문진 — deviceId 는 자기 기기(기기 행 없으면 뺌 · r2) · 잠금 나가기 = unlock(기기별 5회 · 1분)
-  Future<QForm> questionnaire(int reservationId, {int? deviceId}) async => QForm.fromJson(
-      ((await _req('GET', '/api/questionnaires/$reservationId${deviceId == null ? '' : '?deviceId=$deviceId'}')) as Map).cast<String, dynamic>());
-  Future<void> submitQuestionnaire(int reservationId, Json body) => _post('/api/questionnaires/$reservationId', body);
-  Future<void> unlock(String password, {int? deviceId}) => _post('/api/auth/unlock', {'password': password, 'deviceId': ?deviceId});
+  // 문진은 고객 폰 웹에서(SPEC-006) — 앱은 문진 API · unlock 을 부르지 않는다. 문진 띄우기 응답 = {id, qrToken: null, qrUrl, expiresAt}
 
   // §6.16 ④ 여권 스캔 저장 — multipart: fields(json · 바꿀 칸) · photo(JPEG) · reservationId · displayRequestId? · deviceId? · manual
   // 법적 검토 필요: 신분증 이미지 · 주민번호 처리 — 사진 바이트는 메모리에서 바로 요청 본문으로만(파일 · 캐시 없음)

@@ -1,0 +1,1003 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="_ds/medikit-aea7ac33-f044-4445-9164-87b8b69474dc/fonts/fonts.css">
+  <link rel="stylesheet" href="_ds/medikit-aea7ac33-f044-4445-9164-87b8b69474dc/_ds_bundle.css">
+  <link rel="stylesheet" href="_ds/medikit-aea7ac33-f044-4445-9164-87b8b69474dc/styles.css">
+  <link rel="stylesheet" href="ceramique-theme.css">
+  <link rel="stylesheet" href="medikit-patches.css">
+  <script src="_ds/medikit-aea7ac33-f044-4445-9164-87b8b69474dc/_ds_bundle.js"></script>
+  <style>html,body{margin:0;height:100%;}a{color:#2498bd;}a:hover{color:#1d7f9e;}</style>
+</helmet>
+<div data-product="ceramique" data-screen-label="실시간 현황판 v3" style="display:flex;flex-direction:column;height:100vh;background:var(--ms-gray-100, #f5f6f8);">
+  <x-import component-from-global-scope="MedisolveAiMedikit.Header" logo="{{ logo }}" menus="{{ menus }}" current-path="{{ path }}" on-menu-click="{{ navigate }}" branch-name="세라미크 명동점" user-name="관리자" on-logout="{{ logout }}" hint-size="100%,64px"></x-import>
+  <div style="display:flex;flex:1;min-height:0;">
+    <x-import component-from-global-scope="MedisolveAiMedikit.Menu" menus="{{ menus }}" current-path="{{ path }}" on-menu-click="{{ navigate }}" hint-size="274px,100%"></x-import>
+    <main style="flex:1;min-width:0;min-height:0;padding:20px 28px;display:flex;flex-direction:column;gap:12px;overflow:hidden;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px 24px;flex-wrap:wrap;">
+        <div style="display:flex;align-items:baseline;gap:12px;">
+          <h1 class="text-typo-title-md-600 text-ms-gray-800" style="margin:0;white-space:nowrap;">실시간 현황판</h1>
+          <span class="text-typo-body-400 text-ms-gray-600" style="white-space:nowrap;">명동점 · 1층 · 방을 눌러 배정</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px 20px;flex-wrap:wrap;">
+          <div style="display:flex;align-items:center;gap:12px;">
+            <sc-for list="{{ roleLegend }}" as="g" hint-placeholder-count="4">
+              <span style="display:flex;align-items:center;gap:6px;">
+                <span class="{{ g.cls }}" style="width:8px;height:8px;border-radius:50%;"></span>
+                <span class="text-typo-caption-md-400 text-ms-gray-700" style="white-space:nowrap;">{{ g.name }}</span>
+              </span>
+            </sc-for>
+          </div>
+          <span class="bg-ms-gray-300" style="width:1px;height:14px;"></span>
+          <div style="display:flex;align-items:center;gap:12px;">
+            <sc-for list="{{ statusLegend }}" as="g" hint-placeholder-count="3">
+              <span style="display:flex;align-items:center;gap:6px;">
+                <span class="{{ g.cls }}" style="width:14px;height:10px;border-radius:3px;border-width:1px;border-style:solid;box-sizing:border-box;"></span>
+                <span class="text-typo-caption-md-400 text-ms-gray-700" style="white-space:nowrap;">{{ g.name }}</span>
+              </span>
+            </sc-for>
+          </div>
+          <sc-if value="{{ narrow }}" hint-placeholder-val="{{ false }}">
+            <x-import component-from-global-scope="MedisolveAiMedikit.Button" variant="outlined" color="gray" size="sm" on-click="{{ openDrawer }}" hint-size="110px,32px"><span style="display:flex;align-items:center;gap:4px;"><span>진행 목록</span><span>{{ itemCount }}</span></span></x-import>
+          </sc-if>
+        </div>
+      </div>
+      <div style="display:flex;gap:12px;flex:1;min-height:0;">
+        <div class="bg-ms-white" style="flex:1;min-width:0;border-radius:12px;padding:12px;display:flex;overflow:auto;box-shadow:0px 2px 10px 0px rgba(0,0,0,0.04);">
+          <div ref="{{ gridRef }}" class="bg-ms-gray-100" style="position:relative;flex:1;min-width:680px;align-self:flex-start;min-height:100%;box-sizing:border-box;border-radius:8px;padding:6px;display:grid;grid-template-columns:repeat(8, minmax(0, 1fr));grid-template-rows:repeat(2, minmax(84px, auto)) 28px repeat(3, minmax(84px, auto)) 28px minmax(84px, auto);gap:6px;">
+            <sc-for list="{{ corridors }}" as="c" hint-placeholder-count="2">
+              <div class="border-ms-gray-300 text-ms-gray-500" style="grid-column:1 / -1;grid-row:{{ c.row }};border-top-width:1px;border-top-style:dashed;border-bottom-width:1px;border-bottom-style:dashed;display:flex;align-items:center;justify-content:center;font-size:11px;letter-spacing:0.4em;">복도</div>
+            </sc-for>
+            <sc-for list="{{ rooms }}" as="r" hint-placeholder-count="0">
+              <div data-room="{{ r.id }}" onClick="{{ r.open }}" class="{{ r.cls }}" style="grid-column:{{ r.col }} / span {{ r.cs }};grid-row:{{ r.row }};min-width:0;box-sizing:border-box;border-radius:6px;border-width:1px;border-style:solid;padding:6px 8px;display:flex;flex-direction:column;gap:4px;outline:{{ r.ring }};outline-offset:2px;opacity:{{ r.op }};transition:opacity 160ms ease, box-shadow 160ms ease;position:relative;cursor:{{ r.cursor }};" style-hover="box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+                <div style="display:flex;flex-direction:column;gap:1px;">
+                  <span class="text-typo-caption-md-600" style="display:block;white-space:nowrap;">{{ r.name }}</span>
+                  <span class="text-typo-caption-md-500 text-ms-gray-700" style="display:block;white-space:nowrap;font-variant-numeric:tabular-nums;">{{ r.timer }}</span>
+                </div>
+                <span class="text-typo-caption-md-400 text-ms-gray-700" style="word-break:keep-all;">{{ r.label }}</span>
+                <div style="display:flex;flex-wrap:wrap;gap:2px 8px;">
+                  <sc-for list="{{ r.people }}" as="p" hint-placeholder-count="0">
+                    <span style="display:flex;align-items:center;flex-wrap:wrap;gap:0 4px;white-space:nowrap;min-width:0;">
+                      <span class="{{ p.cls }}" style="width:7px;height:7px;border-radius:50%;flex-shrink:0;"></span>
+                      <span class="{{ p.textCls }}">{{ p.name }}</span>
+                      <span class="text-typo-caption-md-400 text-ms-gray-600" style="font-variant-numeric:tabular-nums;">{{ p.sub }}</span>
+                    </span>
+                  </sc-for>
+                </div>
+                <sc-if value="{{ r.hasQueued }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex;flex-wrap:wrap;gap:2px 8px;">
+                    <sc-for list="{{ r.queued }}" as="q" hint-placeholder-count="0">
+                      <span style="display:flex;align-items:center;gap:4px;white-space:nowrap;opacity:0.6;">
+                        <span class="{{ q.cls }}" style="width:7px;height:7px;border-radius:50%;flex-shrink:0;"></span>
+                        <span class="text-typo-caption-md-400 text-ms-gray-700">{{ q.name }}</span>
+                      </span>
+                    </sc-for>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-for>
+            <sc-if value="{{ hasArrow }}" hint-placeholder-val="{{ false }}">
+              <svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible;z-index:2;">
+                <defs>
+                  <marker id="route-head" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                    <path d="M0,0 L10,5 L0,10 z" fill="var(--ms-primary)"></path>
+                  </marker>
+                  <marker id="route-head-past" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                    <path d="M0,0 L10,5 L0,10 z" fill="var(--ms-gray-500, #9ca3af)"></path>
+                  </marker>
+                </defs>
+                <sc-for list="{{ arrows }}" as="a" hint-placeholder-count="0">
+                  <path d="{{ a.d }}" fill="none" stroke="#ffffff" strokeWidth="6" strokeLinecap="round"></path>
+                  <path d="{{ a.d }}" fill="none" stroke="{{ a.stroke }}" strokeWidth="2.5" strokeDasharray="{{ a.dash }}" strokeLinecap="round" markerEnd="{{ a.marker }}"></path>
+                </sc-for>
+              </svg>
+            </sc-if>
+          </div>
+        </div>
+        <sc-if value="{{ backdrop }}" hint-placeholder-val="{{ false }}">
+          <div onClick="{{ closeDrawer }}" style="position:fixed;inset:0;background:rgba(0,0,0,0.24);z-index:40;"></div>
+        </sc-if>
+        <aside class="bg-ms-white" style="display:flex;position:{{ asidePos }};top:12px;right:12px;bottom:12px;z-index:41;transform:{{ asideTf }};transition:transform 240ms ease;width:340px;max-width:calc(100vw - 24px);flex-shrink:0;border-radius:12px;flex-direction:column;min-height:0;box-sizing:border-box;box-shadow:0px 0px 10px 0px rgba(0,0,0,0.09);">
+          <sc-if value="{{ narrow }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 16px 0;">
+              <span class="text-typo-heading-md-500 text-ms-gray-800">진행 목록</span>
+              <x-import component-from-global-scope="MedisolveAiMedikit.Button" variant="text" color="gray" size="sm" on-click="{{ closeDrawer }}" hint-size="40px,32px">닫기</x-import>
+            </div>
+          </sc-if>
+          <div style="padding:8px 16px 0;">
+            <x-import component-from-global-scope="MedisolveAiMedikit.Tabs" tabs="{{ tabs }}" selected-tab="{{ tab }}" on-select-tab="{{ selectTab }}" hint-size="100%,44px"></x-import>
+          </div>
+
+          <sc-if value="{{ isResvTab }}" hint-placeholder-val="{{ false }}">
+            <div style="display:grid;grid-template-columns:repeat(3, minmax(0,1fr));gap:8px;padding:16px 16px 12px;">
+              <sc-for list="{{ resvSummary }}" as="s" hint-placeholder-count="3">
+                <div class="{{ s.cls }}" style="border-radius:8px;border-width:1px;border-style:solid;padding:8px 10px;display:flex;flex-direction:column;gap:2px;">
+                  <span class="text-typo-caption-md-500">{{ s.name }}</span>
+                  <span class="text-typo-title-sm-600" style="font-variant-numeric:tabular-nums;">{{ s.count }}</span>
+                </div>
+              </sc-for>
+            </div>
+            <div class="border-ms-gray-200" style="display:flex;align-items:center;justify-content:space-between;padding:0 16px 10px;border-bottom-width:1px;border-bottom-style:solid;">
+              <span class="text-typo-caption-md-400 text-ms-gray-600">오늘 예약 {{ resvTotal }}건</span>
+              <x-import component-from-global-scope="MedisolveAiMedikit.Button" variant="outlined" color="gray" size="sm" on-click="{{ walkIn }}" hint-size="80px,32px">현장 접수</x-import>
+            </div>
+            <div style="flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;">
+              <sc-for list="{{ resv }}" as="v" hint-placeholder-count="6">
+                <div class="border-ms-gray-200" style="display:grid;grid-template-columns:40px minmax(0,1fr) auto;gap:10px;align-items:center;padding:12px 16px;border-bottom-width:1px;border-bottom-style:solid;">
+                  <span class="{{ v.timeCls }}" style="font-variant-numeric:tabular-nums;">{{ v.time }}</span>
+                  <div style="display:flex;flex-direction:column;gap:2px;min-width:0;">
+                    <div style="display:flex;align-items:center;gap:6px;min-width:0;">
+                      <span class="{{ v.nameCls }}" style="white-space:nowrap;">{{ v.name }}</span>
+                      <span class="{{ v.hintCls }}" style="white-space:nowrap;">{{ v.hint }}</span>
+                    </div>
+                    <span class="text-typo-caption-md-400 text-ms-gray-600" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ v.procedure }} · {{ v.doctor }}</span>
+                  </div>
+                  <sc-if value="{{ v.canCheck }}" hint-placeholder-val="{{ false }}">
+                    <x-import component-from-global-scope="MedisolveAiMedikit.Button" variant="solid" color="blue" size="sm" on-click="{{ v.check }}" hint-size="52px,32px">접수</x-import>
+                  </sc-if>
+                  <sc-if value="{{ v.showState }}" hint-placeholder-val="{{ true }}">
+                    <span class="{{ v.stateCls }}" style="white-space:nowrap;">{{ v.stateText }}</span>
+                  </sc-if>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ isStaffTab }}" hint-placeholder-val="{{ false }}">
+            <div style="flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;">
+              <sc-for list="{{ staff }}" as="s" hint-placeholder-count="6">
+                <div onClick="{{ s.select }}" class="{{ s.rowCls }}" style="padding:12px 16px;border-bottom-width:1px;border-bottom-style:solid;display:flex;flex-direction:column;gap:8px;cursor:pointer;">
+                  <div style="display:flex;align-items:center;gap:8px;">
+                    <span class="{{ s.dot }}" style="width:8px;height:8px;border-radius:50%;flex-shrink:0;"></span>
+                    <span class="text-typo-body-600 text-ms-gray-800" style="white-space:nowrap;">{{ s.name }}</span>
+                    <span class="text-typo-caption-md-400 text-ms-gray-600" style="white-space:nowrap;">{{ s.role }}</span>
+                    <span class="{{ s.loadCls }}" style="margin-left:auto;white-space:nowrap;">{{ s.load }}</span>
+                  </div>
+                  <div style="display:grid;grid-template-columns:28px minmax(0,1fr);gap:4px 8px;align-items:baseline;">
+                    <span class="text-typo-caption-md-500 text-ms-gray-600">현재</span>
+                    <span class="{{ s.curCls }}"><b style="font-weight:600;">{{ s.curRoom }}</b>{{ s.curTask }}</span>
+                    <span class="text-typo-caption-md-500 text-primary">다음</span>
+                    <span class="{{ s.nextCls }}">{{ s.nextText }}</span>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ isCustomerTab }}" hint-placeholder-val="{{ false }}">
+            <div style="flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;">
+              <sc-for list="{{ customers }}" as="c" hint-placeholder-count="6">
+                <div onClick="{{ c.select }}" class="{{ c.rowCls }}" style="padding:12px 16px;border-bottom-width:1px;border-bottom-style:solid;display:flex;flex-direction:column;gap:8px;cursor:pointer;">
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                    <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                      <x-import component-from-global-scope="MedisolveAiMedikit.Badge" variant="{{ c.variant }}" size="sm" dot="{{ true }}" hint-size="52px,22px">{{ c.status }}</x-import>
+                      <span class="text-typo-body-600 text-ms-gray-800" style="white-space:nowrap;">{{ c.name }}</span>
+                    </div>
+                    <span class="text-typo-caption-md-500 text-ms-gray-700" style="white-space:nowrap;">{{ c.where }}</span>
+                  </div>
+                  <div style="display:flex;flex-direction:column;gap:4px;">
+                    <sc-for list="{{ c.steps }}" as="st" hint-placeholder-count="0">
+                      <div style="display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:8px;align-items:center;">
+                        <span class="{{ st.numCls }}" style="width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;box-sizing:border-box;border-width:1px;border-style:solid;">{{ st.n }}</span>
+                        <span class="{{ st.textCls }}" style="min-width:0;">{{ st.label }}</span>
+                        <span class="text-typo-caption-md-400 text-ms-gray-500">{{ st.role }}</span>
+                      </div>
+                    </sc-for>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ isStatusTab }}" hint-placeholder-val="{{ true }}">
+            <div style="display:grid;grid-template-columns:repeat(3, minmax(0,1fr));gap:8px;padding:16px 16px 12px;">
+              <sc-for list="{{ summary }}" as="s" hint-placeholder-count="3">
+                <div class="{{ s.cls }}" style="border-radius:8px;border-width:1px;border-style:solid;padding:8px 10px;display:flex;flex-direction:column;gap:2px;">
+                  <span class="text-typo-caption-md-500">{{ s.name }}</span>
+                  <span class="text-typo-title-sm-600" style="font-variant-numeric:tabular-nums;">{{ s.count }}</span>
+                </div>
+              </sc-for>
+            </div>
+            <div class="border-ms-gray-200" style="border-top-width:1px;border-top-style:solid;"></div>
+            <div style="flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;">
+              <sc-for list="{{ items }}" as="it" hint-placeholder-count="5">
+                <div onClick="{{ it.open }}" class="border-ms-gray-200" style="padding:12px 16px;border-bottom-width:1px;border-bottom-style:solid;display:flex;flex-direction:column;gap:6px;cursor:pointer;">
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                    <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                      <x-import component-from-global-scope="MedisolveAiMedikit.Badge" variant="{{ it.variant }}" size="sm" dot="{{ true }}" hint-size="52px,22px">{{ it.status }}</x-import>
+                      <span class="text-typo-body-600 text-ms-gray-800" style="white-space:nowrap;">{{ it.room }}</span>
+                    </div>
+                    <span class="text-typo-body-500 text-ms-gray-700" style="font-variant-numeric:tabular-nums;">{{ it.elapsed }}</span>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                    <span class="text-typo-body-500 text-ms-gray-800">{{ it.customer }}</span>
+                    <span class="text-typo-body-400 text-ms-gray-600">{{ it.label }}</span>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:4px 10px;flex-wrap:wrap;">
+                    <sc-for list="{{ it.staff }}" as="m" hint-placeholder-count="0">
+                      <span style="display:flex;align-items:center;gap:4px;">
+                        <span class="{{ m.cls }}" style="width:8px;height:8px;border-radius:50%;"></span>
+                        <span class="text-typo-caption-md-400 text-ms-gray-700" style="white-space:nowrap;">{{ m.role }} {{ m.name }}</span>
+                      </span>
+                    </sc-for>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+        </aside>
+      </div>
+
+      <sc-if value="{{ hasToast }}" hint-placeholder-val="{{ false }}">
+        <div class="bg-ms-gray-800 text-ms-white" style="position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:9999;border-radius:10px;padding:10px 12px 10px 16px;display:flex;align-items:center;gap:16px;box-shadow:0 6px 20px rgba(0,0,0,0.18);">
+          <span class="text-typo-body-500" style="white-space:nowrap;">{{ toastText }}</span>
+          <button onClick="{{ undo }}" class="text-typo-body-600" style="background:none;border:0;color:#7fd0ea;cursor:pointer;padding:4px 6px;font:inherit;">되돌리기</button>
+        </div>
+      </sc-if>
+
+      <x-import component-from-global-scope="MedisolveAiMedikit.Modal" is-open="{{ ciOpen }}" on-backdrop-click="{{ closeCi }}" hint-size="0px,0px">
+        <div style="width:min(560px, calc(100vw - 64px));max-height:min(760px, calc(100vh - 96px));display:flex;flex-direction:column;gap:18px;overflow:auto;">
+          <div style="display:flex;flex-direction:column;gap:4px;">
+            <span class="text-typo-title-sm-600 text-ms-gray-800">접수</span>
+            <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;">
+              <span class="text-typo-body-600 text-ms-gray-800">{{ ci.name }}</span>
+              <span class="text-typo-body-400 text-ms-gray-600">{{ ci.meta }}</span>
+            </div>
+            <span class="text-typo-caption-md-400 text-ms-gray-600">{{ ci.resvText }}</span>
+          </div>
+          <sc-if value="{{ ci.hasCaution }}" hint-placeholder-val="{{ false }}">
+            <div class="bg-red-100" style="border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:2px;">
+              <span class="text-typo-caption-md-600 text-red">주의사항</span>
+              <span class="text-typo-body-500 text-ms-gray-800">{{ ci.cautionText }}</span>
+            </div>
+          </sc-if>
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            <span class="text-typo-caption-md-600 text-ms-gray-700">보유 시술권 · 오늘 받을 시술 선택</span>
+            <sc-for list="{{ ci.tickets }}" as="t" hint-placeholder-count="2">
+              <div onClick="{{ t.toggle }}" class="{{ t.rowCls }}" style="border-width:1px;border-style:solid;border-radius:8px;padding:10px 12px;display:grid;grid-template-columns:18px minmax(0,1fr);gap:10px;align-items:center;cursor:{{ t.cursor }};">
+                <span class="{{ t.boxCls }}" style="width:18px;height:18px;border-radius:4px;border-width:1px;border-style:solid;box-sizing:border-box;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;">✓</span>
+                <div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+                  <span class="text-typo-body-500">{{ t.name }}</span>
+                  <span class="text-typo-caption-md-400 text-ms-gray-600" style="font-variant-numeric:tabular-nums;">{{ t.sub }}</span>
+                </div>
+              </div>
+            </sc-for>
+            <sc-if value="{{ ci.noTickets }}" hint-placeholder-val="{{ false }}">
+              <span class="text-typo-body-400 text-ms-gray-500">보유 시술권이 없어요</span>
+            </sc-if>
+            <div onClick="{{ ci.toggleConsult }}" class="{{ ci.consultRow }}" style="border-width:1px;border-style:solid;border-radius:8px;padding:10px 12px;display:grid;grid-template-columns:18px minmax(0,1fr);gap:10px;align-items:center;cursor:pointer;">
+              <span class="{{ ci.consultBox }}" style="width:18px;height:18px;border-radius:4px;border-width:1px;border-style:solid;box-sizing:border-box;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;">✓</span>
+              <div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+                <span class="text-typo-body-500">상담 필요</span>
+                <span class="text-typo-caption-md-400 text-ms-gray-600">신규 · 시술권 외 시술 · 추가 상담</span>
+              </div>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            <span class="text-typo-caption-md-600 text-ms-gray-700">오늘 진행 순서</span>
+            <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;">
+              <sc-for list="{{ ci.preview }}" as="s" hint-placeholder-count="3">
+                <span style="display:flex;align-items:center;gap:6px;">
+                  <span class="bg-ms-gray-100 text-ms-gray-800" style="border-radius:999px;padding:4px 10px;display:flex;align-items:center;gap:6px;white-space:nowrap;">
+                    <span class="text-typo-caption-md-500">{{ s.label }}</span>
+                    <span class="text-typo-caption-md-400 text-ms-gray-600">{{ s.role }}</span>
+                  </span>
+                  <span class="text-ms-gray-500" style="font-size:12px;">{{ s.arrow }}</span>
+                </span>
+              </sc-for>
+            </div>
+            <sc-if value="{{ ci.cannot }}" hint-placeholder-val="{{ false }}">
+              <span class="text-typo-caption-md-400 text-red">시술을 고르거나 상담 필요를 체크하세요</span>
+            </sc-if>
+            <span class="text-typo-caption-md-400 text-ms-gray-500">원장 진료 · 진정 관리는 시술 선택 시 자동으로 들어가요. 직원은 현황판에서 방을 눌러 배정해요.</span>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;padding-top:4px;">
+            <x-import component-from-global-scope="MedisolveAiMedikit.Button" variant="outlined" color="gray" on-click="{{ closeCi }}" hint-size="72px,40px">취소</x-import>
+            <x-import component-from-global-scope="MedisolveAiMedikit.Button" variant="solid" color="blue" disabled="{{ ci.cannot }}" on-click="{{ confirmCi }}" hint-size="120px,40px">접수 · 라운지 대기</x-import>
+          </div>
+        </div>
+      </x-import>
+
+      <x-import component-from-global-scope="MedisolveAiMedikit.Modal" is-open="{{ rpOpen }}" on-backdrop-click="{{ closeRp }}" hint-size="0px,0px">
+        <div style="width:min(600px, calc(100vw - 64px));max-height:min(780px, calc(100vh - 96px));display:flex;flex-direction:column;gap:18px;overflow:auto;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+              <span class="text-typo-title-sm-600 text-ms-gray-800">{{ rp.name }}</span>
+              <sc-if value="{{ rp.hasStatus }}" hint-placeholder-val="{{ false }}">
+                <x-import component-from-global-scope="MedisolveAiMedikit.Badge" variant="{{ rp.variant }}" size="sm" dot="{{ true }}" hint-size="52px,22px">{{ rp.status }}</x-import>
+              </sc-if>
+              <span class="text-typo-body-500 text-ms-gray-700" style="font-variant-numeric:tabular-nums;">{{ rp.timer }}</span>
+            </div>
+            <x-import component-from-global-scope="MedisolveAiMedikit.Button" variant="text" color="gray" size="sm" on-click="{{ closeRp }}" hint-size="40px,32px">닫기</x-import>
+          </div>
+
+          <sc-if value="{{ rp.isOcc }}" hint-placeholder-val="{{ false }}">
+            <sc-for list="{{ rp.custs }}" as="c" hint-placeholder-count="1">
+              <div class="bg-ms-gray-100" style="border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:10px;">
+                <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;">
+                  <span class="text-typo-heading-md-500 text-ms-gray-800">{{ c.name }}</span>
+                  <span class="text-typo-caption-md-400 text-ms-gray-600">{{ c.meta }}</span>
+                </div>
+                <sc-if value="{{ c.hasCaution }}" hint-placeholder-val="{{ false }}">
+                  <span class="text-typo-caption-md-500 text-red">주의 · {{ c.cautionText }}</span>
+                </sc-if>
+                <div style="display:flex;flex-direction:column;gap:4px;">
+                  <sc-for list="{{ c.steps }}" as="st" hint-placeholder-count="3">
+                    <div style="display:grid;grid-template-columns:20px minmax(0,1fr) auto;gap:8px;align-items:center;">
+                      <span class="{{ st.numCls }}" style="width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;box-sizing:border-box;border-width:1px;border-style:solid;">{{ st.n }}</span>
+                      <span class="{{ st.textCls }}">{{ st.label }}</span>
+                      <span class="text-typo-caption-md-400 text-ms-gray-500">{{ st.role }}</span>
+                    </div>
+                  </sc-for>
+                </div>
+                <sc-if value="{{ c.needSleep }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                    <span class="text-typo-caption-md-600 text-primary">수면실로 이동</span>
+                    <sc-for list="{{ c.sleepRooms }}" as="o" hint-placeholder-count="0">
+                      <x-import component-from-global-scope="MedisolveAiMedikit.Button" variant="outlined" color="blue" size="sm" on-click="{{ o.pick }}" hint-size="80px,32px">{{ o.name }}</x-import>
+                    </sc-for>
+                    <sc-if value="{{ c.noSleepRoom }}" hint-placeholder-val="{{ false }}">
+                      <span class="text-typo-caption-md-400 text-ms-gray-600">빈 수면실 없음</span>
+                    </sc-if>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-for>
+
+            <div style="display:flex;flex-direction:column;gap:6px;">
+              <span class="text-typo-caption-md-600 text-ms-gray-700">현재 방에 있는 직원</span>
+              <sc-for list="{{ rp.present }}" as="s" hint-placeholder-count="1">
+                <div class="border-ms-gray-200" style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom-width:1px;border-bottom-style:solid;">
+                  <span class="{{ s.dot }}" style="width:8px;height:8px;border-radius:50%;"></span>
+                  <span class="text-typo-body-600 text-ms-gray-800">{{ s.name }}</span>
+                  <span class="text-typo-caption-md-400 text-ms-gray-600">{{ s.role }}</span>
+                  <div style="margin-left:auto;display:flex;gap:6px;">
+                    <x-import component-from-global-scope="MedisolveAiMedikit.Button" variant="outlined" color="gray" size="sm" on-click="{{ s.remove }}" hint-size="48px,32px">빼기</x-import>
+                    <x-import component-from-global-scope="MedisolveAiMedikit.Button" variant="solid" color="blue" size="sm" on-click="{{ s.done }}" hint-size="48px,32px">완료</x-import>
+                  </div>
+                </div>
+              </sc-for>
+              <sc-if value="{{ rp.noPresent }}" hint-placeholder-val="{{ false }}">
+                <span class="text-typo-body-400 text-ms-gray-500" style="padding:4px 0;">아직 들어온 직원이 없어요 · {{ rp.needText }}</span>
+              </sc-if>
+              <sc-if value="{{ rp.hasQueued }}" hint-placeholder-val="{{ false }}">
+                <span class="text-typo-caption-md-600 text-ms-gray-700" style="padding-top:6px;">배정 대기</span>
+                <sc-for list="{{ rp.queuedL }}" as="s" hint-placeholder-count="0">
+                  <div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
+                    <span class="{{ s.dot }}" style="width:8px;height:8px;border-radius:50%;opacity:0.6;"></span>
+                    <span class="text-typo-body-500 text-ms-gray-800">{{ s.name }}</span>
+                    <span class="text-typo-caption-md-400 text-ms-gray-600">{{ s.ahead }}</span>
+                    <div style="margin-left:auto;">
+                      <x-import component-from-global-scope="MedisolveAiMedikit.Button" variant="text" color="gray" size="sm" on-click="{{ s.cancel }}" hint-size="40px,32px">취소</x-import>
+                    </div>
+                  </div>
+                </sc-for>
+              </sc-if>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              <div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;">
+                <span class="text-typo-caption-md-600 text-ms-gray-700">직원 배정하기</span>
+                <span class="text-typo-caption-md-400 text-ms-gray-600">바쁜 직원은 큐 뒤에 쌓여요</span>
+              </div>
+              <div style="display:grid;grid-template-columns:repeat(3, minmax(0,1fr));gap:6px;">
+                <sc-for list="{{ rp.roles }}" as="o" hint-placeholder-count="3">
+                  <button onClick="{{ o.pick }}" class="{{ o.cls }}" style="border-width:1px;border-style:solid;border-radius:8px;height:36px;cursor:pointer;font:inherit;font-size:14px;font-weight:500;">{{ o.name }}</button>
+                </sc-for>
+              </div>
+              <div style="display:flex;flex-direction:column;">
+                <sc-for list="{{ rp.pool }}" as="o" hint-placeholder-count="4">
+                  <div class="border-ms-gray-200" style="display:flex;align-items:center;gap:8px;padding:8px 0;min-height:44px;box-sizing:border-box;border-bottom-width:1px;border-bottom-style:solid;">
+                    <span class="{{ o.dot }}" style="width:8px;height:8px;border-radius:50%;flex-shrink:0;"></span>
+                    <span class="text-typo-body-600 text-ms-gray-800" style="white-space:nowrap;">{{ o.name }}</span>
+                    <span class="{{ o.stateCls }}" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ o.state }}</span>
+                    <div style="margin-left:auto;flex-shrink:0;">
+                      <sc-if value="{{ o.can }}" hint-placeholder-val="{{ true }}">
+                        <x-import component-from-global-scope="MedisolveAiMedikit.Button" variant="outlined" color="blue" size="sm" on-click="{{ o.assign }}" hint-size="52px,32px">배정</x-import>
+                      </sc-if>
+                      <sc-if value="{{ o.assigned }}" hint-placeholder-val="{{ false }}">
+                        <span class="text-typo-caption-md-500 text-primary">{{ o.assignedText }}</span>
+                      </sc-if>
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ rp.isPlace }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;flex-direction:column;gap:6px;">
+              <span class="text-typo-caption-md-600 text-ms-gray-700">{{ rp.placeTitle }}</span>
+              <sc-for list="{{ rp.cands }}" as="c" hint-placeholder-count="2">
+                <div class="border-ms-gray-200" style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom-width:1px;border-bottom-style:solid;">
+                  <div style="display:flex;flex-direction:column;gap:2px;min-width:0;flex:1;">
+                    <div style="display:flex;align-items:baseline;gap:8px;">
+                      <span class="text-typo-body-600 text-ms-gray-800">{{ c.name }}</span>
+                      <span class="text-typo-caption-md-400 text-ms-gray-600" style="font-variant-numeric:tabular-nums;">{{ c.where }}</span>
+                    </div>
+                    <span class="text-typo-caption-md-400 text-ms-gray-700">{{ c.order }}</span>
+                  </div>
+                  <x-import component-from-global-scope="MedisolveAiMedikit.Button" variant="solid" color="blue" size="sm" on-click="{{ c.put }}" hint-size="52px,32px">넣기</x-import>
+                </div>
+              </sc-for>
+              <sc-if value="{{ rp.noCands }}" hint-placeholder-val="{{ false }}">
+                <span class="text-typo-body-400 text-ms-gray-500" style="padding:4px 0;">{{ rp.emptyText }}</span>
+              </sc-if>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ rp.isLounge }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;flex-direction:column;gap:6px;">
+              <span class="text-typo-caption-md-600 text-ms-gray-700">대기 고객 · 선택 후 관리실 배정</span>
+              <sc-for list="{{ rp.lcs }}" as="c" hint-placeholder-count="3">
+                <div onClick="{{ c.pick }}" class="{{ c.rowCls }}" style="border-width:1px;border-style:solid;border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:2px;cursor:pointer;">
+                  <div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;">
+                    <span class="text-typo-body-600 text-ms-gray-800">{{ c.name }}</span>
+                    <span class="text-typo-caption-md-500 text-ms-gray-700" style="font-variant-numeric:tabular-nums;">대기 {{ c.wait }}</span>
+                  </div>
+                  <span class="text-typo-caption-md-400 text-ms-gray-700">{{ c.order }}</span>
+                </div>
+              </sc-for>
+              <sc-if value="{{ rp.noLcs }}" hint-placeholder-val="{{ false }}">
+                <span class="text-typo-body-400 text-ms-gray-500">라운지에 대기 중인 고객이 없어요</span>
+              </sc-if>
+            </div>
+            <sc-if value="{{ rp.hasPick }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex;flex-direction:column;gap:8px;">
+                <span class="text-typo-caption-md-600 text-ms-gray-700">{{ rp.pickName }} 님 배정할 관리실</span>
+                <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(104px, 1fr));gap:6px;">
+                  <sc-for list="{{ rp.freeRooms }}" as="o" hint-placeholder-count="6">
+                    <button onClick="{{ o.pick }}" class="bg-ms-white border-ms-gray-300 text-ms-gray-800" style="border-width:1px;border-style:solid;border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;align-items:flex-start;gap:2px;cursor:pointer;font:inherit;text-align:left;" style-hover="border-color:var(--ms-primary);">
+                      <span class="text-typo-caption-md-600">{{ o.name }}</span>
+                      <span class="text-typo-caption-md-400 text-ms-gray-600">{{ o.sub }}</span>
+                    </button>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-if>
+          </sc-if>
+        </div>
+      </x-import>
+    </main>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+const ROLE = { 고객: 'bg-ms-gray-800', 의사: 'bg-purple', 상담사: 'bg-yellow', 코디: 'bg-primary' };
+const RLABEL = { 의사: '원장', 상담사: '상담사', 코디: '코디' };
+const ROLE_ORDER = ['의사', '상담사', '코디'];
+const STATUS = {
+  wait: { name: '대기', variant: 'neutral', cls: 'bg-yellow-100 border-ms-gray-400 text-ms-gray-800' },
+  consult: { name: '상담', variant: 'purple', cls: 'bg-purple-100 border-purple text-ms-gray-800' },
+  treat: { name: '시술', variant: 'primary', cls: 'bg-primary-100 border-primary text-ms-gray-800' }
+};
+const KEYS = ['wait', 'consult', 'treat'];
+const EMPTY = 'bg-ms-white border-ms-gray-300 text-ms-gray-500';
+const STAFFED = 'bg-ms-white border-ms-gray-300 text-ms-gray-800';
+const pad = (n) => String(n).padStart(2, '0');
+const clone = (o) => JSON.parse(JSON.stringify(o));
+
+// 오더 단계: kind(consult 상담 / doctor 원장 진료 / treat 시술 / sleep 수면 시술 / calm 진정), 담당 직군
+const S = (kind, label, role) => ({ kind, label, role });
+const CO = S('consult', '상담', '상담사'), DR = S('doctor', '원장 진료', '의사'), CA = S('calm', '진정 관리', '코디');
+const T = (l, r) => S('treat', l, r || '의사');
+const SL = (l) => S('sleep', l, '의사');
+const tk = (name, left, total, exp, role, sleep) => ({ name, left, total, exp, role: role || '의사', sleep: !!sleep });
+
+const PROFILE = {
+  서하은: { meta: '여 · 34세 · #C-20418', cautions: ['아스피린 복용 중 — 멍 주의', '켈로이드 체질'] },
+  김서연: { meta: '여 · 38세 · #C-20105', cautions: ['통증 민감'] },
+  유하린: { meta: '여 · 45세 · #C-19340', cautions: ['고혈압약 복용 — 수면 전 혈압 확인'] },
+  노예진: { meta: '여 · 42세 · #C-16620' },
+  이소담: { meta: '여 · 36세 · #C-19877', cautions: ['임신 준비 중'], tickets: [tk('리쥬란 힐러 2cc', 3, 5, '2027.03.31'), tk('쥬베룩 스킨부스터', 0, 3, '2026.12.31')], pre: [0] },
+  김나연: { meta: '여 · 43세 · #C-17210', tickets: [tk('울쎄라 300샷', 1, 2, '2027.01.15'), tk('온다 리프팅', 2, 3, '2026.11.30', '코디')], pre: [0] },
+  박서우: { meta: '여 · 27세 · 신규' },
+  최다인: { meta: '여 · 39세 · #C-18403', cautions: ['아스피린 복용'], tickets: [tk('써마지 FLX 600샷', 2, 3, '2027.05.01'), tk('리투오', 1, 1, '2026.10.31')], pre: [0] },
+  정유라: { meta: '여 · 31세 · #C-20033', tickets: [tk('소프웨이브', 3, 5, '2027.02.28', '코디')], pre: [0] },
+  문가영: { meta: '여 · 48세 · #C-15521', cautions: ['수면마취 회복 지연 이력'], tickets: [tk('수면 리프팅 (써마지+울쎄라)', 1, 2, '2027.06.30', '의사', true), tk('리쥬란 힐러 2cc', 2, 4, '2027.06.30')], pre: [0] }
+};
+
+// 샘플 현재 상태: [고객, 위치, 오더, 현재 단계, 경과 분, 수면 전 관리실]
+const C0 = [
+  ['김서연', 'c01', [DR, T('울쎄라 300샷'), CA], 1, 18],
+  ['정민지', 'c03', [DR, T('셀코어', '코디'), CA], 1, 32],
+  ['한지우', 'c05', [CO, DR, T('리투오'), SL('수면 리프팅'), CA], 2, 12],
+  ['윤아름', 'c08', [DR, T('써마지 FLX', '코디'), CA], 1, 52],
+  ['강예린', 'c12', [DR, T('소프웨이브', '코디'), CA], 1, 7],
+  ['서하은', 'c14', [DR, SL('수면 · 써마지 FLX 600샷'), CA], 0, 9],
+  ['임채원', 'c15', [DR, T('온다', '코디'), CA], 1, 24],
+  ['조유진', 't02', [T('시그니처 (2인)', '코디'), CA], 0, 38],
+  ['신다현', 't02', [T('시그니처 (2인)', '코디'), CA], 0, 38],
+  ['노예진', 's02', [CO, DR, SL('수면 리프팅'), CA], 2, 41, 'c11'],
+  ['장수빈', 'c06', [CO], 0, 15],
+  ['유하린', 'c09', [DR, SL('수면 · 온다 + 소프웨이브'), CA], 0, 4],
+  ['최윤서', 'c02', [CO], 0, 3],
+  ['오지현', 'lounge', [CO, DR], 0, 6],
+  ['류나래', 'lounge', [CO], 0, 14],
+  ['백소윤', 'lounge', [DR, T('리쥬란 힐러 2cc'), CA], 0, 23]
+];
+// 직원: [직군, 이름, 큐(첫 번째 = 현재 방), 비어있을 때 위치]
+const ST0 = [
+  ['의사', '정해린', ['c01', 'c14']], ['의사', '박도윤', ['c09']], ['의사', '오세훈', ['c05']], ['의사', '김태현', ['s02']],
+  ['상담사', '홍지수', ['c06', 'c02']], ['상담사', '서지안', [], 'consult'], ['상담사', '전소라', [], 'info2'],
+  ['코디', '이하늘', ['c01']], ['코디', '최유나', ['c03']], ['코디', '송다은', ['c08']], ['코디', '문소희', ['c12']],
+  ['코디', '배수아', ['c15']], ['코디', '유가은', ['t02']], ['코디', '남궁별', ['t02']], ['코디', '권지민', ['s02']],
+  ['코디', '안유리', [], 'desk'], ['코디', '차민아', [], 'desk'], ['코디', '하예슬', [], 'info1']
+];
+const RESV = [
+  ['09:00', '정민지', '셀코어', '정해린', 'checked'], ['09:10', '김서연', '울쎄라 리프팅', '정해린', 'checked'],
+  ['09:20', '한지우', '리투오', '오세훈', 'checked'], ['09:20', '노예진', '수면 리프팅', '김태현', 'checked'],
+  ['09:30', '윤아름', '써마지 FLX', '오세훈', 'checked'], ['09:40', '강예린', '소프웨이브', '박도윤', 'checked'],
+  ['09:50', '서하은', '수면 리프팅', '정해린', 'checked'], ['10:00', '임채원', '온다', '오세훈', 'checked'],
+  ['10:00', '조유진', '시그니처 (2인)', '김태현', 'checked'], ['10:00', '신다현', '시그니처 (2인)', '김태현', 'checked'],
+  ['10:00', '배지원', '온다', '오세훈', 'noshow'], ['10:10', '장수빈', '첫 방문 상담', '미정', 'checked'],
+  ['10:20', '유하린', '수면 시술', '박도윤', 'checked'], ['10:20', '최윤서', '리프팅 상담', '미정', 'checked'],
+  ['10:30', '이소담', '리쥬란 힐러', '정해린', 'booked'], ['10:30', '오지현', '첫 방문 상담', '정해린', 'checked'],
+  ['10:40', '류나래', '리프팅 상담', '미정', 'checked'], ['10:40', '백소윤', '리쥬란 힐러', '미정', 'checked'],
+  ['11:00', '김나연', '울쎄라 리프팅', '박도윤', 'booked'], ['11:10', '박서우', '첫 방문 상담', '미정', 'booked'],
+  ['11:30', '최다인', '써마지 FLX', '오세훈', 'booked'], ['11:40', '정유라', '소프웨이브', '정해린', 'booked'],
+  ['12:00', '문가영', '수면 리프팅', '김태현', 'booked']
+].map(([time, name, procedure, doctor, st]) => ({ time, name, procedure, doctor, st }));
+const DEMO_NOW = 10 * 60 + 55; // 예약 지연/임박 판단 기준(샘플)
+
+const TRACK = { 1: 1, 2: 2, 3: 4, 4: 5, 5: 6, 6: 8 };
+const CORRIDORS = [{ row: 3 }, { row: 7 }];
+const RM = (id, name, col, row, cs) => ({ id, name, col, row: TRACK[row], cs: cs || 1 });
+const care = (n, col, row) => RM('c' + pad(n), '관리실 ' + pad(n), col, row);
+const LAYOUT = [
+  RM('t02', '2인관리실 02', 3, 1, 2), RM('t03', '2인관리실 03', 5, 1, 2),
+  care(11, 3, 2), care(12, 4, 2), care(13, 5, 2), care(14, 6, 2), care(15, 7, 2), care(16, 8, 2),
+  RM('desk', '데스크', 1, 3), RM('lounge', '라운지', 2, 3, 2), RM('info2', '인포 2', 7, 3), RM('s02', '수면실 02', 8, 3),
+  RM('consult', '상담실', 2, 4), care(4, 6, 4), RM('s03', '수면실 03', 8, 4),
+  care(1, 1, 5), care(2, 2, 5), care(3, 3, 5), RM('info1', '인포 1', 4, 5), RM('s01', '수면실 01', 8, 5),
+  care(5, 1, 6), care(6, 2, 6), care(7, 3, 6), care(8, 4, 6), care(9, 5, 6), care(10, 6, 6), RM('t01', '2인관리실 01', 7, 6, 2)
+];
+const roomName = (id) => id === 'office' ? '원장실' : (LAYOUT.find((r) => r.id === id) || {}).name || id;
+const capOf = (id) => /^t\d/.test(id) ? 2 : /^(c\d|s\d)/.test(id) ? 1 : 0;
+const isSleep = (id) => /^s\d/.test(id || '');
+
+// 순수 계산: D = { customers, staff }
+const custIn = (D, id) => D.customers.filter((c) => !c.done && c.room === id);
+const presentIn = (D, id) => D.staff.filter((s) => s.queue[0] === id);
+const queuedIn = (D, id) => D.staff.filter((s) => s.queue.indexOf(id) > 0);
+const canPlace = (D, id) => capOf(id) > custIn(D, id).length && !D.customers.some((c) => !c.done && c.prev === id);
+const waitLabel = (c, step) => {
+  if (!step) return '마무리 대기';
+  if (step.kind === 'sleep' && !isSleep(c.room)) return '수면실 이동 대기';
+  if (step.kind === 'doctor') return '원장 대기';
+  if (step.kind === 'consult') return '상담사 대기';
+  return RLABEL[step.role] + ' 대기 · ' + step.label;
+};
+const statusOf = (D, id) => {
+  const cs = custIn(D, id);
+  if (!cs.length || id === 'lounge') return null;
+  const c = cs[0], step = c.order[c.step];
+  if (presentIn(D, id).length) return { key: step && (step.kind === 'consult' || step.kind === 'doctor') ? 'consult' : 'treat', label: step ? step.label : '마무리' };
+  return { key: 'wait', label: waitLabel(c, step) };
+};
+const stepView = (s, i, cur, done) => {
+  const past = done || i < cur, now = !done && i === cur;
+  return {
+    n: i + 1, label: s.label, role: RLABEL[s.role],
+    numCls: now ? 'bg-primary border-primary text-ms-white' : past ? 'bg-ms-gray-100 border-ms-gray-300 text-ms-gray-500' : 'bg-ms-white border-primary text-primary',
+    textCls: now ? 'text-typo-caption-md-600 text-primary' : past ? 'text-typo-caption-md-400 text-ms-gray-500' : 'text-typo-caption-md-400 text-ms-gray-800'
+  };
+};
+const pickCls = (on) => on ? 'bg-primary-100 border-primary text-primary' : 'bg-ms-white border-ms-gray-300 text-ms-gray-800';
+const buildOrder = (tickets, sel, consult) => {
+  const o = [];
+  if (consult) o.push(CO);
+  const ch = tickets.filter((t, i) => sel.includes(i) && t.left > 0);
+  if (ch.length) { o.push(DR); ch.forEach((t) => o.push(t.sleep ? SL(t.name) : T(t.name, t.role))); o.push(CA); }
+  return o;
+};
+
+class Component extends DCLogic {
+  t0 = Date.now();
+  gridRef = React.createRef();
+  state = {
+    path: '/board/live', now: Date.now(), vw: window.innerWidth, drawer: false, tab: 'status', sel: null, selC: null, arrows: [],
+    customers: C0.map(([name, room, order, step, m, prev]) => ({ name, room, order, step, since: this.t0 - m * 60000 - (m * 17 % 60) * 1000, prev: prev || null, done: false })),
+    staff: ST0.map(([role, name, queue, home]) => ({ role, name, queue, home: home || (role === '의사' ? 'office' : 'desk') })),
+    resv: clone(RESV), rp: null, ci: null, toast: null
+  };
+  fmt(since) {
+    const s = Math.max(0, Math.floor((this.state.now - since) / 1000));
+    const hh = Math.floor(s / 3600), mm = Math.floor((s % 3600) / 60), ss = s % 60;
+    return hh ? hh + ':' + pad(mm) + ':' + pad(ss) : pad(mm) + ':' + pad(ss);
+  }
+  // 모든 변경은 commit을 통과: 스냅샷(되돌리기) → 변경 → 고객 없는 방은 직원 큐에서 정리 → 상태 바뀐 방은 타이머 리셋
+  commit(fn, text, extra) {
+    const snap = { customers: this.state.customers, staff: this.state.staff, resv: this.state.resv };
+    const d = clone(snap), now = Date.now();
+    fn(d, now);
+    const occ = new Set(d.customers.filter((c) => !c.done && c.room && c.room !== 'lounge').map((c) => c.room));
+    d.staff.forEach((s) => { s.queue = s.queue.filter((r) => occ.has(r)); });
+    const key = (D, c) => { const st = c.room === 'lounge' ? null : statusOf(D, c.room); return c.room + '|' + c.step + '|' + (st ? st.key : ''); };
+    d.customers.forEach((c) => {
+      if (c.done) return;
+      const b = snap.customers.find((x) => x.name === c.name);
+      if (b && key(snap, b) !== key(d, c)) c.since = now;
+    });
+    this.setState({ ...d, ...(extra || {}), toast: text ? { text, snap } : null });
+    clearTimeout(this.toastT);
+    if (text) this.toastT = setTimeout(() => this.setState({ toast: null }), 6000);
+  }
+  assign(name, room) {
+    const s = this.state.staff.find((x) => x.name === name);
+    const n = s.queue.length;
+    this.commit((d) => { const x = d.staff.find((y) => y.name === name); if (!x.queue.includes(room)) x.queue.push(room); },
+      name + ' → ' + roomName(room) + (n ? ' (대기 ' + n + '건 뒤)' : ''));
+  }
+  complete(name, room) {
+    this.commit((d) => {
+      const s = d.staff.find((y) => y.name === name);
+      const front = s.queue[0] === room;
+      s.queue = s.queue.filter((r) => r !== room);
+      if (!front) return;
+      custIn(d, room).forEach((c) => {
+        const st = c.order[c.step];
+        if (!st || st.role !== s.role) return;
+        c.step++;
+        if (st.kind === 'sleep' && c.prev) { c.room = c.prev; c.prev = null; }
+        if (c.step >= c.order.length) { c.done = true; c.room = null; }
+      });
+    }, name + ' 완료 · ' + roomName(room));
+  }
+  removeStaff(name, room) {
+    this.commit((d) => { const s = d.staff.find((y) => y.name === name); s.queue = s.queue.filter((r) => r !== room); }, name + ' 배정 해제 · ' + roomName(room));
+  }
+  place(cname, room) {
+    this.commit((d) => {
+      const c = d.customers.find((x) => x.name === cname);
+      if (isSleep(room) && c.room !== 'lounge') c.prev = c.room;
+      c.room = room;
+    }, cname + ' → ' + roomName(room));
+  }
+  openCi(r, walk) {
+    const p = PROFILE[r.name] || {};
+    const has = !!(p.tickets && p.tickets.length);
+    this.setState({ ci: { name: r.name, time: r.time, procedure: r.procedure, doctor: r.doctor, walk: !!walk, sel: has ? (p.pre || []) : [], consult: !has } });
+  }
+  checkIn(ci, order) {
+    this.commit((d, now) => {
+      if (ci.walk) {
+        const t = new Date();
+        d.resv.push({ time: pad(t.getHours()) + ':' + pad(t.getMinutes()), name: ci.name, procedure: '현장 접수', doctor: '미정', st: 'checked' });
+      } else d.resv.forEach((r) => { if (r.name === ci.name) r.st = 'checked'; });
+      d.customers.push({ name: ci.name, room: 'lounge', order, step: 0, since: now, prev: null, done: false });
+    }, ci.name + ' 접수 · 라운지 대기', { ci: null });
+  }
+  taskAt(id) {
+    const cs = custIn(this.state, id);
+    if (!cs.length) return '';
+    const c = cs[0], st = c.order[c.step];
+    return ' · ' + c.name + (st ? ' ' + st.label : '');
+  }
+  roomView(d) {
+    const D = this.state;
+    const cs = custIn(D, d.id), pres = presentIn(D, d.id);
+    const idle = D.staff.filter((s) => !s.queue.length && s.home === d.id);
+    const clickable = capOf(d.id) > 0 || d.id === 'lounge';
+    const r = { ...d, cls: EMPTY, timer: '', label: '', people: [], queued: [] };
+    const person = (role, name, sub) => ({ name, sub: sub || '', cls: ROLE[role], textCls: role === '고객' ? 'text-typo-caption-md-600 text-ms-gray-800' : 'text-typo-caption-md-400 text-ms-gray-700' });
+    if (d.id === 'lounge') {
+      Object.assign(r, { cls: cs.length ? STATUS.wait.cls : EMPTY, timer: '대기 ' + cs.length + '명', label: '접수 후 대기', people: cs.map((c) => person('고객', c.name, this.fmt(c.since))) });
+    } else if (cs.length) {
+      const st = statusOf(D, d.id);
+      Object.assign(r, {
+        cls: STATUS[st.key].cls, timer: this.fmt(cs[0].since), label: st.label,
+        people: [...cs.map((c) => person('고객', c.name)), ...pres.map((s) => person(s.role, s.name))],
+        queued: queuedIn(D, d.id).map((s) => ({ name: '다음 ' + s.name, cls: ROLE[s.role] }))
+      });
+    } else {
+      const away = D.customers.find((c) => !c.done && c.prev === d.id);
+      if (away) Object.assign(r, { cls: STAFFED, label: away.name + ' 수면 중 · 복귀 예정' });
+      else if (idle.length) r.cls = STAFFED;
+      else if (capOf(d.id)) r.label = '비어있음';
+      r.people = idle.map((s) => person(s.role, s.name));
+    }
+    r.hasQueued = r.queued.length > 0;
+    r.cursor = clickable ? 'pointer' : 'default';
+    r.open = clickable ? () => this.setState({ rp: { id: d.id, role: null, pick: null } }) : undefined;
+    return r;
+  }
+  activeRoute() {
+    const D = this.state;
+    if (D.tab === 'staff' && D.sel) {
+      const s = D.staff.find((x) => x.name === D.sel);
+      if (!s) return null;
+      const ids = s.queue.length ? [...s.queue] : s.home && s.home !== 'office' ? [s.home] : [];
+      return ids.length ? { ids, cur: 0 } : null;
+    }
+    if (D.tab === 'customer' && D.selC) {
+      const c = D.customers.find((x) => x.name === D.selC);
+      if (!c || c.done) return null;
+      if (c.room === 'lounge') return { ids: ['lounge'], cur: 0 };
+      if (c.prev) return { ids: ['lounge', c.prev, c.room, c.prev], cur: 2 };
+      return { ids: ['lounge', c.room], cur: 1 };
+    }
+    return null;
+  }
+  board() {
+    const D = this.state;
+    const route = this.activeRoute();
+    const rooms = LAYOUT.map((d) => {
+      const r = this.roomView(d);
+      const inRoute = route ? route.ids.includes(r.id) : false;
+      const isCur = inRoute && route.ids[route.cur] === r.id;
+      const isNext = inRoute && !isCur && route.ids.slice(route.cur + 1).includes(r.id);
+      r.ring = isCur ? '2px solid var(--ms-primary)' : isNext ? '2px dashed var(--ms-primary)' : 'none';
+      r.op = route && !inRoute ? 0.45 : 1;
+      return r;
+    });
+    const counts = { wait: 0, consult: 0, treat: 0 };
+    const items = [];
+    const open = (id) => () => this.setState({ rp: { id, role: null, pick: null } });
+    LAYOUT.forEach((d) => {
+      const st = statusOf(D, d.id);
+      if (!st) return;
+      const cs = custIn(D, d.id);
+      counts[st.key]++;
+      items.push({
+        room: d.name, status: STATUS[st.key].name, variant: STATUS[st.key].variant, sec: D.now - cs[0].since, elapsed: this.fmt(cs[0].since),
+        customer: cs.map((c) => c.name).join(', '), label: st.label, open: open(d.id),
+        staff: presentIn(D, d.id).map((s) => ({ role: RLABEL[s.role], name: s.name, cls: ROLE[s.role] }))
+      });
+    });
+    custIn(D, 'lounge').forEach((c) => {
+      counts.wait++;
+      items.push({ room: '라운지', status: '대기', variant: 'neutral', sec: D.now - c.since, elapsed: this.fmt(c.since), customer: c.name, label: '접수 후 대기 · 관리실 배정 필요', open: open('lounge'), staff: [] });
+    });
+    items.sort((a, b) => b.sec - a.sec);
+    return { rooms, corridors: CORRIDORS, items, itemCount: items.length, summary: KEYS.map((k) => ({ name: STATUS[k].name, count: counts[k], cls: STATUS[k].cls })) };
+  }
+  staffVals() {
+    const D = this.state;
+    return ROLE_ORDER.flatMap((role) => D.staff.filter((s) => s.role === role)).map((s) => {
+      const cur = s.queue[0], rest = s.queue.slice(1), on = D.sel === s.name;
+      return {
+        name: s.name, role: RLABEL[s.role], dot: ROLE[s.role],
+        curRoom: cur ? roomName(cur) : '비어있음', curTask: cur ? this.taskAt(cur) : ' · ' + roomName(s.home),
+        curCls: cur ? 'text-typo-caption-md-400 text-ms-gray-800' : 'text-typo-caption-md-400 text-primary',
+        nextText: rest.length ? rest.map((id) => roomName(id) + this.taskAt(id)).join(' → ') : '다음 일정 없음',
+        nextCls: rest.length ? 'text-typo-caption-md-400 text-ms-gray-800' : 'text-typo-caption-md-400 text-ms-gray-500',
+        load: rest.length ? '대기 ' + rest.length + '건' : '',
+        loadCls: rest.length >= 2 ? 'text-typo-caption-md-600 text-red' : 'text-typo-caption-md-500 text-ms-gray-600',
+        rowCls: on ? 'bg-primary-100 border-ms-gray-200' : 'bg-ms-white border-ms-gray-200',
+        select: () => this.setState({ sel: s.name, drawer: false })
+      };
+    });
+  }
+  customerVals() {
+    const D = this.state;
+    return D.customers.filter((c) => !c.done).map((c) => {
+      const st = c.room === 'lounge' ? { key: 'wait' } : statusOf(D, c.room) || { key: 'wait' };
+      return {
+        name: c.name, status: STATUS[st.key].name, variant: STATUS[st.key].variant, where: roomName(c.room),
+        steps: c.order.map((s, i) => stepView(s, i, c.step, false)),
+        rowCls: D.selC === c.name ? 'bg-primary-100 border-ms-gray-200' : 'bg-ms-white border-ms-gray-200',
+        select: () => this.setState({ selC: c.name, drawer: false })
+      };
+    });
+  }
+  resvVals() {
+    const D = this.state;
+    const order = { booked: 0, noshow: 1, checked: 2 };
+    const list = [...D.resv].sort((a, b) => order[a.st] - order[b.st] || a.time.localeCompare(b.time));
+    const n = { booked: 0, checked: 0, noshow: 0 };
+    D.resv.forEach((r) => n[r.st]++);
+    return {
+      resvTotal: D.resv.length,
+      resvSummary: [
+        { name: '예정', count: n.booked, cls: 'bg-ms-white border-primary text-ms-gray-800' },
+        { name: '접수', count: n.checked, cls: 'bg-primary-100 border-primary text-ms-gray-800' },
+        { name: '노쇼', count: n.noshow, cls: 'bg-ms-gray-100 border-ms-gray-300 text-ms-gray-600' }
+      ],
+      resv: list.map((r) => {
+        const [h, m] = r.time.split(':').map(Number);
+        const diff = h * 60 + m - DEMO_NOW, booked = r.st === 'booked';
+        const c = r.st === 'checked' ? D.customers.find((x) => x.name === r.name) : null;
+        return {
+          ...r, canCheck: booked, showState: !booked,
+          hint: booked ? (diff < 0 ? (-diff) + '분 지연' : diff <= 15 ? '곧 도착' : '') : '',
+          hintCls: diff < 0 ? 'text-typo-caption-md-600 text-red' : 'text-typo-caption-md-600 text-primary',
+          timeCls: booked ? 'text-typo-caption-md-600 text-ms-gray-800' : 'text-typo-caption-md-500 text-ms-gray-500',
+          nameCls: booked ? 'text-typo-body-600 text-ms-gray-800' : 'text-typo-body-500 text-ms-gray-600',
+          stateText: r.st === 'noshow' ? '노쇼' : !c || c.done ? '귀가' : roomName(c.room),
+          stateCls: r.st === 'noshow' || !c || c.done ? 'text-typo-caption-md-500 text-ms-gray-500' : 'text-typo-caption-md-500 text-primary',
+          check: () => this.openCi(r)
+        };
+      }),
+      walkIn: () => { this.walkN = (this.walkN || 0) + 1; this.openCi({ name: '현장 고객 ' + this.walkN }, true); }
+    };
+  }
+  ciVals() {
+    const ci = this.state.ci;
+    const off = { ciOpen: false, ci: { tickets: [], preview: [], cannot: true }, closeCi: () => this.setState({ ci: null }), confirmCi: () => {} };
+    if (!ci) return off;
+    const p = PROFILE[ci.name] || {}, tickets = p.tickets || [];
+    const set = (patch) => this.setState((s) => ({ ci: { ...s.ci, ...patch } }));
+    const order = buildOrder(tickets, ci.sel, ci.consult);
+    const box = (on) => on ? 'bg-primary border-primary text-ms-white' : 'bg-ms-white border-ms-gray-400 text-ms-white';
+    return {
+      ...off, ciOpen: true,
+      ci: {
+        name: ci.name, meta: p.meta || (ci.walk ? '현장 접수 · 신규' : ''),
+        resvText: ci.walk ? '예약 없음' : ci.time + ' 예약 · ' + ci.procedure + ' · 담당 ' + ci.doctor,
+        hasCaution: !!(p.cautions && p.cautions.length), cautionText: (p.cautions || []).join(' · '),
+        tickets: tickets.map((t, i) => {
+          const on = ci.sel.includes(i), out = t.left <= 0;
+          return {
+            name: t.name, sub: out ? '소진 · 0/' + t.total + '회' : '잔여 ' + t.left + '/' + t.total + '회 · ~' + t.exp,
+            boxCls: out ? 'bg-ms-gray-100 border-ms-gray-300 text-ms-gray-100' : box(on),
+            rowCls: out ? 'bg-ms-gray-100 border-ms-gray-200 text-ms-gray-500' : on ? 'bg-primary-100 border-primary text-ms-gray-800' : 'bg-ms-white border-ms-gray-300 text-ms-gray-800',
+            cursor: out ? 'not-allowed' : 'pointer',
+            toggle: out ? undefined : () => set({ sel: on ? ci.sel.filter((x) => x !== i) : [...ci.sel, i] })
+          };
+        }),
+        noTickets: !tickets.length,
+        consultBox: box(ci.consult), consultRow: ci.consult ? 'bg-primary-100 border-primary text-ms-gray-800' : 'bg-ms-white border-ms-gray-300 text-ms-gray-800',
+        toggleConsult: () => set({ consult: !ci.consult }),
+        preview: order.map((s, i) => ({ label: s.label, role: RLABEL[s.role], arrow: i < order.length - 1 ? '→' : '' })),
+        cannot: !order.length
+      },
+      confirmCi: () => { if (order.length) this.checkIn(ci, order); }
+    };
+  }
+  panelVals() {
+    const rp = this.state.rp, D = this.state;
+    const close = () => this.setState({ rp: null });
+    if (!rp) return { rpOpen: false, closeRp: close, rp: { custs: [], present: [], queuedL: [], pool: [], roles: [], cands: [], lcs: [], freeRooms: [] } };
+    const id = rp.id, cs = custIn(D, id), isLounge = id === 'lounge', isOcc = !isLounge && cs.length > 0;
+    const st = statusOf(D, id);
+    const set = (patch) => this.setState((s) => ({ rp: { ...s.rp, ...patch } }));
+    const out = {
+      name: roomName(id), isLounge, isOcc, isPlace: !isLounge && !isOcc,
+      hasStatus: !!st, status: st ? STATUS[st.key].name : '', variant: st ? STATUS[st.key].variant : 'neutral',
+      timer: isOcc ? this.fmt(cs[0].since) : '',
+      custs: [], present: [], queuedL: [], pool: [], roles: [], cands: [], lcs: [], freeRooms: []
+    };
+    if (isOcc) {
+      const need = cs[0].order[cs[0].step];
+      const role = rp.role || (need ? need.role : '코디');
+      out.custs = cs.map((c) => {
+        const p = PROFILE[c.name] || {}, step = c.order[c.step];
+        const needSleep = !!(step && step.kind === 'sleep' && !isSleep(c.room));
+        const sleepRooms = needSleep ? ['s01', 's02', 's03'].filter((r) => canPlace(D, r)).map((r) => ({ name: roomName(r), pick: () => this.place(c.name, r) })) : [];
+        return {
+          name: c.name, meta: p.meta || '', hasCaution: !!(p.cautions && p.cautions.length), cautionText: (p.cautions || []).join(' · '),
+          steps: c.order.map((s, i) => stepView(s, i, c.step, false)), needSleep, sleepRooms, noSleepRoom: needSleep && !sleepRooms.length
+        };
+      });
+      const pres = presentIn(D, id);
+      out.present = pres.map((s) => ({ name: s.name, role: RLABEL[s.role], dot: ROLE[s.role], done: () => this.complete(s.name, id), remove: () => this.removeStaff(s.name, id) }));
+      out.noPresent = !pres.length;
+      out.needText = need ? '필요: ' + RLABEL[need.role] + ' · ' + need.label : '';
+      const q = queuedIn(D, id);
+      out.queuedL = q.map((s) => ({ name: s.name, dot: ROLE[s.role], ahead: RLABEL[s.role] + ' · 앞 순서 ' + s.queue.indexOf(id) + '건 · 지금 ' + roomName(s.queue[0]), cancel: () => this.removeStaff(s.name, id) }));
+      out.hasQueued = q.length > 0;
+      out.roles = ROLE_ORDER.map((r) => ({ name: RLABEL[r], cls: pickCls(r === role), pick: () => set({ role: r }) }));
+      out.pool = D.staff.filter((s) => s.role === role).sort((a, b) => a.queue.length - b.queue.length).map((s) => {
+        const inQ = s.queue.indexOf(id), free = !s.queue.length;
+        return {
+          name: s.name, dot: ROLE[s.role],
+          state: free ? '비어있음' : roomName(s.queue[0]) + this.taskAt(s.queue[0]) + (s.queue.length > 1 ? ' · 대기 ' + (s.queue.length - 1) + '건' : ''),
+          stateCls: free ? 'text-typo-caption-md-500 text-primary' : s.queue.length > 2 ? 'text-typo-caption-md-500 text-red' : 'text-typo-caption-md-400 text-ms-gray-600',
+          can: inQ < 0, assigned: inQ >= 0, assignedText: inQ === 0 ? '방에 있음' : '배정됨 · ' + inQ + '건 뒤',
+          assign: () => this.assign(s.name, id)
+        };
+      });
+    }
+    if (out.isPlace) {
+      const sleep = isSleep(id), free = canPlace(D, id);
+      const cands = free ? D.customers.filter((c) => {
+        if (c.done) return false;
+        const s = c.order[c.step];
+        return sleep ? !!(s && s.kind === 'sleep' && !isSleep(c.room)) : c.room === 'lounge';
+      }) : [];
+      const away = D.customers.find((c) => !c.done && c.prev === id);
+      out.placeTitle = sleep ? '수면 시술 고객 넣기' : '라운지 대기 고객 넣기';
+      out.cands = cands.map((c) => ({ name: c.name, where: c.room === 'lounge' ? '라운지 대기 ' + this.fmt(c.since) : roomName(c.room), order: c.order.map((s) => s.label).join(' → '), put: () => this.place(c.name, id) }));
+      out.noCands = !cands.length;
+      out.emptyText = away ? away.name + ' 님이 수면 시술 후 돌아올 방이에요' : sleep ? '수면 시술을 기다리는 고객이 없어요' : '라운지에 대기 중인 고객이 없어요';
+    }
+    if (isLounge) {
+      out.lcs = cs.map((c) => ({ name: c.name, wait: this.fmt(c.since), order: c.order.map((s) => s.label).join(' → '), rowCls: pickCls(rp.pick === c.name), pick: () => set({ pick: c.name }) }));
+      out.noLcs = !cs.length;
+      out.hasPick = !!rp.pick && cs.some((c) => c.name === rp.pick);
+      out.pickName = rp.pick || '';
+      out.freeRooms = LAYOUT.filter((r) => /^(c\d|t\d)/.test(r.id) && canPlace(D, r.id)).map((r) => ({
+        name: r.name, sub: capOf(r.id) > 1 ? custIn(D, r.id).length + '/2명' : '비어있음',
+        pick: () => { const who = rp.pick; set({ pick: null }); this.place(who, r.id); }
+      }));
+    }
+    return { rpOpen: true, rp: out, closeRp: close };
+  }
+  measure() {
+    const g = this.gridRef.current;
+    const route = this.activeRoute();
+    const arrows = [];
+    if (g && route && route.ids.length > 1) {
+      const gr = g.getBoundingClientRect();
+      const box = (id) => { const el = g.querySelector('[data-room="' + id + '"]'); if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.left - gr.left + r.width / 2, y: r.top - gr.top + r.height / 2, hw: r.width / 2, hh: r.height / 2 }; };
+      const edge = (o, dx, dy) => Math.min(dx ? (o.hw + 8) / Math.abs(dx) : Infinity, dy ? (o.hh + 8) / Math.abs(dy) : Infinity, 0.5);
+      for (let i = 0; i < route.ids.length - 1; i++) {
+        const a = box(route.ids[i]), b = box(route.ids[i + 1]);
+        if (!a || !b) continue;
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const sa = edge(a, dx, dy), sb = edge(b, dx, dy);
+        const x0 = a.x + dx * sa, y0 = a.y + dy * sa, x1 = b.x - dx * sb, y1 = b.y - dy * sb;
+        const len = Math.hypot(x1 - x0, y1 - y0) || 1;
+        const bow = Math.min(40, len * 0.2);
+        const cx = (x0 + x1) / 2 - ((y1 - y0) / len) * bow, cy = (y0 + y1) / 2 + ((x1 - x0) / len) * bow;
+        const past = i < route.cur;
+        arrows.push({
+          d: 'M' + x0.toFixed(1) + ',' + y0.toFixed(1) + ' Q' + cx.toFixed(1) + ',' + cy.toFixed(1) + ' ' + x1.toFixed(1) + ',' + y1.toFixed(1),
+          stroke: past ? 'var(--ms-gray-500, #9ca3af)' : 'var(--ms-primary)', dash: past ? 'none' : '7 5', marker: past ? 'url(#route-head-past)' : 'url(#route-head)'
+        });
+      }
+    }
+    const k = arrows.map((a) => a.d).join('|'), prev = (this.state.arrows || []).map((a) => a.d).join('|');
+    if (k !== prev) this.setState({ arrows });
+  }
+  componentDidUpdate() { this.measure(); }
+  componentDidMount() {
+    this.timer = setInterval(() => this.setState({ now: Date.now() }), 1000);
+    this.setState({ vw: document.documentElement.clientWidth });
+    this.ro = new ResizeObserver(() => { const vw = document.documentElement.clientWidth; if (vw !== this.state.vw) this.setState({ vw }); });
+    this.ro.observe(document.documentElement);
+    this.gro = new ResizeObserver(() => this.measure());
+    if (this.gridRef.current) this.gro.observe(this.gridRef.current);
+  }
+  componentWillUnmount() { clearInterval(this.timer); clearTimeout(this.toastT); this.ro && this.ro.disconnect(); this.gro && this.gro.disconnect(); }
+  icon(d) {
+    const h = React.createElement;
+    return h('svg', { width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }, h('path', { d }));
+  }
+  renderVals() {
+    const h = React.createElement;
+    const narrow = this.state.vw < 1280, open = narrow && this.state.drawer;
+    const tab = this.state.tab;
+    return {
+      ...this.board(),
+      ...this.resvVals(),
+      ...this.ciVals(),
+      ...this.panelVals(),
+      narrow, backdrop: open,
+      asidePos: narrow ? 'fixed' : 'static',
+      asideTf: narrow && !open ? 'translateX(calc(100% + 24px))' : 'none',
+      openDrawer: () => this.setState({ drawer: true }),
+      closeDrawer: () => this.setState({ drawer: false }),
+      gridRef: this.gridRef,
+      tabs: [{ id: 'resv', name: '예약' }, { id: 'status', name: '현황' }, { id: 'staff', name: '직원' }, { id: 'customer', name: '고객' }],
+      tab,
+      isResvTab: tab === 'resv', isStatusTab: tab === 'status', isStaffTab: tab === 'staff', isCustomerTab: tab === 'customer',
+      selectTab: (id) => this.setState((s) => ({ tab: id, sel: id === 'staff' && !s.sel ? '정해린' : s.sel, selC: id === 'customer' && !s.selC ? '노예진' : s.selC })),
+      staff: this.staffVals(),
+      customers: this.customerVals(),
+      hasArrow: tab !== 'status' && tab !== 'resv' && this.state.arrows.length > 0,
+      arrows: this.state.arrows,
+      hasToast: !!this.state.toast,
+      toastText: this.state.toast ? this.state.toast.text : '',
+      undo: () => { const t = this.state.toast; if (t) this.setState({ ...t.snap, toast: null }); },
+      roleLegend: Object.keys(ROLE).map((name) => ({ name, cls: ROLE[name] })),
+      statusLegend: KEYS.map((k) => ({ name: STATUS[k].name, cls: STATUS[k].cls })),
+      path: this.state.path,
+      logo: h('img', { src: 'assets/ceramique-logo-color.svg', alt: 'CÉRAMIQUE', style: { height: 22, display: 'block' } }),
+      menus: [{ name: '현황판', href: '/board', menus: [{ name: '실시간 현황판', href: '/board/live', icon: this.icon('M3 12h4l3-8 4 16 3-8h4') }] }],
+      navigate: (href, e) => { e && e.preventDefault(); this.setState({ path: href }); },
+      logout: () => {}
+    };
+  }
+}
+</script>
+</body>
+</html>

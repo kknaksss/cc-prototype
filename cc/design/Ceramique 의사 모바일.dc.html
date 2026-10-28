@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="_ds/medikit-aea7ac33-f044-4445-9164-87b8b69474dc/fonts/fonts.css">
+  <link rel="stylesheet" href="_ds/medikit-aea7ac33-f044-4445-9164-87b8b69474dc/_ds_bundle.css">
+  <link rel="stylesheet" href="_ds/medikit-aea7ac33-f044-4445-9164-87b8b69474dc/styles.css">
+  <link rel="stylesheet" href="ceramique-theme.css">
+  <link rel="stylesheet" href="medikit-patches.css">
+  <script src="_ds/medikit-aea7ac33-f044-4445-9164-87b8b69474dc/_ds_bundle.js"></script>
+  <style>html,body{margin:0;min-height:100%;background:#e9ecef;}a{color:#2498bd;}a:hover{color:#1d7f9e;}</style>
+</helmet>
+<div data-product="ceramique" data-screen-label="의사 개인 화면" style="min-height:100vh;display:flex;justify-content:center;">
+  <div ref="{{ wrapRef }}" class="bg-ms-gray-100" style="width:100%;max-width:{{ maxW }};min-height:100vh;display:flex;flex-direction:column;box-shadow:0 0 0 1px rgba(0,0,0,0.04);">
+    <header class="bg-ms-white border-ms-gray-200" style="position:sticky;top:0;z-index:10;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;border-bottom-width:1px;border-bottom-style:solid;">
+      <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+        <img src="assets/ceramique-logo-color.svg" alt="CÉRAMIQUE" style="height:16px;display:block;">
+        <span class="bg-ms-gray-300" style="width:1px;height:14px;"></span>
+        <span class="text-typo-caption-md-400 text-ms-gray-600" style="white-space:nowrap;">명동점</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="bg-purple" style="width:8px;height:8px;border-radius:50%;"></span>
+        <span class="text-typo-body-600 text-ms-gray-800" style="white-space:nowrap;">정해린 원장</span>
+        <span class="text-typo-caption-md-400 text-ms-gray-600" style="font-variant-numeric:tabular-nums;white-space:nowrap;">{{ clock }}</span>
+      </div>
+    </header>
+
+    <div style="flex:1;display:flex;flex-direction:{{ dir }};gap:16px;padding:16px;align-items:stretch;">
+      <section style="flex:{{ listFlex }};min-width:0;display:flex;flex-direction:column;gap:12px;">
+        <sc-if value="{{ hasCurrent }}" hint-placeholder-val="{{ true }}">
+          <div class="bg-primary text-ms-white" style="border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;gap:6px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+              <span class="text-typo-caption-md-500" style="opacity:0.9;">지금 진행 중</span>
+              <span class="text-typo-body-600" style="font-variant-numeric:tabular-nums;">{{ current.elapsed }}</span>
+            </div>
+            <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;">
+              <span class="text-typo-title-sm-600">{{ current.room }}</span>
+              <span class="text-typo-body-500">{{ current.name }} · {{ current.procedure }}</span>
+            </div>
+          </div>
+        </sc-if>
+        <div class="bg-ms-white" style="border-radius:12px;display:flex;flex-direction:column;box-shadow:0px 2px 10px 0px rgba(0,0,0,0.04);overflow:hidden;">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px 10px;">
+            <span class="text-typo-heading-md-500 text-ms-gray-800">오늘 내 일정</span>
+            <span class="text-typo-caption-md-400 text-ms-gray-600">{{ doneCount }} / {{ total }} 완료</span>
+          </div>
+          <sc-for list="{{ schedule }}" as="s" hint-placeholder-count="5">
+            <div onClick="{{ s.select }}" class="{{ s.rowCls }}" style="display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:10px;align-items:center;padding:12px 16px;min-height:56px;box-sizing:border-box;border-top-width:1px;border-top-style:solid;cursor:pointer;">
+              <span class="{{ s.timeCls }}" style="font-variant-numeric:tabular-nums;">{{ s.time }}</span>
+              <div style="display:flex;flex-direction:column;gap:2px;min-width:0;">
+                <span class="{{ s.nameCls }}" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ s.name }} <span class="text-typo-caption-md-400 text-ms-gray-600">{{ s.room }}</span></span>
+                <span class="text-typo-caption-md-400 text-ms-gray-600" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ s.procedure }}</span>
+              </div>
+              <x-import component-from-global-scope="MedisolveAiMedikit.Badge" variant="{{ s.variant }}" size="sm" dot="{{ s.dot }}" hint-size="52px,22px">{{ s.status }}</x-import>
+            </div>
+          </sc-for>
+        </div>
+      </section>
+
+      <section style="flex:{{ detailFlex }};min-width:0;display:flex;flex-direction:column;gap:12px;">
+        <div class="bg-ms-white" style="border-radius:12px;padding:18px 16px;display:flex;flex-direction:column;gap:16px;box-shadow:0px 2px 10px 0px rgba(0,0,0,0.04);">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+            <span class="{{ p.labelCls }}">{{ p.label }}</span>
+            <span class="text-typo-caption-md-500 text-ms-gray-700" style="font-variant-numeric:tabular-nums;">{{ p.timer }}</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px;">
+            <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;">
+              <span class="text-typo-headline-md-600 text-ms-gray-800">{{ p.name }}</span>
+              <span class="text-typo-body-400 text-ms-gray-600">{{ p.meta }}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px 12px;flex-wrap:wrap;">
+              <span class="text-typo-body-600 text-primary">{{ p.room }}</span>
+              <span class="text-typo-body-400 text-ms-gray-700">{{ p.plan }}</span>
+            </div>
+          </div>
+          <sc-if value="{{ p.hasCaution }}" hint-placeholder-val="{{ true }}">
+            <div class="bg-red-100" style="border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:4px;">
+              <span class="text-typo-caption-md-600 text-red">주의사항</span>
+              <sc-for list="{{ p.cautions }}" as="c" hint-placeholder-count="2">
+                <span class="text-typo-body-500 text-ms-gray-800">· {{ c }}</span>
+              </sc-for>
+            </div>
+          </sc-if>
+          <sc-if value="{{ p.hasAction }}" hint-placeholder-val="{{ true }}">
+            <div data-fill-buttons="true" style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;">
+              <x-import component-from-global-scope="MedisolveAiMedikit.Button" variant="outlined" color="gray" size="lg" on-click="{{ noop }}" style="width:100%;" hint-size="100%,48px">차트 열기</x-import>
+              <x-import component-from-global-scope="MedisolveAiMedikit.Button" variant="solid" color="blue" size="lg" on-click="{{ p.act }}" style="width:100%;" hint-size="100%,48px">{{ p.actLabel }}</x-import>
+            </div>
+          </sc-if>
+        </div>
+
+        <div class="bg-ms-white" style="border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px;box-shadow:0px 2px 10px 0px rgba(0,0,0,0.04);">
+          <span class="text-typo-heading-sm-500 text-ms-gray-800">오늘 <span class="text-primary">{{ p.name }}</span> 님 동선</span>
+          <sc-for list="{{ p.steps }}" as="st" hint-placeholder-count="3">
+            <div style="display:grid;grid-template-columns:22px minmax(0,1fr);gap:10px;align-items:center;">
+              <span class="{{ st.numCls }}" style="width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;box-sizing:border-box;border-width:1px;border-style:solid;">{{ st.n }}</span>
+              <span class="{{ st.textCls }}"><b style="font-weight:600;">{{ st.room }}</b> · {{ st.task }}</span>
+            </div>
+          </sc-for>
+        </div>
+
+        <div class="bg-ms-white" style="border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:8px;box-shadow:0px 2px 10px 0px rgba(0,0,0,0.04);">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+            <span class="text-typo-heading-sm-500 text-ms-gray-800">상담 메모</span>
+            <span class="text-typo-caption-md-400 text-ms-gray-600">{{ p.memoBy }}</span>
+          </div>
+          <p class="text-typo-body-400 text-ms-gray-800" style="margin:0;text-wrap:pretty;word-break:keep-all;">{{ p.memo }}</p>
+        </div>
+
+        <div class="bg-ms-white" style="border-radius:12px;padding:16px 16px 6px;display:flex;flex-direction:column;box-shadow:0px 2px 10px 0px rgba(0,0,0,0.04);">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding-bottom:6px;">
+            <span class="text-typo-heading-sm-500 text-ms-gray-800">시술 이력</span>
+            <span class="text-typo-caption-md-400 text-ms-gray-600">{{ p.visits }}</span>
+          </div>
+          <sc-for list="{{ p.history }}" as="h" hint-placeholder-count="2">
+            <div class="border-ms-gray-200" style="display:grid;grid-template-columns:84px minmax(0,1fr) auto;gap:10px;align-items:baseline;padding:10px 0;border-top-width:1px;border-top-style:solid;">
+              <span class="text-typo-caption-md-400 text-ms-gray-600" style="font-variant-numeric:tabular-nums;">{{ h.date }}</span>
+              <span class="text-typo-body-500 text-ms-gray-800">{{ h.what }}</span>
+              <span class="text-typo-caption-md-400 text-ms-gray-600" style="white-space:nowrap;">{{ h.by }}</span>
+            </div>
+          </sc-for>
+          <sc-if value="{{ p.noHistory }}" hint-placeholder-val="{{ false }}">
+            <span class="text-typo-body-400 text-ms-gray-500" style="padding:4px 0 10px;">첫 방문 고객</span>
+          </sc-if>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;device&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;auto&quot;,&quot;phone&quot;,&quot;tablet&quot;],&quot;default&quot;:&quot;auto&quot;,&quot;tsType&quot;:&quot;'auto'|'phone'|'tablet'&quot;}}">
+const ROOM = { lounge: '라운지', c01: '관리실 01', c03: '관리실 03', c09: '관리실 09', c13: '관리실 13', c14: '관리실 14', s01: '수면실 01', s03: '수면실 03' };
+// 정해린 원장 오늘 일정. m = 경과/대기 분(샘플)
+const PATIENTS = [
+  { id: 'p1', time: '09:30', name: '정민지', room: 'c03', procedure: '셀코어 시술 전 진료', st: 'done',
+    meta: '여 · 41세 · #C-18822', plan: '셀코어 · 전안면', cautions: [], memoBy: '상담사 홍지수', memo: '모공·탄력 동시 개선 희망. 지난 시술 후 만족도 높음.',
+    visits: '방문 5회', history: [['2026.06.02', '셀코어 · 전안면', '정해린'], ['2026.02.11', '리쥬란 2cc', '정해린']],
+    steps: [['lounge', '접수'], ['c03', '시술 전 진료'], ['c03', '셀코어 · 전안면']], cur: 2 },
+  { id: 'p2', time: '10:10', name: '김서연', room: 'c01', procedure: '울쎄라 리프팅', st: 'now', m: 18,
+    meta: '여 · 38세 · #C-20105', plan: '울쎄라 300샷 · 턱선 · 볼', cautions: ['통증 민감 — 마취크림 40분 도포 완료'], memoBy: '상담사 서지안', memo: '턱선 정리 위주. 이마 쪽은 원하지 않음.',
+    visits: '방문 3회', history: [['2025.11.20', '울쎄라 200샷', '오세훈']],
+    steps: [['lounge', '접수'], ['c01', '상담'], ['c01', '울쎄라 리프팅 · 300샷'], ['c01', '진정 관리']], cur: 2 },
+  { id: 'p3', time: '10:50', name: '서하은', room: 'c14', procedure: '시술 전 진료 → 수면 시술', st: 'next', m: 9,
+    meta: '여 · 34세 · #C-20418', plan: '수면 리프팅 · 써마지 FLX 600샷', cautions: ['아스피린 복용 중 — 멍 주의', '켈로이드 체질'], memoBy: '상담사 홍지수', memo: '턱선 처짐 개선 원함. 통증에 민감해 수면으로 진행 결정. 다운타임 3일 이내 희망 (금요일 행사).',
+    visits: '방문 2회', history: [['2026.07.14', '울쎄라 300샷', '정해린'], ['2026.03.02', '리쥬란 힐러 2cc', '김태현']],
+    steps: [['lounge', '접수'], ['c14', '시술 전 진료'], ['s03', '수면 시술 · 써마지 FLX 600샷'], ['c14', '진정 관리']], cur: 1 },
+  { id: 'p4', time: '11:30', name: '오지현', room: 'c13', procedure: '첫 방문 원장 상담', st: 'later',
+    meta: '여 · 29세 · #C-20577 · 신규', plan: '리프팅 상담 · 시술 미정', cautions: [], memoBy: '상담사 서지안', memo: '지인 소개. 리프팅 처음, 자연스러운 변화 원함.',
+    visits: '첫 방문', history: [],
+    steps: [['lounge', '접수 후 대기'], ['c13', '원장 상담'], ['c13', '시술 · 상담 후 결정']], cur: 0 },
+  { id: 'p5', time: '12:10', name: '유하린', room: 'c09', procedure: '수면 시술', st: 'later',
+    meta: '여 · 45세 · #C-19340', plan: '수면 리프팅 · 온다 + 소프웨이브', cautions: ['고혈압약 복용 — 수면 전 혈압 확인'], memoBy: '원장 박도윤', memo: '시술 전 상담 완료. 수면 진행 동의서 서명 완료.',
+    visits: '방문 7회', history: [['2026.08.30', '소프웨이브', '박도윤'], ['2026.05.12', '써마지 FLX 600샷', '정해린'], ['2026.01.08', '리투오', '정해린']],
+    steps: [['lounge', '접수'], ['c09', '시술 전 원장 상담'], ['s01', '수면 시술 · 온다 + 소프웨이브'], ['c09', '진정 관리']], cur: 1 }
+];
+const ST = {
+  done: { name: '완료', variant: 'neutral', dot: false },
+  now: { name: '진행 중', variant: 'primary', dot: true },
+  next: { name: '다음', variant: 'purple', dot: true },
+  later: { name: '예정', variant: 'neutral', dot: false }
+};
+const pad = (n) => String(n).padStart(2, '0');
+
+class Component extends DCLogic {
+  t0 = Date.now();
+  wrapRef = React.createRef();
+  state = { now: Date.now(), w: 390, sel: null, list: PATIENTS.map((p) => ({ ...p })) };
+  componentDidMount() {
+    this.timer = setInterval(() => this.setState({ now: Date.now() }), 1000);
+    this.ro = new ResizeObserver(() => { const el = this.wrapRef.current; if (el && el.clientWidth !== this.state.w) this.setState({ w: el.clientWidth }); });
+    if (this.wrapRef.current) this.ro.observe(this.wrapRef.current);
+  }
+  componentWillUnmount() { clearInterval(this.timer); this.ro && this.ro.disconnect(); }
+  fmt(m) {
+    const s = Math.max(0, Math.floor((this.state.now - this.t0) / 1000) + m * 60 + (m * 17) % 60);
+    return pad(Math.floor(s / 60)) + ':' + pad(s % 60);
+  }
+  // 진료 시작/완료: now→done, next→now, 첫 later→next
+  advance() {
+    this.setState((s) => {
+      const list = s.list.map((p) => ({ ...p }));
+      const now = list.find((p) => p.st === 'now');
+      const next = list.find((p) => p.st === 'next');
+      if (now) now.st = 'done';
+      if (next) { next.st = 'now'; next.m = 0; next.cur = Math.min(next.cur + 0, next.steps.length - 1); }
+      const later = list.find((p) => p.st === 'later');
+      if (later) { later.st = 'next'; later.m = 0; }
+      return { list, sel: next ? next.id : s.sel };
+    });
+  }
+  renderVals() {
+    const device = this.props.device ?? 'auto';
+    const list = this.state.list;
+    const wide = this.state.w >= 760;
+    const defaultSel = (list.find((p) => p.st === 'next') || list.find((p) => p.st === 'now') || list[0]).id;
+    const selId = this.state.sel || defaultSel;
+    const cur = list.find((p) => p.st === 'now');
+    const sp = list.find((p) => p.id === selId);
+    const label = { now: '진행 중인 환자', next: '다음 환자', later: '예정 환자', done: '완료한 환자' }[sp.st];
+    const d = new Date(this.state.now);
+    return {
+      wrapRef: this.wrapRef,
+      maxW: device === 'phone' ? '390px' : device === 'tablet' ? '1024px' : 'none',
+      dir: wide ? 'row' : 'column-reverse',
+      listFlex: wide ? '0 0 340px' : '0 0 auto',
+      detailFlex: wide ? '1 1 0' : '0 0 auto',
+      clock: pad(d.getHours()) + ':' + pad(d.getMinutes()),
+      hasCurrent: !!cur,
+      current: cur ? { room: ROOM[cur.room], name: cur.name, procedure: cur.procedure, elapsed: this.fmt(cur.m) } : {},
+      doneCount: list.filter((p) => p.st === 'done').length,
+      total: list.length,
+      schedule: list.map((p) => {
+        const on = p.id === selId, done = p.st === 'done';
+        return {
+          ...p, room: ROOM[p.room], status: ST[p.st].name, variant: ST[p.st].variant, dot: ST[p.st].dot,
+          rowCls: on ? 'bg-primary-100 border-ms-gray-200' : 'bg-ms-white border-ms-gray-200',
+          timeCls: done ? 'text-typo-caption-md-500 text-ms-gray-500' : 'text-typo-caption-md-600 text-ms-gray-800',
+          nameCls: done ? 'text-typo-body-500 text-ms-gray-500' : 'text-typo-body-600 text-ms-gray-800',
+          select: () => { this.setState({ sel: p.id }); if (!wide) window.scrollTo({ top: 0, behavior: 'smooth' }); }
+        };
+      }),
+      noop: () => {},
+      p: {
+        label, labelCls: sp.st === 'next' ? 'text-typo-caption-md-600 text-purple' : sp.st === 'now' ? 'text-typo-caption-md-600 text-primary' : 'text-typo-caption-md-600 text-ms-gray-600',
+        timer: sp.st === 'next' ? '대기 ' + this.fmt(sp.m || 0) : sp.st === 'now' ? '경과 ' + this.fmt(sp.m || 0) : sp.time + ' 예약',
+        name: sp.name, meta: sp.meta, room: ROOM[sp.room], plan: sp.plan,
+        cautions: sp.cautions, hasCaution: sp.cautions.length > 0,
+        hasAction: sp.st === 'next' || sp.st === 'now',
+        actLabel: sp.st === 'now' ? '진료 완료' : '진료 시작',
+        act: () => this.advance(),
+        memo: sp.memo, memoBy: sp.memoBy, visits: sp.visits,
+        history: sp.history.map(([date, what, by]) => ({ date, what, by })), noHistory: sp.history.length === 0,
+        steps: sp.steps.map(([id, task], i) => {
+          const past = sp.st === 'done' || i < sp.cur, now = sp.st !== 'done' && i === sp.cur;
+          return {
+            n: i + 1, room: ROOM[id], task,
+            numCls: now ? 'bg-primary border-primary text-ms-white' : past ? 'bg-ms-gray-100 border-ms-gray-300 text-ms-gray-500' : 'bg-ms-white border-primary text-primary',
+            textCls: now ? 'text-typo-body-500 text-primary' : past ? 'text-typo-body-400 text-ms-gray-500' : 'text-typo-body-400 text-ms-gray-800'
+          };
+        })
+      }
+    };
+  }
+}
+</script>
+</body>
+</html>

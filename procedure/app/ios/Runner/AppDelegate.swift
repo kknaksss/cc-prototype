@@ -136,11 +136,24 @@ import UserNotifications
   }
 
   // 앱이 앞에 있을 때도 배너 + 소리(§5-1.3)
+  // 띄우기(kind = display)는 앞에서 받으면 배너 대신 바로 Dart 로 — 앱이 pending 을 읽어 QR · 스캔 화면을 연다
+  // (전에는 배너만 떠서, SSE 가 그 순간 안 붙어 있으면 눌러야만 열렸다 — 「띄우기 실기기 안 열림」)
   override func userNotificationCenter(
     _ center: UNUserNotificationCenter,
     willPresent notification: UNNotification,
     withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
   ) {
+    let info = notification.request.content.userInfo
+    if (info["kind"] as? String) == "display" {
+      var tap: [String: Any] = [:]
+      for key in ["kind", "requestId"] {
+        if let v = info[key] { tap[key] = v }
+      }
+      if dartReady, let ch = channel {
+        ch.invokeMethod("onForeground", arguments: tap)
+        return completionHandler([])
+      }
+    }
     if #available(iOS 14.0, *) {
       completionHandler([.banner, .list, .sound])
     } else {

@@ -279,7 +279,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     final link = _pendingLink;
     _pendingLink = null;
     // 링크 claim 은 기기 등록 뒤(deviceId 를 싣는다)
-    _refreshPush().then((_) {
+    _refreshPush(reconnect: true).then((_) {
       if (link != null && session != null) claimQr(link);
     });
     refreshDisplays(); // 로그인 · 시작 때 놓친 띄우기(§5-3 ③)
@@ -301,12 +301,17 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   // 앱 시작 · 다시 로그인 — 이미 허용이면 토큰을 다시 받아 등록(멱등)
-  Future<void> _refreshPush() async {
+  // 앱 시작(저장된 로그인 · 로그인) · 앞으로 올 때 — 기기를 다시 등록하고(installId · 토큰 → 지금 기기 행 id) SSE 를 그 id 로 다시 붙인다.
+  // 「띄우기 실기기 안 열림」(2026-10-28 · 빌드 8 로 업데이트 뒤 저장된 로그인): 시작 때 SSE 는 저장된 deviceId 로 먼저 열리는데,
+  // 그 순간 back 이 그 id 를 이 계정 기기로 못 알아보면(옛 행 · 등록 전) 기기 없이 붙고 아무 신호가 없다. 등록 응답이 같은 id 면
+  // 「바뀜 없음」이라 다시 안 붙어서 display 를 못 받았다(다시 로그인 = deviceId 를 지우고 등록 → 다시 붙음 → 됨).
+  // → 등록이 끝나면 id 가 같아도 SSE 를 한 번 다시 연다(reconnect)
+  Future<void> _refreshPush({bool reconnect = false}) async {
     final s = session;
     if (s != null) await push.setAuth(server.base, s.token);
     notif = await push.status();
     if (notif == NotifStatus.authorized) {
-      if (deviceToken != null) await _registerDevice(deviceToken!);
+      if (deviceToken != null) await _registerDevice(deviceToken!, reconnect: reconnect);
       await push.register();
     }
     notifyListeners();
@@ -323,14 +328,14 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   // 등록은 한 번에 하나씩(E2E batch 1 #3) — 로그인 때 저장된 옛 토큰 · 새 토큰 등록이 겹치면 늦게 온 옛 응답이
   // deviceId 를 옛 행으로 되돌려 SSE 가 다른 기기 id 로 붙을 수 있었다
   Future<void>? _regChain;
-  Future<void> _registerDevice(String token) {
+  Future<void> _registerDevice(String token, {bool reconnect = false}) {
     final prev = _regChain;
-    final next = prev == null ? _registerDeviceNow(token) : prev.then((_) => _registerDeviceNow(token));
+    final next = prev == null ? _registerDeviceNow(token, reconnect) : prev.then((_) => _registerDeviceNow(token, reconnect));
     _regChain = next.catchError((_) {});
     return next;
   }
 
-  Future<void> _registerDeviceNow(String token) async {
+  Future<void> _registerDeviceNow(String token, [bool reconnect = false]) async {
     if (session == null) return;
     if (token != deviceToken && deviceToken != null) token = deviceToken!; // 기다리는 동안 새 토큰이 왔으면 새 것으로
     try {
@@ -341,10 +346,12 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       final sendName = !_nameSent && deviceName != null;
       final id = await api.registerDevice(token, name: sendName ? deviceName : null, kind: deviceKind(), installId: installId);
       if (sendName) await _markNameSent();
-      if (id != null && id != deviceId) {
+      if (id != null && (id != deviceId || reconnect)) {
         await _setDeviceId(id);
-        stream.stop(); // SSE 를 deviceId 를 실어 다시 연다(§7.1)
-        stream.start();
+        if (phase == Phase.loggedIn) {
+          stream.stop(); // SSE 를 확인된 deviceId 를 실어 다시 연다(§7.1)
+          stream.start();
+        }
       }
       refreshDisplays();
     } on ApiError {
@@ -433,6 +440,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       stream.start();
       refreshUnread();
       refreshDisplays();
+      _refreshPush(reconnect: true); // 다시 등록 → 확인된 deviceId 로 SSE 다시(시작 때와 같은 이유)
     }
   }
 

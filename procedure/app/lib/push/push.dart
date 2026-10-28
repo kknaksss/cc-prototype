@@ -67,6 +67,10 @@ class PushChannel {
         case 'onTap':
           final t = PushTap.parse(call.arguments);
           if (t != null) onTap?.call(t);
+        case 'onForeground':
+          // 앞에서 받은 띄우기 푸시(배너 없음) — 누른 것과 같은 길(pending 읽어 엶)
+          final t = PushTap.parse(call.arguments);
+          if (t != null) onTap?.call(t);
         case 'onLink':
           if (call.arguments is String) onLink?.call(call.arguments as String);
       }

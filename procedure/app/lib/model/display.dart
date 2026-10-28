@@ -39,7 +39,7 @@ class DisplayReq {
       ];
 }
 
-// [QR 읽기] = 스캔 종류만 — ccc://display?t=<qrToken>(§5-3 · SPEC-006 §8.2). 문진 QR(https)은 null
+// 스캔 종류 딥링크 — ccc://display?t=<qrToken>(§5-3 · SPEC-006 §8.2). 그 밖(문진 https 등)은 null
 String? qrTokenOf(String? raw) {
   final u = Uri.tryParse((raw ?? '').trim());
   if (u == null || u.scheme != 'ccc' || u.host != 'display') return null;
@@ -52,10 +52,4 @@ bool isMyDisplay(Map<String, dynamic> data, int? myDeviceId) {
   if (myDeviceId == null) return false;
   final d = _i(data['deviceId']);
   return d == myDeviceId;
-}
-
-// 고객 폰으로 찍는 문진 QR(https 링크)인가 — [QR 읽기] 가 거절하며 알려 준다(SPEC-006 §8.2)
-bool isCustomerQr(String? raw) {
-  final u = Uri.tryParse((raw ?? '').trim());
-  return u != null && (u.scheme == 'https' || u.scheme == 'http');
 }

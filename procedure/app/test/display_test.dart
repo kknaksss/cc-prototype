@@ -69,20 +69,17 @@ void main() {
     expect(DisplayReq.fromJson({'requestId': 1, 'kind': 'scan', 'reservationId': 2})?.qrUrl, isNull);
   });
 
-  test('[QR 읽기] — 스캔(ccc://)만 · 문진 QR(https)은 「고객 폰으로 찍는 QR 이에요」', () async {
+  test('claim(ccc:// 딥링크 길만) — 스캔 링크만 claim · 그 밖(문진 https 등)은 안 부름', () async {
     SharedPreferences.setMockInitialValues({});
     final paths = <String>[];
     final app = AppState(api: Api(base: () => 'http://x', token: () => 't', client: MockClient((req) async {
       paths.add(req.url.path);
       return http.Response('{"requestId":3,"kind":"scan","reservationId":9,"status":"opened"}', 200);
     })));
-    expect(isCustomerQr('https://ccc.example/q#abc'), isTrue);
     expect(await app.claimQr('https://ccc.example/q#abc'), isFalse);
-    expect(app.toaster.text, '고객 폰으로 찍는 QR 이에요');
-    expect(paths, isEmpty); // claim 안 부름
+    expect(paths, isEmpty);
     expect(await app.claimQr('ccc://display?t=abc'), isTrue);
     expect(paths, ['/api/display-requests/claim']);
-    app.toaster.hide();
     app.stream.dispose();
   });
 

@@ -171,6 +171,16 @@ def personal_of(v: dict[str, Any] | None) -> dict[str, Any] | None:
     }
 
 
+def visitor_funnel_of(v: dict[str, Any] | None, codes) -> dict[str, Any] | None:
+    """KOS 고객 visitorFunnel `{funnelCategoryId, funnelId, funnelDetail}` → `{funnelId(ccc), name, detail}`(E2E batch 3 #2)."""
+    vf = (v or {}).get("visitorFunnel")
+    if not isinstance(vf, dict) or not (vf.get("funnelId") or vf.get("funnelDetail")):
+        return None
+    code = next((c for c in codes if c.kos_id == vf.get("funnelId")), None)
+    return {"funnelId": code.id if code else None, "name": code.name if code else None,
+            "detail": vf.get("funnelDetail") or None}
+
+
 def funnel_of(f: dict[str, Any] | None) -> dict[str, Any] | None:
     if not isinstance(f, dict):
         return None
@@ -501,6 +511,7 @@ class ReservationService:
             system = tx.token("internal")
             health = self._health(tx, r, cust, reads)
             displays = self.displays_of(tx, r.id)
+            funnel_codes = tx.funnel_codes()
             photo = tx.id_photo(check.photo_id) if check and check.photo_id else None
         staff_by_kos = {x.kos_id: x for x in staff}
         kind, fields, complete = identity_fields(visitor)
@@ -543,6 +554,7 @@ class ReservationService:
                 "chartNumber": cust.chart_number if cust else None,
                 "age": age_on((visitor or {}).get("dateOfBirth"), day), "personal": personal,
                 "personalError": visitor_err, "remark": (visitor or {}).get("memo"),
+                "funnel": visitor_funnel_of(visitor, funnel_codes),
                 "identity": {"status": "confirmed" if confirmed else "unconfirmed",
                              "checkedAt": iso(check.checked_at) if check else None,
                              "checkedBy": accounts.get(check.actor, check.actor) if check else None,
@@ -560,6 +572,7 @@ class ReservationService:
             "health": health, "previousVisits": previous_visits(reads["previous"], day, ctx), "flow": flow,
             "settlement": settlement, "rooms": rooms, "roomLocked": bool(locked_room), "receiveMode": mode,
             "counselors": counselors, "displays": displays,
+            "funnelCodes": [{"funnelId": f.id, "name": f.name} for f in funnel_codes if not f.closed],
             "can": can(main, r.flow_step, payment_required=pay, identity_confirmed=confirmed,
                        identity_locked=identity_locked(today_resvs, cust.id if cust else None)),
         })
@@ -985,6 +998,8 @@ class ReservationService:
             r = self._reservation(tx, reservation_id)
         if state_of(r.status, r.flow_step)[0] == "canceled" or r.flow_step == "COMPLETED":  # §5.14 · r1 W1
             raise Conflict("reservation_closed", "끝난 예약이에요")
+        if (r.memo or "") == memo:  # 자동 저장이 자주 부른다 — 같은 값이면 KOS 안 부름(E2E batch 3 #5)
+            return
         await self.kos_write(actor, "change-reservation-memo", self.client().open(
             PATH_MEMO, {"scheduleId": r.kos_id, "memo": memo}), reservation_id=r.id)
         with self.repo.tx() as tx:
@@ -1053,6 +1068,9 @@ class ReservationService:
         for k in PERSONAL_KEYS:  # 다시 읽은 묶음 전체 — 없던 키는 보내지 않는다(K7)
             if k in current:
                 body[k] = current[k]
+        if all(current.get(k) == v or (blank(v) and blank(current.get(k)) and not isinstance(v, dict))
+               for k, v in changes.items()):
+            return  # 다시 읽은 값과 같음 — KOS 안 부름(자동 저장 · E2E batch 3 #4)
         body.update(changes)
         await self.kos_write(actor, "update-visitor-personal-information", client.internal(PATH_PERSONAL, body),
                              customer_id=cust.id)
@@ -1079,11 +1097,49 @@ class ReservationService:
         for k in MANAGEMENT_KEYS:  # 관리 묶음 그대로 + memo 만 바꿈 · 빈 배열은 뺀다(§8 · MT§4)
             if k in current and current[k] != []:
                 body[k] = current[k]
+        if (current.get("memo") or "") == memo:  # 같은 값이면 KOS 안 부름(자동 저장 · E2E batch 3 #3)
+            return
         body["memo"] = memo
         await self.kos_write(actor, "update-visitor-management-information", client.internal(PATH_MANAGEMENT, body),
                              customer_id=cust.id)
         with self.repo.tx() as tx:
             self._event(tx, actor, "visitor_remark", {"customerId": cust.id})
+
+    async def funnel(self, actor: Account, customer_id: int, funnel_id: int | None, detail: str | None,
+                     detail_sent: bool) -> None:
+        """KOS 고객 유입 채널(E2E batch 3 #2) — 관리 묶음: 직전 다시 읽고 묶음 그대로 + visitorFunnel 만 바꿈(remark 와 같은 길).
+
+        funnel_id = ccc funnel_code(KOS FUNNEL 코드 · 닫힌 것 = 400) · None = 비움. funnelCategoryId 는 읽은 값 그대로.
+        """
+        with self.repo.tx() as tx:
+            cust = tx.customer(customer_id)
+            if cust is None:
+                raise NotFound("없는 고객이에요")
+            code = None
+            if funnel_id is not None:
+                code = next((f for f in tx.funnel_codes() if f.id == funnel_id and not f.closed), None)
+                if code is None:
+                    raise BadRequest("invalid_request", "funnelId: 없는 유입 코드예요")
+        client = self.client()
+        read = await self.kos_write(actor, "get-visitor", client.internal(PATH_VISITOR, {"id": cust.kos_id}),
+                                    customer_id=cust.id)
+        current = read.get("data") if isinstance(read.get("data"), dict) else None
+        if current is None:
+            raise BadGateway("kos_unavailable", "KOS 고객 응답 형식")
+        old = current.get("visitorFunnel") if isinstance(current.get("visitorFunnel"), dict) else {}
+        new = {"funnelCategoryId": old.get("funnelCategoryId") or "", "funnelId": code.kos_id if code else "",
+               "funnelDetail": (detail or "").strip() if detail_sent else (old.get("funnelDetail") or "")}
+        if all((old.get(k) or "") == v for k, v in new.items()):
+            return  # 같은 값 — KOS 안 부름
+        body: dict[str, Any] = {"id": cust.kos_id}
+        for k in MANAGEMENT_KEYS:  # 관리 묶음 그대로 · 빈 배열은 뺀다(remark 와 같음 · MT§4)
+            if k in current and current[k] != []:
+                body[k] = current[k]
+        body["visitorFunnel"] = new
+        await self.kos_write(actor, "update-visitor-management-information", client.internal(PATH_MANAGEMENT, body),
+                             customer_id=cust.id)
+        with self.repo.tx() as tx:
+            self._event(tx, actor, "visitor_funnel", {"customerId": cust.id, "funnelId": funnel_id})
 
     def _days_of(self, customer_id: int) -> list[str]:
         with self.repo.tx() as tx:

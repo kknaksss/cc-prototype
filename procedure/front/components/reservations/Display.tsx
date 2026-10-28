@@ -1,10 +1,10 @@
 'use client';
 
 // 예약 상세 — 띄우기 · 여권 스캔 자리(SPEC-004 §6.17 · §5-3 · 시안 W:276-289 QR 상자 · W:308-342 스캔 단계)
-// 단계는 상세 응답 displays[](5초 폴링)로만 그린다. QR 내용 = 문진 qrUrl(고객 웹 · SPEC-006 §8.1) / 스캔 앱 스킴 ccc://display?t= · [링크 복사] · [메신저 전송] 없음(D7-44)
+// 단계는 상세 응답 displays[](5초 폴링)로만 그린다. QR = 문진 qrUrl(고객 웹 · SPEC-006 §8.1)만 — 스캔은 기기 버튼만(E2E batch 3 추가) · [링크 복사] · [메신저 전송] 없음(D7-44)
 import { useCallback, useEffect, useState } from 'react';
 import QRCode from 'qrcode';
-import { Badge, Button, Popover, PopoverContent, PopoverTrigger } from '@medisolve-ai/medikit';
+import { Badge, Button, ConfirmModal, Popover, PopoverContent, PopoverTrigger } from '@medisolve-ai/medikit';
 import * as api from '@/lib/api';
 import { hm, pad, toMs } from '@/lib/time';
 import type { DisplayCreated, DisplayItem, DisplayKind, DisplayTarget, ResvDetail } from '@/lib/types';
@@ -17,6 +17,8 @@ interface Active {
   deviceName: string | null;
 }
 
+// medikit-patches.css [Button-1] 의 flex-shrink:0 때문에 확인 창 두 버튼이 넘치지 않게(UndoConfirm 과 같음)
+const SHRINK: React.CSSProperties = { flexShrink: 1, minWidth: 0 };
 const OPEN_STATUS = new Set<DisplayItem['status']>(['pending', 'opened']);
 const OPEN = (x: DisplayItem | undefined) => !!x && OPEN_STATUS.has(x.status);
 const kindName = (k: DisplayTarget['kind']) => (k === 'tablet' ? '태블릿' : k === 'phone' ? '폰' : '기기');
@@ -378,13 +380,14 @@ function IdPhoto({ photoId }: { photoId: number }) {
   );
 }
 
-// ── 「신분 확인」 [스캔할 기기] 단계(§6.17 · W:308-342): idle → qr | wait → done
-export function ScanSteps({ d, onError }: { d: ResvDetail; onError: (e: unknown) => void }) {
+// ── 「신분 확인」 [스캔할 기기] 단계(§6.17 · W:308-342): idle(기기 버튼만 — QR 칸 뺌 · E2E batch 3 추가) → wait → done(썸네일 · [삭제])
+export function ScanSteps({ d, onError, onChanged }: { d: ResvDetail; onError: (e: unknown) => void; onChanged: (toast: string) => void }) {
   const id = d.customer.identity;
   const pre = d.flow === null;
   const [made, setActive] = useState<Active | null>(null);
   const [rescanOf, setRescanOf] = useState<string | null>(null); // [다시 스캔]을 누른 때의 신분 확인 시각 — 새 스캔이 들어오면 저절로 풀림
   const [busy, setBusy] = useState(false);
+  const [askDelete, setAskDelete] = useState(false);
   const { targets, error, load } = useTargets();
   const last = latest(d, 'scan');
   const mine = made ? (d.displays ?? []).find((x) => x.id === made.id) : undefined;
@@ -393,14 +396,11 @@ export function ScanSteps({ d, onError }: { d: ResvDetail; onError: (e: unknown)
   // 이 화면이 만든 요청이 없으면 상세의 열린 요청(다른 탭 · 다시 연 상세)을 이어 그린다
   const cur: Active | null = active ?? (OPEN(last) && last ? { id: last.id, qrToken: null, expiresAt: '', deviceName: last.deviceName } : null);
   const curItem = active ? mine : last;
-  const remain = useRemain(active?.qrToken ? active.expiresAt : null);
   const scanned = (id.method === 'app_scan' || id.method === 'app_manual') && id.status === 'confirmed';
   const rescan = scanned && rescanOf === (id.checkedAt ?? '');
 
-  const phase: 'idle' | 'qr' | 'wait' | 'done' = cur && (!curItem || OPEN(curItem))
-    ? cur.qrToken && !(curItem?.deviceName ?? cur.deviceName) && curItem?.status !== 'opened'
-      ? 'qr'
-      : 'wait'
+  const phase: 'idle' | 'wait' | 'done' = cur && (!curItem || OPEN(curItem))
+    ? 'wait'
     : scanned && !rescan
       ? 'done'
       : 'idle';
@@ -409,11 +409,11 @@ export function ScanSteps({ d, onError }: { d: ResvDetail; onError: (e: unknown)
     if (phase === 'idle') load();
   }, [phase, load]);
 
-  const start = async (t?: DisplayTarget) => {
+  const start = async (t: DisplayTarget) => {
     setBusy(true);
     try {
-      const r = await api.createDisplay(d.reservationId, 'scan', t?.deviceId);
-      setActive({ id: r.id, qrToken: r.qrToken, expiresAt: r.expiresAt, deviceName: t?.name ?? null });
+      const r = await api.createDisplay(d.reservationId, 'scan', t.deviceId);
+      setActive({ id: r.id, qrToken: r.qrToken, expiresAt: r.expiresAt, deviceName: t.name });
     } catch (e) {
       onError(e);
     } finally {
@@ -426,6 +426,20 @@ export function ScanSteps({ d, onError }: { d: ResvDetail; onError: (e: unknown)
     try {
       await api.closeDisplay(cur.id, 'canceled');
       setActive(null);
+    } catch (e) {
+      onError(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  // [삭제] — ccc 사진 · 신분 확인(→ 미확인) · KOS 이미지(E2E batch 3 #1) · 자동 입력된 고객 값은 그대로
+  const remove = async () => {
+    if (!id.photoId) return;
+    setAskDelete(false);
+    setBusy(true);
+    try {
+      const r = await api.deleteIdPhoto(id.photoId);
+      onChanged('여권 사진을 지웠어요' + (r.kos === 'deleted' ? ' · KOS 사진도 지움' : r.kos === 'not_found' ? ' · KOS 에는 이미 없었어요' : ' · KOS 로 올라가지 않은 사진'));
     } catch (e) {
       onError(e);
     } finally {
@@ -445,9 +459,6 @@ export function ScanSteps({ d, onError }: { d: ResvDetail; onError: (e: unknown)
             {t.name}
           </Button>
         ))}
-        <Button variant="outlined" color="gray" size="sm" disabled={busy} onClick={() => void start()}>
-          QR
-        </Button>
         {error && <span className="text-typo-body-400 text-red">{error}</span>}
         {targets && !devs.length && <span className="text-typo-body-400 text-ms-gray-500">연결된 기기가 없어요</span>}
         {rescan && scanned && (
@@ -459,39 +470,7 @@ export function ScanSteps({ d, onError }: { d: ResvDetail; onError: (e: unknown)
     );
   }
 
-  if (phase === 'qr' && cur?.qrToken) {
-    const expired = remain === 0;
-    return (
-      <div className="bg-ms-gray-100" style={{ padding: 12, borderRadius: 8, display: 'flex', alignItems: 'center', gap: 14 }}>
-        {expired ? (
-          <span className="bg-ms-white text-typo-body-400 text-ms-gray-500" style={{ width: 104, height: 104, flexShrink: 0, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            만료됨
-          </span>
-        ) : (
-          <QrImage text={api.displayQrText(cur.qrToken)} size={88} />
-        )}
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <span className="text-typo-body-600 text-ms-gray-800">{targets?.length ? 'QR로 다른 기기 연결' : '연결된 기기가 없어요 · QR로 스캐너 열기'}</span>
-          <span className="text-typo-body-400 text-ms-gray-600">
-            코디 폰 앱 [QR 읽기]로 찍으면 스캐너가 열리고, 찍은 결과가 여기로 들어옵니다. 링크는 10분 동안만 유효합니다.
-            {remain !== null && !expired ? ' · 남은 시간 ' + mmss(remain) : ''}
-          </span>
-          <div style={{ display: 'flex', gap: 6 }}>
-            {expired && (
-              <Button variant="outlined" color="blue" size="sm" disabled={busy} onClick={() => void start()}>
-                새 QR
-              </Button>
-            )}
-            <Button variant="outlined" color="gray" size="sm" disabled={busy} onClick={() => void cancel()}>
-              취소
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (phase === 'wait' || phase === 'qr') {
+  if (phase === 'wait') {
     const dev = curItem?.deviceName ?? cur?.deviceName;
     const text = curItem?.status === 'opened' ? (dev ? dev + '에서 스캔 중' : '스캔 중') + ' · 촬영 대기 중…' : (dev ? dev + '에 보냈어요' : 'QR 대기 중') + ' · 여는 중…';
     return (
@@ -524,6 +503,22 @@ export function ScanSteps({ d, onError }: { d: ResvDetail; onError: (e: unknown)
         <Badge variant="warning" size="sm">
           KOS 사진 실패
         </Badge>
+      )}
+      {id.photoId && (
+        <Button variant="outlined" color="red" size="sm" disabled={busy} onClick={() => setAskDelete(true)}>
+          {busy ? '지우는 중…' : '삭제'}
+        </Button>
+      )}
+      {askDelete && (
+        <ConfirmModal
+          isOpen
+          title="여권 사진을 지울까요?"
+          description="ccc · KOS 의 사진을 지우고 신분 확인을 미확인으로 돌려요. 자동 입력된 고객 정보(여권번호 등)는 그대로 남아요."
+          variant="caution"
+          onBackdropClick={() => setAskDelete(false)}
+          leftButton={{ label: '취소', onClick: () => setAskDelete(false), style: SHRINK }}
+          rightButton={{ label: '삭제', onClick: () => void remove(), style: SHRINK }}
+        />
       )}
       {pre && (
         <button type="button" onClick={() => setRescanOf(id.checkedAt ?? '')} className="text-typo-body-500 text-ms-gray-600" style={{ border: 'none', background: 'transparent', cursor: 'pointer', textDecoration: 'underline', fontFamily: 'inherit' }}>

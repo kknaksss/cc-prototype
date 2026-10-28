@@ -15,6 +15,7 @@ from app.schemas.reservations import (
     CreateReservationRequest,
     CreateReservationResponse,
     CustomerSearch,
+    FunnelRequest,
     IdentityRequest,
     MemoRequest,
     MoveRequest,
@@ -132,4 +133,11 @@ async def remark(customer_id: int, body: RemarkRequest, c: Ctr, actor: Actor) ->
 @router.put("/customers/{customer_id}/identity", response_model=OkResponse, dependencies=write)
 async def identity(customer_id: int, body: IdentityRequest, c: Ctr, actor: Actor) -> OkResponse:
     c.resv.identity(actor, customer_id, body.status)
+    return OkResponse()
+
+
+@router.put("/customers/{customer_id}/funnel", response_model=OkResponse, dependencies=write)
+async def funnel(customer_id: int, body: FunnelRequest, c: Ctr, actor: Actor) -> OkResponse:
+    """KOS 고객 유입 채널(E2E batch 3 #2) — 같은 값이면 KOS 안 부름."""
+    await c.resv.funnel(actor, customer_id, body.funnelId, body.funnelDetail, "funnelDetail" in body.model_fields_set)
     return OkResponse()

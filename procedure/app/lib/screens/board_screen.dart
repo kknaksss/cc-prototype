@@ -65,8 +65,11 @@ class _BoardScreenState extends State<BoardScreen> {
       builder: (context, _) {
         final b = app.stream.board;
         return TabScaffold(
-          head: ListHeader(tablet: tablet, need: b?.counts.need ?? 0),
-          body: b == null ? const Center(child: CircularProgressIndicator(strokeWidth: 2)) : _body(context, app, b, tablet),
+          tab: AppTab.board,
+          body: Column(children: [
+            BoardBar(tablet: tablet, need: b?.counts.need ?? 0), // 본문 첫 줄 — 「확인 N」 · 시계
+            Expanded(child: b == null ? const Center(child: CircularProgressIndicator(strokeWidth: 2)) : _body(context, app, b, tablet)),
+          ]),
         );
       },
     );

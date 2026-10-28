@@ -56,6 +56,7 @@ RESV_NAMES = {
     "recept", "add-flow-tasks", "change-content", "create-notice", "delete-notice",
     "get-questionnaire-agreements", "submit-visitor-questionnaire",  # 앱 문진(SPEC-004 §6.15)
     "generate-uploading-url", "register-visitor-images",  # 앱 여권 사진(SPEC-004 §6.16 ④-c)
+    "get-visitor-images", "delete-visitor-images",  # 사진 삭제(E2E batch 3 #1)
 }
 DAY = datetime(2026, 10, 21, tzinfo=UTC)  # 시험 날짜(수요일) — KST 하루 = 전날 15:00Z ~ 15:00Z
 
@@ -169,6 +170,8 @@ class ResvFake:
                                    "default": False}]  # 데모 지점 꼴(「여권」 없음)
         self.uploads: list[dict] = []  # {url, content, contentType}
         self.registered: list[dict] = []
+        self.images: list[dict] = []  # KOS 고객 이미지(등록 · 삭제 반영)
+        self.deleted_images: list[list[str]] = []  # 받은 delete-visitor-images ids
         self.submit_at = "2026-10-21T02:05:00Z"  # 다음 제출본 createdDateTimeUtc
         self.keep_first_submit = False  # 실 KOS 꼴 — 다시 제출해도 제출본 읽기는 첫 제출본(데모 2026-10-28)
         self.purchases: dict[str, dict] = {}
@@ -216,6 +219,20 @@ class ResvFake:
             return httpx.Response(200, json={"data": f"https://s3.fake.test/bucket/{body['fileName']}?X-Amz-Signature=sig"})
         if name == "register-visitor-images":
             self.registered.append(deepcopy(body))
+            for img in body["images"]:
+                self.images.append({"id": f"img-{len(self.images) + 1}", "visitorId": img["visitorId"],
+                                    "scheduleId": img.get("scheduleId", ""), "fileName": img["fileName"], "deleted": False})
+            return ok
+        if name == "get-visitor-images":
+            out = [deepcopy(x) for x in self.images if x["visitorId"] == body.get("visitorId")
+                   and ("scheduleId" not in body or x["scheduleId"] == body["scheduleId"])
+                   and (body.get("deleted") is None or x["deleted"] == body["deleted"])]
+            return httpx.Response(200, json={"data": out})
+        if name == "delete-visitor-images":
+            self.deleted_images.append(list(body.get("ids") or []))
+            for x in self.images:
+                if x["id"] in (body.get("ids") or []):
+                    x["deleted"] = True
             return ok
         if name == "get-etcetera-tasks":
             return httpx.Response(200, json={"data": deepcopy(self.etc_tasks)})

@@ -237,6 +237,13 @@ class DetailCustomer(BaseModel):
     personalError: str | None
     remark: str | None
     identity: Identity
+    funnel: "VisitorFunnel | None" = None  # KOS 고객 유입 채널(관리 묶음 visitorFunnel · E2E batch 3 #2)
+
+
+class VisitorFunnel(BaseModel):
+    funnelId: int | None  # ccc funnel_code id(KOS FUNNEL 코드) · 코드 목록에 없으면 null
+    name: str | None
+    detail: str | None
 
 
 class Funnel(BaseModel):
@@ -398,6 +405,7 @@ class ReservationDetail(BaseModel):
     counselors: list[CounselorItem]
     can: Can
     displays: list[DisplayItem] = []  # 띄우기 요청(SPEC-004 §5-3 · 오늘 그 예약 것)
+    funnelCodes: list["FunnelItem"] = []  # 유입 채널 드롭다운 — 예약 등록과 같은 FUNNEL 코드(닫힌 것 빼고)
 
 
 
@@ -593,6 +601,13 @@ class RemarkRequest(_Req):
     memo: str
 
 
+class FunnelRequest(_Req):
+    """KOS 고객 유입 채널(E2E batch 3 #2) — funnelId = ccc funnel_code id(null = 비움) · funnelDetail 은 보낼 때만 고침."""
+
+    funnelId: StrictInt | None
+    funnelDetail: str | None = None
+
+
 class IdentityRequest(_Req):
     status: Literal["confirmed", "unconfirmed"]
 
@@ -618,3 +633,6 @@ RESV_CONFLICT_CODES = (
     "identity_locked",
     "kos_rejected",
 )
+
+DetailCustomer.model_rebuild()
+ReservationDetail.model_rebuild()

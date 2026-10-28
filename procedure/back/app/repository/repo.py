@@ -576,6 +576,11 @@ class Tx:
     def update_id_photo(self, photo_id: int, **fields: Any) -> None:
         self._update("id_photo", photo_id, fields)
 
+    def delete_id_photo(self, photo_id: int) -> None:
+        """사진 행 지움 + 그 사진을 가리키던 신분 확인 행의 photo_id 를 비움(E2E batch 3 #1)."""
+        self.con.execute("UPDATE identity_check SET photo_id = NULL WHERE photo_id = ?", (photo_id,))
+        self.con.execute("DELETE FROM id_photo WHERE id = ?", (photo_id,))
+
     # ---------------------------------------------------------------- 띄우기 요청(SPEC-004 §5-3)
     def add_display(self, **fields: Any) -> int:
         return self._insert("display_request", fields)

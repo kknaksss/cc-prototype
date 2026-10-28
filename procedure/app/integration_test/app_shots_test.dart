@@ -68,6 +68,17 @@ void main() {
     await t.tap(find.text('로그인'));
     await wait(t, find.text('설정'));
     await settle(t, 2500);
+    // 헤더 한 줄 [메뉴명][Céramique][알림] · 예약 현황 [QR 읽기] 없음(2026-10-28)
+    if (wp == 'H') {
+      await take('reservations');
+      await tab(t, '내원 현황');
+      await take('visits');
+      await tab(t, '시술 현황');
+      await take('board');
+      await tab(t, '설정');
+      await take('settings');
+      return;
+    }
     // E2E batch 2 #3 — 이름 창 없음 · 설정 「기기 이름」 = 기종 이름 자동
     if (wp == 'B2') {
       await take('after_login_no_name_sheet');

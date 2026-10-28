@@ -334,3 +334,7 @@ class PassportScanResponse(OkResponse):
 
 class KosRetryResponse(OkResponse):
     kos: Literal["ok", "failed"]
+
+
+class PhotoDeleteResponse(OkResponse):
+    kos: Literal["deleted", "not_found", "skipped"]  # skipped = KOS 로 안 올라간 사진(사진 폴더 꺼짐 등)

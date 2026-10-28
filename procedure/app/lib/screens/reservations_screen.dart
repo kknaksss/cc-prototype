@@ -8,10 +8,8 @@ import 'package:flutter/material.dart';
 import '../api/api.dart';
 import '../app_state.dart';
 import '../model/reservation.dart';
-import '../scan/scan_channel.dart';
 import '../theme/tokens.dart';
 import '../view/resv_view.dart';
-import '../widgets/header.dart';
 import '../widgets/resv_ui.dart';
 import '../widgets/ui.dart';
 import 'board_screen.dart' show isTablet;
@@ -155,17 +153,6 @@ class _ReservationsScreenState extends State<ReservationsScreen> with TabPolling
 
   double _rowH(int n) => 16 + (n == 0 ? 24 : n * 52 + (n - 1) * 6);
 
-  Future<void> _readQr() async {
-    String? raw;
-    try {
-      raw = await const ScanChannel().scanQr();
-    } on NoCamera {
-      _app.toaster.show('카메라를 쓸 수 없어요');
-      return;
-    }
-    if (raw != null) await _app.claimQr(raw);
-  }
-
   void _open(ResvCard c) =>
       Navigator.of(context).push(MaterialPageRoute(builder: (_) => ReservationDetailScreen(reservationId: c.reservationId)));
 
@@ -174,11 +161,9 @@ class _ReservationsScreenState extends State<ReservationsScreen> with TabPolling
     final tablet = isTablet(context);
     final b = _board;
     final today = todayKst();
+    // [QR 읽기] 없음(사용자 2026-10-28 — 문진 QR = 고객 폰 웹 · 여권 = 웹 [스캔할 기기]가 기기로 바로 보냄)
     return TabScaffold(
-      // 머리 오른쪽 [QR 읽기] — 코디 폰이 웹 QR 을 찍는 자리(§6.10 · D7-44)
-      head: TabHead(tablet: tablet, title: '예약 현황', trailing: [
-        MsButton('QR 읽기', size: BtnSize.sm, variant: BtnVariant.outlined, color: BtnColor.gray, onPressed: _readQr),
-      ]),
+      tab: AppTab.reservations,
       body: Column(children: [
         // 날짜 줄 ‹ 날짜 › · [오늘] · 범례(주 상태 7 · 개수) · 총 예약 N건
         Container(

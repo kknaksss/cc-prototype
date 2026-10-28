@@ -11,7 +11,7 @@ from starlette.formparsers import MultiPartParser
 
 from app.api.deps import Actor, Ctr, require_real_board
 from app.domain.errors import BadRequest
-from app.schemas.actions import KosRetryResponse, PassportScanResponse
+from app.schemas.actions import KosRetryResponse, PassportScanResponse, PhotoDeleteResponse
 from app.service.id_photo import MAX_BYTES
 from app.service.passport_scan import PhotoTooLarge
 
@@ -61,3 +61,9 @@ def id_photo(photo_id: int, c: Ctr, actor: Actor) -> Response:
 @router.post("/id-photos/{photo_id}/kos-retry", response_model=KosRetryResponse, dependencies=[Depends(require_real_board)])
 async def kos_retry(photo_id: int, c: Ctr, actor: Actor) -> KosRetryResponse:
     return KosRetryResponse(kos=await c.photos.retry(actor, photo_id))  # type: ignore[arg-type]
+
+
+@router.delete("/id-photos/{photo_id}", response_model=PhotoDeleteResponse, dependencies=[Depends(require_real_board)])
+async def delete_photo(photo_id: int, c: Ctr, actor: Actor) -> PhotoDeleteResponse:
+    """[삭제](E2E batch 3 #1) — KOS 이미지 먼저 지우고(실패면 409 · 502 · ccc 그대로) ccc 파일 · 행 · 신분 확인(→ 미확인)."""
+    return PhotoDeleteResponse(kos=await c.photos.delete(actor, photo_id))  # type: ignore[arg-type]

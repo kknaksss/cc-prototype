@@ -159,11 +159,7 @@ class Toaster extends ChangeNotifier {
   VoidCallback? onAction;
   int _n = 0;
   Timer? _t;
-  // 문진 잠금 동안 앱 안 배너(토스트)를 그리지 않는다(§6.15 잠금 · D7-45)
-  bool muted = false;
-
   void show(String msg, {String? action, VoidCallback? onAction}) {
-    if (muted) return;
     text = msg;
     this.action = onAction == null ? null : action;
     this.onAction = onAction;

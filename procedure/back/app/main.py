@@ -23,7 +23,7 @@ from app.api import (
     interpret,
     notifications,
     photos,
-    questionnaire,
+    public_questionnaire,
     reservations,
 )
 from app.config import Settings, get_settings
@@ -88,8 +88,17 @@ def create_app(settings: Settings | None = None, container: Container | None = N
         CORSMiddleware,
         allow_origins=[settings.proc_front_origin],
         allow_methods=["GET", "POST", "PUT", "OPTIONS"],  # PUT = 카드 순서(§7.3) · 알림 설정
-        allow_headers=["*"],
+        allow_headers=["*"],  # X-Questionnaire-Token(고객 문진 웹 · 로컬 3700 ↔ 8700) 포함
     )
+
+    @app.middleware("http")
+    async def public_headers(request: Request, call_next):
+        """고객 공개 경로(SPEC-006 §6.1 · §7.5) — 오류 응답까지 no-store · no-referrer."""
+        resp = await call_next(request)
+        if request.url.path.startswith(public_questionnaire.PREFIX):
+            resp.headers["Cache-Control"] = "no-store"
+            resp.headers["Referrer-Policy"] = "no-referrer"
+        return resp
 
     @app.exception_handler(DomainError)
     async def domain_error(_: Request, exc: DomainError) -> JSONResponse:
@@ -106,7 +115,7 @@ def create_app(settings: Settings | None = None, container: Container | None = N
         return _error(exc.status_code, "not_found" if exc.status_code == 404 else "http_error", str(exc.detail))
 
     for r in (auth.router, board.router, actions.router, interpret.router, devices.router, reservations.router,
-              notifications.router, display.router, questionnaire.router, photos.router):
+              notifications.router, display.router, public_questionnaire.router, photos.router):
         app.include_router(r)
 
     @app.get("/api/health", response_model=HealthResponse)

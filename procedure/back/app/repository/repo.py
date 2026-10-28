@@ -7,7 +7,7 @@ import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from app.domain.clock import parse, to_db
@@ -87,7 +87,7 @@ def _device(r: sqlite3.Row) -> Device:
 def _display(r: sqlite3.Row) -> DisplayRequest:
     return DisplayRequest(r["id"], r["reservation_id"], r["customer_id"], r["kind"], r["device_id"], r["status"],
                           r["created_by"], parse(r["created_at"]), parse(r["expires_at"]), parse(r["opened_at"]),
-                          parse(r["closed_at"]))
+                          parse(r["closed_at"]), r["qr_nonce"])
 
 
 def live_devices(devices: list[Device]) -> list[Device]:
@@ -608,11 +608,18 @@ class Tx:
     def update_display(self, request_id: int, **fields: Any) -> None:
         self._update("display_request", request_id, fields)
 
-    def expire_displays(self, now: datetime) -> int:
-        """유효 시간이 지난 pending → expired(열린 것은 그대로 — 고객이 쓰는 중)."""
-        cur = self.con.execute("UPDATE display_request SET status = 'expired', closed_at = ? "
-                               "WHERE status = 'pending' AND expires_at <= ?", (to_db(now), to_db(now)))
-        return cur.rowcount
+    def expire_displays(self, now: datetime, fill_min: float | None = None) -> int:
+        """여는 시한이 지난 pending → expired. 스캔 종류 opened 는 그대로(쓰는 중).
+
+        fill_min 을 주면 문진 종류 opened 도 opened_at + fill_min 이 지나면 expired(쓰는 시한 · SPEC-006 §3.2).
+        """
+        n = self.con.execute("UPDATE display_request SET status = 'expired', closed_at = ? "
+                             "WHERE status = 'pending' AND expires_at <= ?", (to_db(now), to_db(now))).rowcount
+        if fill_min is not None:
+            cutoff = to_db(now - timedelta(minutes=fill_min))
+            n += self.con.execute("UPDATE display_request SET status = 'expired', closed_at = ? WHERE status = 'opened' "
+                                  "AND kind = 'questionnaire' AND opened_at <= ?", (to_db(now), cutoff)).rowcount
+        return n
 
     def last_questionnaire_at(self, customer_id: int) -> str | None:
         r = self.con.execute("SELECT kos_submitted_at FROM questionnaire_history WHERE customer_id = ? ORDER BY id DESC LIMIT 1",
@@ -628,9 +635,10 @@ class Tx:
 
     def put_app_questionnaire(self, customer_id: int, reservation_id: int | None, submitted_at: str, answers: list,
                               at: datetime, *, language: str | None, device_id: int | None,
-                              display_request_id: int | None) -> int:
-        """앱 제출(SPEC-004 §6.15 ⑥ r2) — 같은 제출본 행(read)이 있으면 그 행을 app_submit 으로 고친다 · 없으면 새 행."""
-        fields = {"source": "app_submit", "language": language, "device_id": device_id,
+                              display_request_id: int | None, source: str = "app_submit") -> int:
+        """제출 이력(SPEC-004 §6.15 ⑥ r2 · SPEC-006 §6.4) — 같은 제출본 행(read)이 있으면 그 행을 source 로 고친다 · 없으면 새 행.
+        """
+        fields = {"source": source, "language": language, "device_id": device_id,
                   "display_request_id": display_request_id}
         r = self.con.execute("SELECT id FROM questionnaire_history WHERE customer_id = ? AND kos_submitted_at = ?",
                              (customer_id, submitted_at)).fetchone()
@@ -640,6 +648,12 @@ class Tx:
         return self._insert("questionnaire_history", {"customer_id": customer_id, "reservation_id": reservation_id,
                                                       "kos_submitted_at": submitted_at, "answers": answers,
                                                       "fetched_at": at, **fields})
+
+    def latest_web_questionnaire(self, customer_id: int) -> dict[str, Any] | None:
+        """그 고객의 가장 늦은 고객 웹 제출(web_submit) — 상세 「건강 정보」가 KOS 제출본보다 새로우면 이것을 쓴다."""
+        r = self.con.execute("SELECT * FROM questionnaire_history WHERE customer_id = ? AND source = 'web_submit' "
+                             "ORDER BY kos_submitted_at DESC, id DESC LIMIT 1", (customer_id,)).fetchone()
+        return dict(r) if r else None
 
     def questionnaire_history(self, customer_id: int) -> list[dict[str, Any]]:
         return [dict(r) for r in self.con.execute("SELECT * FROM questionnaire_history WHERE customer_id = ? ORDER BY id",

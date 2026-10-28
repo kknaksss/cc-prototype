@@ -303,10 +303,18 @@ def can(main: str, flow_step: str | None, *, payment_required: int, identity_con
 
 
 # ------------------------------------------------------------------ §5.11 건강 정보
+def page_name(title: Any) -> str:
+    """KOS 양식 쪽 제목 「이름 >> 안내」 의 이름."""
+    return str(title or "").split(">>", 1)[0].strip()
+
+
 def health_items(form: dict[str, Any] | None, submit: dict[str, Any] | None) -> list[dict[str, Any]]:
-    """문진 양식 「건강 정보」 쪽 질문 × 제출본 답."""
+    """문진 양식 「건강 정보」 쪽 질문 × 제출본 답.
+
+    쪽 제목은 실 KOS 에서 「건강 정보 >> 안전한 시술을 위해 …」 꼴 — `>>` 앞만 본다(WORK-010 건강 정보 반영).
+    """
     pages = (form or {}).get("pages") or []
-    page = next((p for p in pages if isinstance(p, dict) and (p.get("title") or "").strip() == "건강 정보"), None)
+    page = next((p for p in pages if isinstance(p, dict) and page_name(p.get("title")) == "건강 정보"), None)
     questions = sorted((q for q in (page or {}).get("questions") or [] if isinstance(q, dict)),
                        key=lambda q: q.get("sequence") or 0)
     answers = [a for a in (submit or {}).get("answers") or [] if isinstance(a, dict)]

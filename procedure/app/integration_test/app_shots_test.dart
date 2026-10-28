@@ -145,65 +145,6 @@ void main() {
       await take('after_read_badge');
     }
 
-    if (wp == 'APP5') {
-      // 예약 상세 [이 기기에서 열기] → 문진(언어 3가지 · 기본 정보 · 4쪽 · 동의 · 제출 · 감사 · 잠긴 대기) → [직원] 길게 → 비밀번호 → 나감
-      await t.tap(find.byType(ResvCardTile).hitTestable().first);
-      await settle(t, 2000);
-      final here = find.text('이 기기에서 열기');
-      await t.scrollUntilVisible(here, 300, scrollable: find.byType(Scrollable).last);
-      await t.drag(find.byType(Scrollable).last, const Offset(0, 250));
-      await settle(t, 600);
-      await t.tap(here.hitTestable());
-      await settle(t, 2000);
-      await take('q_start_ja');
-      await t.tap(find.text('한국어'));
-      await settle(t, 400);
-      await take('q_start_ko');
-      await t.scrollUntilVisible(find.text('English'), 120, scrollable: find.byType(Scrollable).first);
-      await settle(t, 600);
-      await t.tap(find.text('English').hitTestable());
-      await settle(t, 400);
-      await take('q_start_en');
-      await t.tap(find.text('Start'));
-      await settle(t, 800);
-      await take('q_basic');
-      await t.tap(find.text('Next'));
-      await settle(t, 800);
-      // 쪽마다 첫 선택지(SELECT/CHECK) · 이메일 칸은 지어낸 주소
-      for (var i = 0; i < 4; i++) {
-        final input = find.byType(TextField);
-        if (input.evaluate().isNotEmpty) await t.enterText(input.first, 'test@example.com');
-        for (final w in find.byIcon(Icons.radio_button_off_rounded).evaluate().toList()) {
-          await t.tap(find.byWidget(w.widget).first, warnIfMissed: false);
-          await t.pump(const Duration(milliseconds: 100));
-        }
-        await settle(t, 400);
-        await take('q_page${i + 1}');
-        await t.tap(find.text('Next'));
-        await settle(t, 800);
-      }
-      await t.tap(find.byIcon(Icons.check_box_outline_blank_rounded).first);
-      await settle(t, 400);
-      await take('q_agree');
-      await t.tap(find.text('Submit'));
-      await settle(t, 1500);
-      await take('q_thanks');
-      await settle(t, 3500);
-      await take('q_waiting_locked');
-      final g = await t.startGesture(t.getCenter(find.text('직원')));
-      await t.pump(const Duration(milliseconds: 1700));
-      await g.up();
-      await settle(t, 800);
-      await t.enterText(find.byKey(const Key('unlock-password')), 'not-the-password');
-      await t.tap(find.text('나가기'));
-      await settle(t, 1500);
-      await take('q_unlock_wrong');
-      await t.enterText(find.byKey(const Key('unlock-password')), loginPw);
-      await t.tap(find.text('나가기'));
-      await settle(t, 1500);
-      await take('q_exit');
-    }
-
     if (wp == 'APP6') {
       // 시험 스위치 — 시뮬레이터가 카메라 「있음」으로 열려 시스템 카메라 화면에서 멈추므로, 카메라 없는 채널로 스캔 화면을 연다(앱 코드 그대로)
       openPassportScan = (ctx, d, {displayRequestId}) => Navigator.of(ctx, rootNavigator: true).push(MaterialPageRoute(

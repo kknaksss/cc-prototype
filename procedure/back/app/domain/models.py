@@ -290,3 +290,4 @@ class DisplayRequest:
     expires_at: datetime
     opened_at: datetime | None
     closed_at: datetime | None
+    qr_nonce: str | None = None  # 문진 종류만 — 고객 웹 링크 토큰을 다시 계산하는 값(SPEC-006 §3.1)

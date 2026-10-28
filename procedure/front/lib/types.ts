@@ -478,6 +478,8 @@ export interface DisplayItem {
   deviceName: string | null;
   createdAt: string;
   closedAt: string | null;
+  qrUrl?: string | null; // 문진 · pending 일 때만 — 고객 웹 주소(SPEC-006 §6.6 · 새로고침 때 QR 다시 그림)
+  openedAt?: string | null; // 고객이 처음 연 때(문진)
 }
 
 // GET /api/devices/targets — 코디 계정 기기 · last_seen_at 24시간 · 최근 순
@@ -493,7 +495,8 @@ export interface DisplayTarget {
 // POST /api/display-requests
 export interface DisplayCreated {
   id: number;
-  qrToken: string;
+  qrToken: string | null; // 스캔만(ccc://display?t=) · 문진 = null
+  qrUrl?: string | null; // 문진만 — {PROC_FRONT_ORIGIN}/q#<토큰>(SPEC-006 §6.6)
   expiresAt: string;
 }
 

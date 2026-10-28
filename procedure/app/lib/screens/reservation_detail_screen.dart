@@ -285,14 +285,13 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
     await _load();
   }
 
+  // [이 기기에 QR 보이기](SPEC-006 §8.2) — 고객이 휴대폰 카메라로 찍는 문진 QR
   Future<void> _questionnaireHere(ResvDetail d) async {
-    final f = openQuestionnaire;
-    if (f == null) return _app.toaster.show('문진 화면을 열 수 없어요');
-    await f(context, d.reservationId);
+    await showQuestionnaireQrHere(context, d);
     await _load();
   }
 
-  // 고객 기본 정보 — 웹과 같은 칸 · 연락처 보임(D7-32) · [수정](can.editPersonal) · [태블릿에 띄우기] · [이 기기에서 열기]
+  // 고객 기본 정보 — 웹과 같은 칸 · 연락처 보임(D7-32) · [수정](can.editPersonal) · [태블릿에 띄우기] · [이 기기에 QR 보이기]
   Widget _personal(ResvDetail d) {
     final p = d.customer.personal;
     String v(String? x) => (x ?? '').trim().isEmpty ? '-' : x!.trim();
@@ -331,7 +330,7 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
         const SizedBox(height: 10),
         Wrap(spacing: 8, runSpacing: 8, children: [
           MsButton('태블릿에 띄우기', size: BtnSize.sm, variant: BtnVariant.outlined, onPressed: _busy ? null : () => sendQuestionnaireToDevice(context, d).then((_) => _load())),
-          MsButton('이 기기에서 열기', size: BtnSize.sm, variant: BtnVariant.outlined, color: BtnColor.gray, onPressed: _busy ? null : () => _questionnaireHere(d)),
+          MsButton('이 기기에 QR 보이기', size: BtnSize.sm, variant: BtnVariant.outlined, color: BtnColor.gray, onPressed: _busy ? null : () => _questionnaireHere(d)),
         ]),
         for (final x in d.displays.where((x) => x.kind == 'questionnaire').take(1))
           Padding(
@@ -752,9 +751,10 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
 // 띄우기 단계 글자(§6.17 과 같은 뜻) — 대기 → 열림 → 제출됨 · HH:MM
 String displayStep(DisplayItem x) {
   final who = x.deviceName ?? 'QR';
+  // 문진 = 고객 폰 웹(SPEC-006 §8.1 단계) — pending = QR 보이는 중 · opened = 고객이 입력 중
   return switch (x.status) {
-    'pending' => '$who에 표시 대기',
-    'opened' => '$who에서 작성 중',
+    'pending' => '$who QR 표시 중',
+    'opened' => '고객이 입력 중${x.openedAt == null ? '' : ' · ${hm(x.openedAt)}'}',
     'done' => '제출됨 · ${hm(x.closedAt)}',
     'canceled' => '$who 닫힘',
     'expired' => '$who 시간 지남',

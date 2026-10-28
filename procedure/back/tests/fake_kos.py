@@ -170,6 +170,7 @@ class ResvFake:
         self.uploads: list[dict] = []  # {url, content, contentType}
         self.registered: list[dict] = []
         self.submit_at = "2026-10-21T02:05:00Z"  # 다음 제출본 createdDateTimeUtc
+        self.keep_first_submit = False  # 실 KOS 꼴 — 다시 제출해도 제출본 읽기는 첫 제출본(데모 2026-10-28)
         self.purchases: dict[str, dict] = {}
         self.delay: dict[str, int] = {}  # 쓰기 이름 → 그 결과가 보이기까지 get-schedule-detail 읽기 수
         self._pending: list[list] = []  # [남은 읽기, 적용 함수]
@@ -258,6 +259,8 @@ class ResvFake:
                                       "phoneNumber": body["phone"]["phoneNumber"].lstrip("0")},
                       "address": {"address": body.get("address", ""), "detailedAddress": body.get("addressDetail", ""),
                                   "zipCode": ""}})
+            if self.keep_first_submit and body["visitorId"] in self.submits:
+                return httpx.Response(200, json={"questionnaireId": f"qn-{len(self.submitted)}"})
             self.submits[body["visitorId"]] = {
                 "createdDateTimeUtc": self.submit_at, "visitorName": body["name"],
                 "answers": [{"seq": "", "questionId": a["parentQuestionId"], "questionTitle": a["parentQuestionTitle"],

@@ -64,16 +64,17 @@ def rows(c):
 
 def test_display_create_cancels_previous_and_hash_only(env):
     client, c, apns, auth, dev, sent, (rid, rid2, _), acc = env
-    a = create(client, auth["coordinator"], rid)
-    assert set(a) == {"id", "qrToken", "expiresAt"} and len(a["qrToken"]) >= 40
+    a = create(client, auth["coordinator"], rid, "scan")
+    assert set(a) == {"id", "qrToken", "qrUrl", "expiresAt"} and len(a["qrToken"]) >= 40 and a["qrUrl"] is None
     assert a["expiresAt"] == "2026-10-21T11:10:00+09:00"
-    b = create(client, auth["coordinator"], rid)
-    s = create(client, auth["coordinator"], rid, "scan")  # 다른 종류는 그대로
-    create(client, auth["coordinator"], rid2)  # 다른 예약도 그대로
+    b = create(client, auth["coordinator"], rid, "scan")
+    s = create(client, auth["coordinator"], rid)  # 다른 종류(문진)는 그대로
+    create(client, auth["coordinator"], rid2, "scan")  # 다른 예약도 그대로
     st = {r["id"]: r["status"] for r in rows(c)}
     assert st[a["id"]] == "canceled" and st[b["id"]] == "pending" and st[s["id"]] == "pending"
     dump = json.dumps(rows(c))
     assert a["qrToken"] not in dump and b["qrToken"] not in dump  # 해시만
+    assert s["qrToken"] is None and s["qrUrl"].split("#", 1)[1] not in dump  # 문진 = 링크(원문 0)
     assert all(len(r["qr_token_hash"]) == 64 for r in rows(c))
     r = client.post("/api/display-requests", json={"reservationId": 999, "kind": "scan"}, headers=auth["admin"])
     assert r.status_code == 404
@@ -103,7 +104,8 @@ def test_display_sse_to_that_device_only(env):
         q = create(client, auth["admin"], rid, device=dev["tab"])
         frame = await asyncio.wait_for(tab.__anext__(), 1)
         assert frame == ("event: display\ndata: " + json.dumps(
-            {"requestId": q["id"], "deviceId": dev["tab"], "kind": "questionnaire", "reservationId": rid}) + "\n\n")
+            {"requestId": q["id"], "deviceId": dev["tab"], "kind": "questionnaire", "reservationId": rid,
+             "qrUrl": q["qrUrl"]}) + "\n\n")  # 문진 = 고객 웹 링크(SPEC-006 §6.6)
         with pytest.raises(TimeoutError):  # 폰 0(시간 초과가 생성기를 닫으므로 끝에)
             await asyncio.wait_for(phone.__anext__(), 0.1)
         await tab.aclose()
@@ -115,9 +117,9 @@ def test_display_sse_to_that_device_only(env):
     assert got == {"items": []}
     got = client.get(f"/api/display-requests/pending?deviceId={dev['tab']}", headers=auth["coordinator"]).json()
     assert got == {"items": [{"requestId": q["id"], "kind": "questionnaire", "reservationId": rid,
-                              "customerId": rows(c)[0]["customer_id"], "deviceId": dev["tab"], "status": "opened",
-                              "expiresAt": q["expiresAt"]}]}
-    assert rows(c)[0]["status"] == "opened" and rows(c)[0]["opened_at"]
+                              "customerId": rows(c)[0]["customer_id"], "deviceId": dev["tab"], "status": "pending",
+                              "expiresAt": q["expiresAt"], "qrUrl": q["qrUrl"]}]}
+    assert rows(c)[0]["status"] == "pending"  # 문진 = 돌려줘도 pending(opened = 고객이 엶 · SPEC-006 §6.6)
     again = client.get(f"/api/display-requests/pending?deviceId={dev['tab']}", headers=auth["coordinator"]).json()
     assert [x["requestId"] for x in again["items"]] == [q["id"]]  # 열린 것은 닫힐 때까지 다시 나온다
 
@@ -166,7 +168,7 @@ def test_display_pending_requires_own_device(env):
 
 def test_display_claim_once_expiry_and_device(env):
     client, c, apns, auth, dev, sent, (rid, rid2, cust), acc = env
-    q = create(client, auth["admin"], rid, device=dev["tab"])  # 태블릿으로 보냈지만 폰이 QR 을 찍음
+    q = create(client, auth["admin"], rid, "scan", device=dev["tab"])  # 태블릿으로 보냈지만 폰이 QR 을 찍음
     r = client.post("/api/display-requests/claim", json={"qrToken": q["qrToken"], "deviceId": dev["adm"]},
                     headers=auth["coordinator"])
     assert (r.status_code, r.json()["error"]["code"]) == (404, "device_not_found")  # 남의 계정 기기
@@ -177,7 +179,7 @@ def test_display_claim_once_expiry_and_device(env):
     assert (r.status_code, r.json()["error"]["code"]) == (409, "display_closed")  # 1회
     r = client.post("/api/display-requests/claim", json={"qrToken": "nope"}, headers=auth["coordinator"])
     assert (r.status_code, r.json()["error"]["code"]) == (404, "display_not_found")
-    qr = create(client, auth["admin"], rid2)  # QR 만 — deviceId 없이 claim = device_id 그대로(null)
+    qr = create(client, auth["admin"], rid2, "scan")  # QR 만 — deviceId 없이 claim = device_id 그대로(null)
     r = client.post("/api/display-requests/claim", json={"qrToken": qr["qrToken"]}, headers=auth["coordinator"])
     assert r.json()["deviceId"] is None and r.json()["status"] == "opened"
     late = create(client, auth["admin"], rid, "scan")
@@ -209,7 +211,8 @@ def test_display_close_and_detail_displays(env):
     with c.repo.tx() as tx:
         items = c.display.of_reservation(tx, rid)
     assert items == [{"id": q["id"], "kind": "questionnaire", "status": "done", "deviceName": "tab",
-                      "createdAt": "2026-10-21T11:00:00+09:00", "closedAt": "2026-10-21T11:00:00+09:00"}]
+                      "createdAt": "2026-10-21T11:00:00+09:00", "openedAt": None,
+                      "closedAt": "2026-10-21T11:00:00+09:00", "qrUrl": None}]
     assert c.resv.displays_of == c.display.of_reservation  # 상세 응답에 붙는다
 
 

@@ -49,8 +49,6 @@ class AuthService:
         self.repo = repo
         self.account_service = accounts
         self._fails: dict[str, tuple[int, float]] = {}  # login_id → (연속 실패 수, 잠금 풀리는 monotonic 시각)
-        # 문진 잠금 나가기(SPEC-004 §3.3 r2 · D7-71) — (계정 id, deviceId | None) 마다 · 로그인 실패 수와 따로
-        self._unlock_fails: dict[tuple[int, int | None], tuple[int, float]] = {}
         self.now_mono = time.monotonic  # 시험이 바꾼다
 
     def _sign(self, body: str) -> str:
@@ -103,24 +101,3 @@ class AuthService:
         if claims.get("role") != account.role or claims.get("staffId") != account.staff_id:
             raise bad
         return account
-
-    def unlock(self, account: Account, password: str, device_id: int | None) -> None:
-        """지금 로그인 계정 비밀번호 확인만(새 토큰 없음). 그 기기만 5회 → 1분 429 · 로그인 · 다른 기기는 안 잠금."""
-        key = (account.id, device_id)
-        fails, until = self._unlock_fails.get(key, (0, 0.0))
-        if until > self.now_mono():
-            raise TooManyAttempts("too_many_attempts", "여러 번 틀렸어요. 1분 뒤 다시 시도해 주세요")
-        if until:
-            fails = 0
-        with self.repo.tx() as tx:
-            fresh = tx.account(account.login_id)
-        stored = fresh.password_hash.encode() if fresh and fresh.password_hash else _DUMMY_HASH
-        try:
-            ok = bcrypt.checkpw(password.encode(), stored) and bool(fresh and fresh.password_hash)  # 상수 시간 비교
-        except ValueError:
-            ok = False
-        if not ok:
-            fails += 1
-            self._unlock_fails[key] = (fails, self.now_mono() + LOCK_SEC if fails >= MAX_FAILS else 0.0)
-            raise Unauthorized("invalid_credentials", "아이디 또는 비밀번호가 맞지 않아요")
-        self._unlock_fails.pop(key, None)

@@ -64,6 +64,7 @@ class Settings(BaseSettings):
     # 앱 다음 판(SPEC-004 §2.3) — 사진 폴더(비면 사진 저장 끔) · 띄우기 요청 유효 분
     proc_photo_dir: str = ""
     proc_display_ttl_min: float = 10
+    proc_qweb_fill_min: float = 60  # 고객 문진 웹 — 처음 연 뒤 쓰는 시한(SPEC-006 §3.2)
     # 개발용 — 1 이면 GET /api/board · /stream 이 WP1 가짜 스냅샷을 준다(front 단독 작업용). 기본 0
     proc_fake_board: bool = False
 

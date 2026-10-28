@@ -87,7 +87,7 @@ def create_app(settings: Settings | None = None, container: Container | None = N
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[settings.proc_front_origin],
-        allow_methods=["GET", "POST", "PUT", "OPTIONS"],  # PUT = 카드 순서(§7.3) · 알림 설정
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],  # PUT = 카드 순서 · 알림 설정 · DELETE = 사진 삭제
         allow_headers=["*"],  # X-Questionnaire-Token(고객 문진 웹 · 로컬 3700 ↔ 8700) 포함
     )
 

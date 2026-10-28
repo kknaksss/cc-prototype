@@ -8,7 +8,6 @@ import '../app_state.dart';
 import '../model/reservation.dart';
 import '../theme/tokens.dart';
 import '../view/resv_view.dart';
-import '../widgets/header.dart';
 import '../widgets/resv_ui.dart';
 import 'board_screen.dart' show isTablet;
 import 'reservation_detail_screen.dart';
@@ -157,7 +156,7 @@ class _VisitsScreenState extends State<VisitsScreen> with TabPolling {
         }),
       );
     }
-    return TabScaffold(head: TabHead(tablet: tablet, title: '내원 현황'), body: body);
+    return TabScaffold(tab: AppTab.visits, body: body);
   }
 }
 

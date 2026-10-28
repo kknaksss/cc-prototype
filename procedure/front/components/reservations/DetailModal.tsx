@@ -13,6 +13,7 @@ import type { Personal, PreviousVisit, ReceiveRoute, ResvBoard, ResvDetail, Resv
 import { Flag, NATION_OPTIONS, genderIcon, headOf, moneyOf, nationName, phaseStyle, type Phase } from './view';
 import { DsDate, DsSelect, snsOptions } from './controls';
 import { ScanSteps, useQuestionnaireRequest } from './Display';
+import { AutoSaveContext, SaveState, useAutoSave, useFlushRegistry } from './autosave';
 
 const SETTLE_MS = 2000;
 const POLL_MS = 5000; // 열려 있는 동안 다시 부름(E2E #17 — 코디 기본값 5초)
@@ -102,17 +103,19 @@ export function DetailModal({
   onError: (e: unknown) => void;
   onReceived?: (state: ResvState) => void; // 접수 성공 → 표 카드 낙관 표시(E2E #14)
 }) {
+  const { register, flushAll } = useFlushRegistry();
+  // 닫기 = 남은 자동 저장을 먼저 보낸 뒤(그 결과는 표 화면 토스트로 — onError)
+  const close = useCallback(() => {
+    flushAll();
+    onClose();
+  }, [flushAll, onClose]);
   const [d, setD] = useState<ResvDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [gone, setGone] = useState(false); // KOS 에서 사라진 예약(404) — 폴링 멈춤(E2E b2 #2)
   const goneRef = useRef(false);
   const [busy, setBusy] = useState<string | null>(null);
 
-  // 화면 칸 — 고친 것만 들고 있다(다시 부르기가 입력을 덮지 않게)
-  const [edits, setEdits] = useState<Partial<Record<EditKey, string>>>({});
-  const [unlock, setUnlock] = useState(false);
-  const [memo, setMemo] = useState<string | null>(null);
-  const [remark, setRemark] = useState<string | null>(null);
+  // 글자 칸(메모 · 주의사항 · 고객 기본 정보)은 칸마다 자동 저장(E2E batch 3 — autosave.tsx) · 모달을 닫을 때 남은 저장을 먼저 내보낸다
   const [roomPick, setRoomPick] = useState<number | null>(null);
   const [roomOpen, setRoomOpen] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
@@ -188,11 +191,11 @@ export function DetailModal({
   useEffect(() => {
     const on = (e: KeyboardEvent) => {
       // 팝오버(상담사 · DS 드롭다운 · 달력)가 열려 있으면 Esc 는 그것만 닫는다
-      if (e.key === 'Escape' && !document.querySelector('[data-radix-popper-content-wrapper]')) onClose();
+      if (e.key === 'Escape' && !document.querySelector('[data-radix-popper-content-wrapper]')) close();
     };
     window.addEventListener('keydown', on);
     return () => window.removeEventListener('keydown', on);
-  }, [onClose]);
+  }, [close]);
 
   // 조작 공통 — 「…중」 → 성공이면 토스트 + 상세 · 표 다시 부름 / 실패 = back message 토스트
   const run = async (key: string, fn: () => Promise<unknown>, toast: string, after?: () => void) => {
@@ -215,7 +218,7 @@ export function DetailModal({
 
   return (
     <div
-      onClick={onClose}
+      onClick={close}
       style={{ position: 'fixed', inset: 0, zIndex: 50, background: 'rgba(0,0,0,0.32)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}
     >
       <div
@@ -227,7 +230,7 @@ export function DetailModal({
       >
         <div className={head?.cls ?? 'bg-ms-gray-100 text-ms-gray-800'} style={{ padding: '14px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', ...head?.style }}>
           <span className="text-typo-heading-md-600">{head?.title ?? '예약 상세'}</span>
-          <button type="button" aria-label="닫기" onClick={onClose} style={{ border: 'none', background: 'transparent', color: 'inherit', fontSize: 20, lineHeight: 1, cursor: 'pointer' }}>
+          <button type="button" aria-label="닫기" onClick={close} style={{ border: 'none', background: 'transparent', color: 'inherit', fontSize: 20, lineHeight: 1, cursor: 'pointer' }}>
             ×
           </button>
         </div>
@@ -235,7 +238,7 @@ export function DetailModal({
         {gone ? (
           <div style={{ padding: 24, display: 'flex', alignItems: 'center', gap: 12 }}>
             <span className="text-typo-body-500 text-ms-gray-800">KOS 에서 사라진 예약이에요</span>
-            <Button variant="outlined" color="gray" size="sm" onClick={onClose}>
+            <Button variant="outlined" color="gray" size="sm" onClick={close}>
               닫기
             </Button>
           </div>
@@ -249,14 +252,15 @@ export function DetailModal({
             )}
           </div>
         ) : (
+          <AutoSaveContext.Provider value={register}>
           <Body
             d={d}
             busy={busy}
             run={run}
             onError={onError}
-            onClose={onClose}
+            onClose={close}
             reload={load}
-            state={{ edits, setEdits, unlock, setUnlock, memo, setMemo, remark, setRemark, roomPick, setRoomPick, roomOpen, setRoomOpen, cancelOpen, setCancelOpen, consOpen, setConsOpen, consPick, setConsPick, closedVisits, setClosedVisits, receiveError, setReceiveError, route, setRoute, setBusy }}
+            state={{ roomPick, setRoomPick, roomOpen, setRoomOpen, cancelOpen, setCancelOpen, consOpen, setConsOpen, consPick, setConsPick, closedVisits, setClosedVisits, receiveError, setReceiveError, route, setRoute, setBusy }}
             onChanged={onChanged}
             reloadSoon={reloadSoon}
             optimistic={(x) => {
@@ -265,6 +269,7 @@ export function DetailModal({
               onReceived?.(x.state);
             }}
           />
+          </AutoSaveContext.Provider>
         )}
       </div>
     </div>
@@ -272,14 +277,6 @@ export function DetailModal({
 }
 
 interface UiState {
-  edits: Partial<Record<EditKey, string>>;
-  setEdits: React.Dispatch<React.SetStateAction<Partial<Record<EditKey, string>>>>;
-  unlock: boolean;
-  setUnlock: (v: boolean) => void;
-  memo: string | null;
-  setMemo: (v: string | null) => void;
-  remark: string | null;
-  setRemark: (v: string | null) => void;
   roomPick: number | null;
   setRoomPick: (v: number | null) => void;
   roomOpen: boolean;
@@ -400,7 +397,7 @@ function Body({
             </div>
           </div>
 
-          <PersonalBlock d={d} s={s} busy={busy} run={run} reload={reload} onError={onError} />
+          <PersonalBlock d={d} reload={reload} onError={onError} after={reloadSoon} />
 
           {/* 신분 확인 · 유입 채널 */}
           <div className="border-ms-gray-200" style={{ flexShrink: 0, padding: '12px 20px', display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 16, borderBottomWidth: 1, borderBottomStyle: 'solid' }}>
@@ -433,70 +430,51 @@ function Body({
                 )}
               </div>
               {/* [스캔할 기기](SPEC-004 §6.17 · W:308-342) — 여권만 스캔(D7-17) · 이미 앱 스캔된 신분은 그대로 보임 */}
-              {!isClosedMain(d.state.main) && (id.kind === 'foreign' || id.method === 'app_scan' || id.method === 'app_manual') && <ScanSteps d={d} onError={onError} />}
+              {!isClosedMain(d.state.main) && (id.kind === 'foreign' || id.method === 'app_scan' || id.method === 'app_manual') && <ScanSteps
+                  d={d}
+                  onError={onError}
+                  onChanged={(t) => {
+                    onChanged(t);
+                    reloadSoon();
+                  }}
+                />}
             </div>
             <div className="border-ms-gray-200" style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0, paddingLeft: 16, borderLeftWidth: 1, borderLeftStyle: 'solid' }}>
-              <span className="text-typo-heading-sm-600 text-ms-gray-800">유입 채널</span>
-              <span className="text-typo-body-400 text-ms-gray-800">
-                {d.reservation.funnel ? [d.reservation.funnel.name, d.reservation.funnel.detail].filter(Boolean).join(' · ') || '-' : '-'}
-              </span>
+
+              <FunnelField d={d} onError={onError} after={reloadSoon} />
             </div>
           </div>
 
-          {/* 예약 메모 */}
-          <div style={{ flex: 1, minHeight: 150, padding: '12px 20px 16px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-              <span className="text-typo-heading-sm-600 text-ms-gray-800">예약 메모</span>
-              {d.can.editMemo && (
-                <Button
-                  variant="outlined"
-                  color="blue"
-                  size="sm"
-                  disabled={s.memo === null || s.memo === (d.reservation.memo ?? '') || busy !== null}
-                  onClick={() => void run('memo', () => api.saveReservationMemo(d.reservationId, s.memo ?? ''), '저장했어요', () => s.setMemo(null))}
-                >
-                  {busy === 'memo' ? '저장 중…' : '저장'}
-                </Button>
-              )}
-            </div>
-            <textarea
-              value={s.memo ?? d.reservation.memo ?? ''}
-              onChange={(e) => s.setMemo(e.target.value)}
-              readOnly={!d.can.editMemo}
-              placeholder="날짜/지점/희망 시술/통역/특이사항"
-              className={(d.can.editMemo ? 'bg-ms-white' : 'bg-ms-gray-100') + ' border-ms-gray-300 text-typo-heading-sm-400 text-ms-gray-800'}
-              style={{ flex: 1, minHeight: 90, padding: '10px 12px', borderWidth: 1, borderStyle: 'solid', borderRadius: 6, resize: 'none', overflow: 'auto', fontFamily: 'inherit', boxSizing: 'border-box', width: '100%' }}
-            />
-          </div>
+          {/* 예약 메모 — 자동 저장(E2E batch 3 #5) */}
+          <AutoText
+            title="예약 메모"
+            value={d.reservation.memo ?? ''}
+            editable={d.can.editMemo}
+            save={(v) => api.saveReservationMemo(d.reservationId, v)}
+            onError={onError}
+            after={reloadSoon}
+            placeholder="날짜/지점/희망 시술/통역/특이사항"
+            box={{ flex: 1, minHeight: 150, padding: '12px 20px 16px' }}
+            area={{ flex: 1, minHeight: 90 }}
+          />
         </div>
 
         {/* ── 오른쪽 */}
         <div className="border-ms-gray-200" style={{ flex: '1 1 0', minWidth: 0, display: 'flex', flexDirection: 'column', borderLeftWidth: 1, borderLeftStyle: 'solid', overflowY: 'auto' }}>
           <Health d={d} />
-          <div className="border-ms-gray-200" style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 6, borderBottomWidth: 1, borderBottomStyle: 'solid', flexShrink: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-              <span className="text-typo-heading-sm-600 text-ms-gray-800">주의사항</span>
-              {d.can.editRemark && (
-                <Button
-                  variant="outlined"
-                  color="blue"
-                  size="sm"
-                  disabled={s.remark === null || s.remark === (c.remark ?? '') || busy !== null}
-                  onClick={() => void run('remark', () => api.saveRemark(c.customerId, s.remark ?? ''), '저장했어요', () => s.setRemark(null))}
-                >
-                  {busy === 'remark' ? '저장 중…' : '저장'}
-                </Button>
-              )}
-            </div>
-            <textarea
-              value={s.remark ?? c.remark ?? ''}
-              onChange={(e) => s.setRemark(e.target.value)}
-              readOnly={!d.can.editRemark}
-              placeholder="고객 공통 메모 (모든 방문에 표시)"
-              className="bg-ms-white border-ms-gray-300 text-typo-heading-sm-400 text-ms-gray-800"
-              style={{ height: 110, padding: '10px 12px', borderWidth: 1, borderStyle: 'solid', borderRadius: 6, resize: 'none', overflow: 'auto', fontFamily: 'inherit', boxSizing: 'border-box', width: '100%' }}
-            />
-          </div>
+          {/* 주의사항 — 자동 저장(E2E batch 3 #3) */}
+          <AutoText
+            title="주의사항"
+            value={c.remark ?? ''}
+            editable={d.can.editRemark}
+            save={(v) => api.saveRemark(c.customerId, v)}
+            onError={onError}
+            after={reloadSoon}
+            placeholder="고객 공통 메모 (모든 방문에 표시)"
+            box={{ padding: '16px 20px', flexShrink: 0 }}
+            rule
+            area={{ height: 110 }}
+          />
           <div style={{ flex: 1, padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 10 }}>
             {pre ? <Visits visits={d.previousVisits} closed={s.closedVisits} onClosed={s.setClosedVisits} /> : <FlowBlock d={d} s={s} busy={busy} run={run} onClose={onClose} />}
           </div>
@@ -632,30 +610,65 @@ function checkedText(iso: string): string {
   return m + '/' + dd + ' ' + hm(t);
 }
 
-// ── 고객 기본 정보(§5.13 · §6.6)
-function PersonalBlock({
-  d,
-  s,
-  busy,
-  run,
-  reload,
+// ── 글자 칸 자동 저장(예약 메모 · 주의사항 — E2E batch 3 #3 · #5): 멈춤 1초 · 벗어날 때 · 모달 닫을 때 · 칸 옆 상태
+function AutoText({
+  title,
+  value,
+  editable,
+  save,
   onError,
+  after,
+  placeholder,
+  box,
+  area,
+  rule,
 }: {
-  d: ResvDetail;
-  s: UiState;
-  busy: string | null;
-  run: (key: string, fn: () => Promise<unknown>, toast: string, after?: () => void) => Promise<boolean>;
-  reload: () => void;
+  title: string;
+  value: string;
+  editable: boolean;
+  save: (v: string) => Promise<unknown>;
   onError: (e: unknown) => void;
+  after: () => void;
+  placeholder: string;
+  box: React.CSSProperties;
+  area: React.CSSProperties;
+  rule?: boolean; // 아래 줄
 }) {
+  const a = useAutoSave({ value, save, onError, after });
+  return (
+    <div
+      className={rule ? 'border-ms-gray-200' : undefined}
+      style={{ display: 'flex', flexDirection: 'column', gap: 6, ...box, ...(rule ? { borderBottomWidth: 1, borderBottomStyle: 'solid' } : {}) }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, minHeight: 22 }}>
+        <span className="text-typo-heading-sm-600 text-ms-gray-800">{title}</span>
+        <SaveState status={a.status} onRetry={a.flush} />
+      </div>
+      <textarea
+        value={a.value}
+        onChange={(e) => a.change(e.target.value)}
+        onBlur={a.flush}
+        readOnly={!editable}
+        placeholder={placeholder}
+        className={(editable ? 'bg-ms-white' : 'bg-ms-gray-100') + ' ' + (a.status === 'error' ? 'border-red' : 'border-ms-gray-300') + ' text-typo-heading-sm-400 text-ms-gray-800'}
+        style={{ padding: '10px 12px', borderWidth: 1, borderStyle: 'solid', borderRadius: 6, resize: 'none', overflow: 'auto', fontFamily: 'inherit', boxSizing: 'border-box', width: '100%', ...area }}
+      />
+    </div>
+  );
+}
+
+// ── 고객 기본 정보(§5.13 · §6.6) — 늘 편집 가능 · 칸마다 자동 저장(E2E batch 3 #4 · [수정] · [저장] 없음).
+// 저장 = 그 칸만 PUT personal(back 이 저장 직전 KOS 를 다시 읽고 묶음 전체 + 바꾼 칸 — 지금 함수)
+type FieldDef = { k: EditKey; label: string; span?: number; type?: 'date' | 'gender' | 'nation' | 'sns' };
+
+function PersonalBlock({ d, reload, onError, after }: { d: ResvDetail; reload: () => void; onError: (e: unknown) => void; after: () => void }) {
   const p = d.customer.personal;
   // [QR로 고객 입력 요청] · QR 상자(SPEC-004 §6.17) — 취소 · 부도 예약에는 없음
   const qr = useQuestionnaireRequest({ d, onError });
   const showQr = !isClosedMain(d.state.main);
   const kr = (p?.nationality ?? d.customer.nationality) === 'KR';
-  // 접수 뒤에는 회색 읽기 전용 + [수정] 하나로 풀기(시안 M:2067 · 기본값)
-  const locked = !d.can.editPersonal || (d.flow !== null && !s.unlock);
-  const fields: { k: EditKey; label: string; span?: number; type?: 'date' | 'gender' | 'nation' | 'sns' }[] = [
+  const locked = !d.can.editPersonal;
+  const fields: FieldDef[] = [
     { k: 'name', label: kr ? '이름' : '이름 (여권 영문)' },
     { k: 'phoneticName', label: '한글 발음' },
     { k: 'gender', label: '성별', type: 'gender' },
@@ -671,22 +684,11 @@ function PersonalBlock({
     { k: 'passportGivenNames', label: '여권 영문 이름', span: 2 },
     { k: 'address', label: kr ? '주소' : '주소 (자국)', span: 3 },
   ];
-  const val = (k: EditKey) => s.edits[k] ?? (p ? valueOf(p, k) : '');
-  const filled = fields.filter((f) => val(f.k).trim()).length;
-  const dirty = Object.entries(s.edits).some(([k, v]) => p && v !== valueOf(p, k as EditKey));
-
-  const save = () => {
-    if (!p) return;
-    const changed = Object.fromEntries(Object.entries(s.edits).filter(([k, v]) => v !== valueOf(p, k as EditKey))) as Partial<Record<EditKey, string>>;
-    void run('personal', () => api.savePersonal(d.customer.customerId, personalPatch(p, changed)), '저장했어요', () => {
-      s.setEdits({});
-      s.setUnlock(false);
-    });
-  };
+  const filled = p ? fields.filter((f) => valueOf(p, f.k).trim()).length : 0;
 
   return (
     <div className="border-ms-gray-200" style={{ flexShrink: 0, padding: '12px 20px', display: 'flex', flexDirection: 'column', gap: 8, borderBottomWidth: 1, borderBottomStyle: 'solid' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, minHeight: 32 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span className="text-typo-heading-sm-600 text-ms-gray-800">고객 기본 정보</span>
           {p && (
@@ -695,19 +697,7 @@ function PersonalBlock({
             </span>
           )}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          {showQr && qr.toggle}
-          {p && d.can.editPersonal && d.flow !== null && !s.unlock && (
-            <Button variant="outlined" color="gray" size="sm" onClick={() => s.setUnlock(true)}>
-              수정
-            </Button>
-          )}
-          {p && !locked && (
-            <Button variant="outlined" color="blue" size="sm" disabled={!dirty || busy !== null} onClick={save}>
-              {busy === 'personal' ? '저장 중…' : '저장'}
-            </Button>
-          )}
-        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>{showQr && qr.toggle}</div>
       </div>
       {showQr && qr.box}
       {!p ? (
@@ -721,48 +711,121 @@ function PersonalBlock({
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: '6px 12px' }}>
-          {fields.map((f) => {
-            const v = val(f.k);
-            const cls = (locked ? 'bg-ms-gray-100 border-ms-gray-200' : v.trim() ? 'bg-ms-white border-ms-gray-300' : 'bg-yellow-100 border-yellow-500') + ' text-typo-heading-sm-400 text-ms-gray-800';
-            const style: React.CSSProperties = { height: 34, padding: '0 10px', borderWidth: 1, borderStyle: 'solid', borderRadius: 6, boxSizing: 'border-box', width: '100%', minWidth: 0, fontFamily: 'inherit' };
-            const set = (x: string) => s.setEdits((e) => ({ ...e, [f.k]: x }));
-            // DS 컨트롤(E2E #2) — 칸 색(읽기 전용 회색 · 빈 칸 노랑)은 입력 칸과 같게
-            const tone = locked ? 'bg-ms-gray-100 border-ms-gray-200' : v.trim() ? 'bg-ms-white border-ms-gray-300' : 'bg-yellow-100 border-yellow-500';
-            return (
-              <div key={f.k} style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, gridColumn: f.span ? `span ${f.span}` : undefined }}>
-                <span className="text-typo-body-400 text-ms-gray-500">{f.label}</span>
-                {f.type === 'gender' ? (
-                  <DsSelect value={v} disabled={locked} onChange={set} options={GENDER_OPTS} none="미입력" className={tone} />
-                ) : f.type === 'nation' ? (
-                  <DsSelect
-                    value={v}
-                    disabled={locked}
-                    onChange={set}
-                    options={v && !NATION_OPTIONS.some((n) => n.code === v) ? [{ value: v, label: v }, ...NATION_OPTS] : NATION_OPTS}
-                    none="미입력"
-                    search
-                    className={tone}
-                  />
-                ) : f.type === 'sns' ? (
-                  <DsSelect
-                    value={v}
-                    disabled={locked}
-                    onChange={set}
-                    options={v && !snsOptions().some((o) => o.value === v) ? [{ value: v, label: v }, ...snsOptions()] : snsOptions()}
-                    none="미입력"
-                    className={tone}
-                  />
-                ) : f.type === 'date' ? (
-                  <DsDate birth value={v} disabled={locked} onChange={set} placeholder="미입력" tone={tone} />
-                ) : (
-                  <input value={v} readOnly={locked} onChange={(e) => set(e.target.value)} placeholder="미입력" className={cls} style={style} />
-                )}
-              </div>
-            );
-          })}
+          {fields.map((f) => (
+            <PersonalField key={f.k} f={f} p={p} customerId={d.customer.customerId} locked={locked} onError={onError} after={after} />
+          ))}
         </div>
       )}
     </div>
+  );
+}
+
+function PersonalField({
+  f,
+  p,
+  customerId,
+  locked,
+  onError,
+  after,
+}: {
+  f: FieldDef;
+  p: Personal;
+  customerId: number;
+  locked: boolean;
+  onError: (e: unknown) => void;
+  after: () => void;
+}) {
+  // 그 칸만 보낸다(묶음 칸 — 휴대폰 · SNS · 주소 — 은 personalPatch 가 지금 값과 합침)
+  const a = useAutoSave({ value: valueOf(p, f.k), save: (v) => api.savePersonal(customerId, personalPatch(p, { [f.k]: v })), onError, after });
+  const v = a.value;
+  const tone = (locked ? 'bg-ms-gray-100 border-ms-gray-200' : a.status === 'error' ? 'bg-ms-white border-red' : v.trim() ? 'bg-ms-white border-ms-gray-300' : 'bg-yellow-100 border-yellow-500');
+  const style: React.CSSProperties = { height: 34, padding: '0 10px', borderWidth: 1, borderStyle: 'solid', borderRadius: 6, boxSizing: 'border-box', width: '100%', minWidth: 0, fontFamily: 'inherit' };
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, gridColumn: f.span ? `span ${f.span}` : undefined }}>
+      <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, minWidth: 0 }}>
+        <span className="text-typo-body-400 text-ms-gray-500" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {f.label}
+        </span>
+        <SaveState status={a.status} onRetry={a.flush} />
+      </span>
+      {f.type === 'gender' ? (
+        <DsSelect value={v} disabled={locked} onChange={a.pick} options={GENDER_OPTS} none="미입력" className={tone} />
+      ) : f.type === 'nation' ? (
+        <DsSelect
+          value={v}
+          disabled={locked}
+          onChange={a.pick}
+          options={v && !NATION_OPTIONS.some((n) => n.code === v) ? [{ value: v, label: v }, ...NATION_OPTS] : NATION_OPTS}
+          none="미입력"
+          search
+          className={tone}
+        />
+      ) : f.type === 'sns' ? (
+        <DsSelect
+          value={v}
+          disabled={locked}
+          onChange={a.pick}
+          options={v && !snsOptions().some((o) => o.value === v) ? [{ value: v, label: v }, ...snsOptions()] : snsOptions()}
+          none="미입력"
+          className={tone}
+        />
+      ) : f.type === 'date' ? (
+        <DsDate birth value={v} disabled={locked} onChange={a.pick} placeholder="미입력" tone={tone} />
+      ) : (
+        <input value={v} readOnly={locked} onChange={(e) => a.change(e.target.value)} onBlur={a.flush} placeholder="미입력" className={tone + ' text-typo-heading-sm-400 text-ms-gray-800'} style={style} />
+      )}
+    </div>
+  );
+}
+
+// ── 유입 채널(E2E batch 3 #2) — KOS 고객 칸이 원천 · 드롭다운 = 예약 등록과 같은 코드 · 고르면 바로 저장 · 상세 글은 자동 저장
+const FUNNEL_OUT = '__kos'; // KOS 값이 코드 목록에 없을 때(이름만) — 고르기 전까지 그대로 보인다
+
+function FunnelField({ d, onError, after }: { d: ResvDetail; onError: (e: unknown) => void; after: () => void }) {
+  const cid = d.customer.customerId;
+  const f = d.customer.funnel ?? null;
+  const codes = d.funnelCodes ?? [];
+  const outside = !!f && f.funnelId === null && !!f.name;
+  const editable = d.can.editPersonal && d.funnelCodes !== undefined;
+  const pick = useAutoSave({ value: f?.funnelId != null ? String(f.funnelId) : outside ? FUNNEL_OUT : '', save: (v) => api.saveFunnel(cid, v ? Number(v) : null), onError, after });
+  const detail = useAutoSave({ value: f?.detail ?? '', save: (v) => api.saveFunnel(cid, f?.funnelId ?? null, v), onError, after });
+  const options = [...(outside ? [{ value: FUNNEL_OUT, label: f!.name + ' (목록 밖)', disabled: true }] : []), ...codes.map((x) => ({ value: String(x.funnelId), label: x.name }))];
+  // 옛 back(코드 목록 없음) — 예약 쪽 값을 글로만
+  if (d.funnelCodes === undefined) {
+    const r = d.reservation.funnel;
+    return (
+      <>
+        <span className="text-typo-heading-sm-600 text-ms-gray-800">유입 채널</span>
+        <span className="text-typo-body-400 text-ms-gray-800">{r ? [r.name, r.detail].filter(Boolean).join(' · ') || '-' : '-'}</span>
+      </>
+    );
+  }
+  const status = pick.status !== 'idle' ? pick : detail;
+  return (
+    <>
+      <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <span className="text-typo-heading-sm-600 text-ms-gray-800">유입 채널</span>
+        <SaveState status={status.status} onRetry={status.flush} />
+      </span>
+      <DsSelect
+        value={pick.value}
+        disabled={!editable}
+        onChange={(v) => v !== FUNNEL_OUT && pick.pick(v)}
+        options={options}
+        none="미입력"
+        ariaLabel="유입 채널"
+        className={pick.value ? 'border-ms-gray-300' : 'bg-yellow-100 border-yellow-500'}
+      />
+      <input
+        value={detail.value}
+        onChange={(e) => detail.change(e.target.value)}
+        onBlur={detail.flush}
+        readOnly={!editable || outside || !pick.value}
+        placeholder={pick.value ? '상세(선택)' : '채널을 먼저 고르세요'}
+        className={(editable && pick.value && !outside ? 'bg-ms-white' : 'bg-ms-gray-100') + ' border-ms-gray-300 text-typo-heading-sm-400 text-ms-gray-800'}
+        style={{ height: 34, padding: '0 10px', borderWidth: 1, borderStyle: 'solid', borderRadius: 6, boxSizing: 'border-box', width: '100%', minWidth: 0, fontFamily: 'inherit' }}
+      />
+    </>
   );
 }
 

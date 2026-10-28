@@ -47,7 +47,7 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: { method?: 'GET' | 'POST' | 'PUT'; body?: unknown }): Promise<T> {
+async function request<T>(path: string, init?: { method?: 'GET' | 'POST' | 'PUT' | 'DELETE'; body?: unknown }): Promise<T> {
   if (CONFIG_ERROR) throw new ApiError(0, 'config', CONFIG_ERROR);
   const headers: Record<string, string> = {};
   const token = readSession()?.token;
@@ -134,6 +134,11 @@ export const callCounselor = (id: number, staffId: number) => post<Ok>(`/api/res
 export const discharge = (id: number) => post<Ok>(`/api/reservations/${id}/discharge`);
 export const savePersonal = (customerId: number, personal: Partial<Personal>) => put<Ok>(`/api/customers/${customerId}/personal`, { personal });
 export const saveRemark = (customerId: number, memo: string) => put<Ok>(`/api/customers/${customerId}/remark`, { memo });
+// E2E batch 3 #1 — 여권 사진 삭제: ccc 사진 · 신분 확인(→ 미확인) · KOS 이미지. kos = deleted | not_found | skipped(KOS 로 안 올라간 사진)
+export const deleteIdPhoto = (photoId: number) => request<{ ok: true; kos: 'deleted' | 'not_found' | 'skipped' }>(`/api/id-photos/${photoId}`, { method: 'DELETE' });
+// E2E batch 3 #2 — KOS 고객 유입 채널. funnelId = 코드 목록 id(null = 비움) · funnelDetail 은 보낼 때만 고침
+export const saveFunnel = (customerId: number, funnelId: number | null, funnelDetail?: string) =>
+  put<Ok>(`/api/customers/${customerId}/funnel`, funnelDetail === undefined ? { funnelId } : { funnelId, funnelDetail });
 export const setIdentity = (customerId: number, status: 'confirmed' | 'unconfirmed') => put<Ok>(`/api/customers/${customerId}/identity`, { status });
 // §5.15 공지 저장 — back 이 그 날 공지를 다시 읽어 고침 · 새로 · 지우기(빈 내용). noticeId = 화면이 고친 ccc 행 id(기록용)
 export const saveNotice = (date: string, noticeId: number | null, content: string) =>
@@ -149,8 +154,6 @@ export const displayTargets = () =>
 export const createDisplay = (reservationId: number, kind: DisplayKind, deviceId?: number) =>
   post<DisplayCreated>('/api/display-requests', deviceId === undefined ? { reservationId, kind } : { reservationId, kind, deviceId });
 export const closeDisplay = (id: number, status: 'done' | 'canceled') => post<Ok>(`/api/display-requests/${id}/close`, { status });
-// QR 내용 = 앱 스킴(브라우저 주소 아님 · §5-3)
-export const displayQrText = (qrToken: string) => 'ccc://display?t=' + encodeURIComponent(qrToken);
 
 // §6.17 신분증 사진 — Bearer 헤더로 받아 blob(쿠키 · 쿼리 토큰 · <img src> 경로 없음). 부른 쪽이 URL.revokeObjectURL 로 지운다
 // 법적 검토 필요: 신분증 이미지 · 주민번호 처리 — 화면 메모리(blob URL)에만 두고 캐시하지 않는다

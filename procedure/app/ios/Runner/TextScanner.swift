@@ -4,7 +4,6 @@ import UIKit
 import Vision
 
 // 카메라 · 글자 인식(SPEC-004 §5-3 QR · §6.16 여권 스캔) · 문진 QR 그리기 · 화면 꺼짐 막기(SPEC-006 §8.2) — 채널 "procedure/scan". 외부 서비스 0 · 기기 안에서만(D7-49).
-//   scanQr → QR 글자(취소 = nil)
 //   scanPassport({windows, windowSec, debug}) → 여권 연속 스캔(E2E batch 1 #6 · batch 2 #4): AVCaptureSession 영상 프레임에서 가이드 틀의
 //     MRZ 자리만 잘라 Vision 으로 계속 읽고 → 줄마다 Dart(checkMrz — mrz.dart 보정 · 검사 숫자 · 연속 두 번 확정)에 물어
 //     confirmed 면 그 프레임을 자동 촬영 → {photo: JPEG(틀 영역 · 품질 0.8), lines}
@@ -48,12 +47,6 @@ final class TextScanner: NSObject {
 
   private func handle(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {
     switch call.method {
-    case "scanQr":
-      guard AVCaptureDevice.default(for: .video) != nil else { return noCamera(result) }
-      let vc = QrViewController()
-      vc.done = { text in result(text) }
-      vc.modalPresentationStyle = .fullScreen
-      top?.present(vc, animated: true)
     case "scanPassport":
       guard let dev = PassportScanController.camera() else { return noCamera(result) }
       let a = call.arguments as? [String: Any]
@@ -481,64 +474,5 @@ final class PassportScanController: UIViewController, AVCaptureVideoDataOutputSa
     img = img.transformed(by: CGAffineTransform(translationX: -img.extent.minX, y: -img.extent.minY))
     guard let space = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
     return ci.jpegRepresentation(of: img, colorSpace: space, options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: 0.8])
-  }
-}
-
-// QR 읽기(§6.10 [QR 읽기] · §5-3) — 처음 읽힌 QR 글자를 돌려준다 · [닫기] = nil
-final class QrViewController: UIViewController, AVCaptureMetadataOutputObjectsDelegate {
-  var done: ((String?) -> Void)?
-  private let session = AVCaptureSession()
-  private var sent = false
-
-  override func viewDidLoad() {
-    super.viewDidLoad()
-    view.backgroundColor = .black
-    if let dev = AVCaptureDevice.default(for: .video), let input = try? AVCaptureDeviceInput(device: dev), session.canAddInput(input) {
-      session.addInput(input)
-      let out = AVCaptureMetadataOutput()
-      if session.canAddOutput(out) {
-        session.addOutput(out)
-        out.setMetadataObjectsDelegate(self, queue: .main)
-        out.metadataObjectTypes = [.qr]
-      }
-      let layer = AVCaptureVideoPreviewLayer(session: session)
-      layer.videoGravity = .resizeAspectFill
-      layer.frame = view.bounds
-      view.layer.addSublayer(layer)
-    }
-    let label = UILabel()
-    label.text = "데스크 화면의 QR 을 비춰 주세요"
-    label.textColor = .white
-    label.font = .systemFont(ofSize: 17, weight: .semibold)
-    label.translatesAutoresizingMaskIntoConstraints = false
-    view.addSubview(label)
-    let close = UIButton(type: .system)
-    close.setTitle("닫기", for: .normal)
-    close.setTitleColor(.white, for: .normal)
-    close.titleLabel?.font = .systemFont(ofSize: 17, weight: .semibold)
-    close.addTarget(self, action: #selector(cancel), for: .touchUpInside)
-    close.translatesAutoresizingMaskIntoConstraints = false
-    view.addSubview(close)
-    NSLayoutConstraint.activate([
-      label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-      label.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -48),
-      close.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
-      close.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
-    ])
-    DispatchQueue.global(qos: .userInitiated).async { [session] in session.startRunning() }
-  }
-
-  @objc private func cancel() { finish(nil) }
-
-  func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput objects: [AVMetadataObject], from connection: AVCaptureConnection) {
-    guard let s = (objects.first as? AVMetadataMachineReadableCodeObject)?.stringValue else { return }
-    finish(s)
-  }
-
-  private func finish(_ text: String?) {
-    if sent { return }
-    sent = true
-    session.stopRunning()
-    dismiss(animated: true) { [done] in done?(text) }
   }
 }

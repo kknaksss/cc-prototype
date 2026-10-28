@@ -9,7 +9,6 @@ import '../model/account.dart';
 import '../model/notification.dart';
 import '../push/push.dart' show NotifStatus;
 import '../theme/tokens.dart';
-import '../widgets/header.dart';
 import '../widgets/ui.dart';
 import 'board_screen.dart' show isTablet;
 import 'shell.dart';
@@ -87,7 +86,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final tablet = isTablet(context);
     final settings = _settings;
     return TabScaffold(
-      head: TabHead(tablet: tablet, title: '설정'),
+      tab: AppTab.settings,
       body: ListView(
         padding: EdgeInsets.fromLTRB(tablet ? 24 : 16, 16, tablet ? 24 : 16, 32),
         children: [

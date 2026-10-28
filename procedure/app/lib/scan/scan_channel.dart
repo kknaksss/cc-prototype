@@ -24,9 +24,6 @@ class ScanChannel {
     }
   }
 
-  // QR 글자(닫으면 null)
-  Future<String?> scanQr() => _call<String>('scanQr');
-
   // 문진 QR 화면(SPEC-006 §8.2) — qrUrl → QR PNG(기기 안 CoreImage) · 못 그리면 null
   Future<Uint8List?> qrImage(String text, {double size = 600}) async {
     try {

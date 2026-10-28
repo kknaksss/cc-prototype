@@ -29,6 +29,9 @@ MEMO = "ccc 여권 스캔"
 PATH_CODES = "meta/codes/v1/queries/get-codes"
 PATH_UPLOAD_URL = "image/open/v1/commands/generate-uploading-url"
 PATH_REGISTER = "image/open/v1/commands/register-visitor-images"
+PATH_IMAGES = "image/visitor-image/v1/queries/get-visitor-images"  # 내부 — KOS 일정 사진 탭과 같은 조회
+# 내부 — KOS 웹 사진 탭 [삭제]와 같은 길({ids} · JS image-manage-client)
+PATH_DELETE = "image/visitor-image/v1/commands/delete-visitor-images"
 MAX_BYTES = 5 * 1024 * 1024
 
 
@@ -135,6 +138,51 @@ class PhotoService:
         with self.repo.tx() as tx:
             tx.add_event(self.clock.now(), actor.login_id, "id_photo_kos_retry", None, {"photoId": photo_id, "kos": status})
         return status
+
+    async def delete(self, actor: Account, photo_id: int) -> str:
+        """[삭제](E2E batch 3 #1) — 법적 검토 필요: 신분증 이미지 · 주민번호 처리 — 삭제 = ccc 파일 · 행 + KOS 이미지.
+
+        ① KOS: 내부 get-visitor-images{visitorId, deleted:false} 에서 같은 fileName 의 이미지 id →
+           내부 delete-visitor-images{ids}
+           (KOS 웹 [삭제]와 같은 길). 못 찾으면 not_found 로 두고 계속(올리기 실패 · 이미 지움). KOS 오류면 409 · 502 · ccc 그대로
+        ② ccc: 파일 · id_photo 행 지움 · 신분 확인 행의 photo_id 비움 ·
+           마지막 신분 확인이 이 사진으로 한 「확인 완료」면 「미확인」 1행
+        ③ event_log(id_photo_delete) · 고객 값(여권번호 등)은 그대로.  돌려줌 = KOS 결과 deleted | not_found | skipped
+        """
+        row = self._row(photo_id)
+        with self.repo.tx() as tx:
+            cust = tx.customer(row["customer_id"])
+        kos = "skipped"
+        if cust is not None and row["kos_status"] != "skipped":
+            try:
+                client = self._client()
+                found = await client.internal(PATH_IMAGES, {"visitorId": cust.kos_id, "deleted": False})
+                ids = [x["id"] for x in found.get("data") or []
+                       if isinstance(x, dict) and x.get("fileName") == row["file_name"] and x.get("id")]
+                if ids:
+                    await client.internal(PATH_DELETE, {"ids": ids})
+                    kos = "deleted"
+                else:
+                    kos = "not_found"
+            except Exception as e:
+                with self.repo.tx() as tx:
+                    tx.add_event(self.clock.now(), actor.login_id, "kos_rejected", None,
+                                 {"customerId": row["customer_id"], "op": "delete-visitor-images", "photoId": photo_id,
+                                  "httpStatus": getattr(e, "status", None), "kosError": kos_errors.describe(e)})
+                log.warning("KOS 이미지 지우기 실패: %s", kos_errors.describe(e))
+                raise kos_errors.to_domain(e) from None
+        folder = self.folder
+        if folder is not None:
+            (folder / row["file_name"]).unlink(missing_ok=True)
+        now = self.clock.now()
+        with self.repo.tx() as tx:
+            last = tx.last_identity_check(row["customer_id"])
+            ev = tx.add_event(now, actor.login_id, "id_photo_delete", None,
+                              {"photoId": photo_id, "customerId": row["customer_id"], "kos": kos})
+            if last is not None and last.status == "confirmed" and last.photo_id == photo_id:
+                tx.add_identity_check(row["customer_id"], "unconfirmed", now, actor.login_id, ev)
+            tx.delete_id_photo(photo_id)
+        return kos
 
     def read_file(self, row: dict[str, Any]) -> bytes:
         folder = self.folder

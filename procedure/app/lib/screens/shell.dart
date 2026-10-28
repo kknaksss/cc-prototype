@@ -213,24 +213,22 @@ class _Rail extends StatelessWidget {
   }
 }
 
-// 탭 루트 화면 꼴 — 폰 = 공통 헤더 + 연결 줄 + 머리 + 본문 / 태블릿 = 연결 줄 + 머리(끝에 종) + 본문
+// 탭 루트 화면 꼴 — 공통 헤더 한 줄 [메뉴명][Céramique][알림] + 연결 줄 + 본문(폰 · 태블릿 같음)
 class TabScaffold extends StatelessWidget {
-  final Widget head;
+  final AppTab tab;
   final Widget body;
-  const TabScaffold({super.key, required this.head, required this.body});
+  const TabScaffold({super.key, required this.tab, required this.body});
 
   @override
   Widget build(BuildContext context) {
     final app = AppScope.of(context);
-    final tablet = isTablet(context);
     return Scaffold(
       backgroundColor: Ms.gray100,
       body: SafeArea(
         bottom: false,
         child: Column(children: [
-          if (!tablet) const AppHeader(),
+          AppHeader(title: tabName[tab]!),
           ConnectionLine(stream: app.stream),
-          head,
           Expanded(child: body),
         ]),
       ),

@@ -444,6 +444,7 @@ export interface ResvDetail {
     personalError: string | null;
     remark: string | null;
     identity: Identity;
+    funnel?: VisitorFunnel | null; // KOS 고객 유입 채널(E2E batch 3 #2)
   };
   reservation: {
     sedationRequired: boolean;
@@ -465,6 +466,19 @@ export interface ResvDetail {
   counselors: { staffId: number; name: string; busyRoom: string | null }[];
   can: ResvCan;
   displays?: DisplayItem[]; // 띄우기 요청(SPEC-004 §5-3 · 오늘 그 예약 것)
+  funnelCodes?: FunnelItem[]; // 유입 채널 드롭다운(예약 등록과 같은 KOS FUNNEL 코드 · E2E batch 3 #2)
+}
+
+// KOS 고객 유입 채널(관리 묶음 visitorFunnel) — funnelId = 코드 목록 id · 목록에 없으면 null(name 만)
+export interface VisitorFunnel {
+  funnelId: number | null;
+  name: string | null;
+  detail: string | null;
+}
+
+export interface FunnelItem {
+  funnelId: number;
+  name: string;
 }
 
 // ─── 띄우기 요청(SPEC-004 §5-3 · §6.17)

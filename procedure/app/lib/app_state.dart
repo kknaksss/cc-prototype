@@ -136,13 +136,11 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  // [QR 읽기] 결과 → claim → 연다(§5-3 QR · D7-44) — 스캔 종류(ccc://)만 · 문진 QR(https)은 고객 폰용(SPEC-006 §8.2)
+  // ccc://display?t= 링크(웹 스캔 QR 을 iOS 기본 카메라로 찍음 → 앱이 열림 · E2E batch 1 #5) → claim → 연다(§5-3 · D7-44).
+  // 앱 안 [QR 읽기]는 없앰(2026-10-28) — claim 은 이 딥링크 길만 부른다
   Future<bool> claimQr(String raw) async {
     final t = qrTokenOf(raw);
-    if (t == null) {
-      toaster.show(isCustomerQr(raw) ? '고객 폰으로 찍는 QR 이에요' : 'Céramique QR 이 아니에요');
-      return false;
-    }
+    if (t == null) return false; // openLink 가 ccc:// 만 넘긴다
     try {
       final r = await api.claimDisplay(t, deviceId: deviceId);
       if (r != null) enqueueDisplays([r]);

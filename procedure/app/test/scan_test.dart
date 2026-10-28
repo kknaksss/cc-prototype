@@ -69,19 +69,14 @@ void main() {
     return (app, reqs);
   }
 
-  testWidgets('3번 읽지 못함 → [손으로 입력] → 빈 확인 화면 → 저장 manual=true', (t) async {
+  testWidgets('연속 스캔 시간 안에 못 읽음 → [손으로 입력] → 빈 확인 화면 → 저장 manual=true', (t) async {
     final (app, reqs) = await pump(t, native: (c) async => switch (c.method) {
-          'takePassportPhoto' => png,
-          'recognizeText' => ['PASSPORT', '아무 글자'],
+          'scanPassport' => {'failed': true},
           _ => null,
         });
     expect(find.text('읽지 못했어요 · 다시 찍어 주세요'), findsOneWidget);
-    expect(find.text('손으로 입력'), findsNothing);
-    await t.tap(find.text('다시 찍기'));
-    await t.pumpAndSettle();
-    await t.tap(find.text('다시 찍기'));
-    await t.pumpAndSettle();
-    expect(find.text('손으로 입력'), findsOneWidget); // 3번째 실패
+    expect(find.textContaining('(3 / 3)'), findsOneWidget);
+    expect(find.text('다시 찍기'), findsOneWidget);
     await t.tap(find.text('손으로 입력'));
     await t.pumpAndSettle();
     expect(find.text('손으로 입력'), findsOneWidget); // 확인 화면 제목
@@ -98,11 +93,28 @@ void main() {
     app.stream.dispose();
   });
 
+  test('네이티브 후보 줄 검사(checkMrz) = mrz.dart 검사 숫자 그대로', () {
+    final (l1, l2) = make();
+    expect(isMrz(['PASSPORT', l1, l2]), isTrue);
+    expect(isMrz([l1, l2.replaceRange(9, 10, l2[9] == '0' ? '1' : '0')]), isFalse); // 여권번호 검사 숫자 틀림
+    expect(isMrz(['아무 글자']), isFalse);
+  });
+
+  testWidgets('scanPassport 인자 · [닫기](null) = 스캔 닫기', (t) async {
+    Object? args;
+    final (app, _) = await pump(t, native: (c) async {
+      if (c.method == 'scanPassport') args = c.arguments;
+      return null;
+    });
+    expect(args, {'windows': 3, 'windowSec': 8.0});
+    expect(find.byType(ScanScreen), findsNothing);
+    app.stream.dispose();
+  });
+
   testWidgets('MRZ 읽힘 → 확인 화면(다른 칸 강조) → 바꾼 칸만 multipart', (t) async {
     final (l1, l2) = make();
     final (app, reqs) = await pump(t, native: (c) async => switch (c.method) {
-          'takePassportPhoto' => png,
-          'recognizeText' => ['PASSPORT', l1, l2],
+          'scanPassport' => {'photo': png, 'lines': ['PASSPORT', l1, l2]},
           _ => null,
         });
     expect(find.text('읽은 값을 확인하세요'), findsOneWidget);

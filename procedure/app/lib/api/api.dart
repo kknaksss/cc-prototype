@@ -97,9 +97,10 @@ class Api {
   Future<void> undoFinish(int procedureId) => _post('/api/procedures/$procedureId/undo-finish');
   Future<void> goHome(int visitId) => _post('/api/visits/$visitId/home');
 
-  // §5-1.1 푸시 기기 토큰(16진) · 이름 · 배치 → deviceId(§5-3 · 0.4.0 — 옛 back 은 없음 = null)
-  Future<int?> registerDevice(String deviceToken, {String? name, String? kind}) async {
-    final data = await _post('/api/devices', {'token': deviceToken, 'name': ?name, 'kind': ?kind});
+  // §5-1.1 푸시 기기 토큰(16진) · 이름 · 배치 · 설치 단위 id → deviceId(§5-3 · 0.4.0 — 옛 back 은 없음 = null)
+  // installId(E2E batch 1 #1) — 같은 설치의 옛 토큰 행을 back 이 새 토큰으로 바꿔 끼운다(행 하나)
+  Future<int?> registerDevice(String deviceToken, {String? name, String? kind, String? installId}) async {
+    final data = await _post('/api/devices', {'token': deviceToken, 'name': ?name, 'kind': ?kind, 'installId': ?installId});
     final id = data is Map ? data['deviceId'] : null;
     return id is num ? id.toInt() : null;
   }

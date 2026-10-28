@@ -11,7 +11,7 @@ router = APIRouter(prefix="/api/devices", tags=["devices"])
 @router.post("", response_model=DeviceResponse)
 def register(body: DeviceRequest, c: Ctr, actor: Actor) -> DeviceResponse:
     """같은 토큰이 다른 계정에 있으면 지금 계정으로 옮긴다 · 같은 계정이면 이름 · 종류 · 시각만."""
-    return DeviceResponse(deviceId=c.devices.register(actor, body.token, body.name, body.kind))
+    return DeviceResponse(deviceId=c.devices.register(actor, body.token, body.name, body.kind, body.installId))
 
 
 @router.delete("/{token}", response_model=OkResponse)

@@ -193,6 +193,7 @@ MIGRATIONS = (("procedure", "room_kos_id", "TEXT"), ("visit", "open_task_seqs", 
               ("customer", "gender", "TEXT"),
               # 앱 다음 판(SPEC-004 §7.4)
               ("device", "name", "TEXT"), ("device", "kind", "TEXT"), ("device", "last_seen_at", "TEXT"),
+              ("device", "install_id", "TEXT"),  # 앱 설치 단위 id(E2E batch 1 #1) — 토큰이 바뀌어도 행 하나
               ("questionnaire_history", "source", "TEXT NOT NULL DEFAULT 'read'"), ("questionnaire_history", "language", "TEXT"),
               ("questionnaire_history", "device_id", "INTEGER"), ("questionnaire_history", "display_request_id", "INTEGER"),
               ("identity_check", "photo_id", "INTEGER"))

@@ -18,15 +18,21 @@ class DeviceService:
         self.repo = repo
         self.clock = clock
 
-    def register(self, actor: Account, token: str, name: str | None, kind: str | None) -> int:
-        """같은 토큰이 다른 계정에 있으면 지금 계정으로 옮긴다 · 처음 오는 기기는 이름 없으면 「iPhone」/「iPad」."""
+    def register(self, actor: Account, token: str, name: str | None, kind: str | None,
+                 install_id: str | None = None) -> int:
+        """같은 토큰이 다른 계정에 있으면 지금 계정으로 옮긴다 · 같은 installId 면 그 행에 새 토큰(행 하나 · E2E batch 1 #1).
+
+        처음 오는 기기는 이름 없으면 「iPhone」/「iPad」.
+        """
         now = self.clock.now()
         token = token.lower()
+        install_id = install_id.strip() if install_id and install_id.strip() else None
         with self.repo.tx() as tx:
-            known = any(d.token == token for d in tx.devices())
+            known = any(d.token == token or (install_id and d.install_id == install_id) for d in tx.devices())
             if not known and not name:
                 name = DEFAULT_NAME.get(kind or "phone", "iPhone")
-            return tx.put_device(actor.id, token, now, name=name.strip() if name else None, kind=kind)
+            return tx.put_device(actor.id, token, now, name=name.strip() if name else None, kind=kind,
+                                 install_id=install_id)
 
     def unregister(self, actor: Account, token: str) -> None:
         """자기 계정의 토큰만 지운다 — 남의 것 · 없는 것은 그냥 ok."""

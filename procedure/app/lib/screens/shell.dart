@@ -41,13 +41,31 @@ class _ShellState extends State<Shell> {
     super.initState();
     _app = AppScope.read(context);
     _app.displays.addListener(_next);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _next());
+    _app.askDeviceName.addListener(_askName);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _next();
+      _askName();
+    });
   }
 
   @override
   void dispose() {
     _app.displays.removeListener(_next);
+    _app.askDeviceName.removeListener(_askName);
     super.dispose();
+  }
+
+  // 첫 로그인 「이 기기 이름」(E2E batch 1 #2) — 웹 [스캔할 기기] · [태블릿에 띄우기] 목록에 보일 이름. 띄우기 화면이 열려 있으면 끝난 뒤
+  bool _asking = false;
+  Future<void> _askName() async {
+    if (_asking || _showing || !mounted || !_app.askDeviceName.value) return;
+    _asking = true;
+    try {
+      final name = await askDeviceNameDialog(context);
+      await _app.answerDeviceName(name);
+    } finally {
+      _asking = false;
+    }
   }
 
   // 띄우기 요청 하나씩 — kind 에 맞는 화면(문진 = §6.15 · 스캔 = §6.16)
@@ -60,7 +78,12 @@ class _ShellState extends State<Shell> {
       await openDisplay(context, r);
     } finally {
       _showing = false;
-      if (mounted) WidgetsBinding.instance.addPostFrameCallback((_) => _next());
+      if (mounted) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _next();
+          _askName();
+        });
+      }
     }
   }
 
@@ -260,4 +283,52 @@ Future<void> openNotifications(BuildContext context) {
       child: child,
     ),
   );
+}
+
+// 「이 기기 이름」 입력 — [저장] = 적은 이름 · [나중에] = null(기본 이름 그대로 · 설정에서 바꿀 수 있음)
+Future<String?> askDeviceNameDialog(BuildContext context) => showDialog<String>(
+      context: context,
+      useRootNavigator: true,
+      barrierDismissible: false,
+      barrierColor: Ms.dim,
+      builder: (_) => const _DeviceNameDialog(),
+    );
+
+class _DeviceNameDialog extends StatefulWidget {
+  const _DeviceNameDialog();
+  @override
+  State<_DeviceNameDialog> createState() => _DeviceNameDialogState();
+}
+
+class _DeviceNameDialogState extends State<_DeviceNameDialog> {
+  final _ctl = TextEditingController();
+
+  @override
+  void dispose() {
+    _ctl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        backgroundColor: Ms.white,
+        title: Text('이 기기 이름', style: Typo.headingMd600),
+        content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('웹에서 여권 스캔 · 문진을 보낼 기기를 고를 때 이 이름이 보여요', style: Typo.body400.copyWith(color: Ms.gray600)),
+          const SizedBox(height: 8),
+          TextField(
+            key: const Key('device-name'),
+            controller: _ctl,
+            autofocus: true,
+            maxLength: 40,
+            decoration: const InputDecoration(hintText: '예: 데스크 태블릿 · 코디 폰'),
+            onSubmitted: (v) => Navigator.of(context).pop(v),
+          ),
+          Text('설정 › 이 기기에서 바꿀 수 있어요', style: Typo.caption500.copyWith(color: Ms.gray500)),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('나중에')),
+          TextButton(onPressed: () => Navigator.of(context).pop(_ctl.text), child: const Text('저장')),
+        ],
+      );
 }

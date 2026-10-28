@@ -4,8 +4,9 @@ import UserNotifications
 
 // 원장 호출 푸시(SPEC-004 §5-1) — APNs 직접(Firebase 0). Dart 와는 채널 "procedure/push" 하나로:
 //   Dart → 앱: ready(눌러서 연 알림이 있으면 그 payload 를 돌려줌) · requestPermission · status · register · deviceName · appVersion
+//             · installId(설치 단위 id · 키체인 — E2E batch 1 #1) · takeLink(앱을 연 ccc:// 링크 · #5)
 //             · setAuth({base, token}) · clearAuth — 알림 [수락] 을 앱 없이 보내려고 키체인에 둔다
-//   앱 → Dart: onToken(16진 기기 토큰) · onTokenError · onTap({kind?, visitId?, callId?, reservationId?, requestId?})
+//   앱 → Dart: onToken(16진 기기 토큰) · onTokenError · onTap({kind?, visitId?, callId?, reservationId?, requestId?}) · onLink(ccc:// 링크)
 // 알림에서 바로 수락(카테고리 CALL · 액션 ACCEPT「수락」 — 앱을 안 열고 · 잠금 해제 요구 없음 · 워치에서도)
 //   → 백그라운드에서 POST /api/calls/{callId}/accept(doctorId 없음 = 의사 자기 자신) → 로컬 알림으로 결과
 @main
@@ -13,6 +14,8 @@ import UserNotifications
   private var channel: FlutterMethodChannel?
   private var dartReady = false
   private var pendingTap: [String: Any]?
+  private var pendingLink: String? // Dart 준비 전에 온 ccc:// 링크(꺼진 상태에서 QR 로 열림)
+  private lazy var links = LinkHandler { [weak self] url in self?.openLink(url) }
   private let scanner = TextScanner() // QR · 여권 사진 · 글자 인식(채널 procedure/scan)
 
   override func application(
@@ -35,6 +38,27 @@ import UserNotifications
     ch.setMethodCallHandler { [weak self] call, result in self?.handle(call, result) }
     channel = ch
     if let r = engineBridge.pluginRegistry.registrar(forPlugin: "ProcedureScan") { scanner.attach(r.messenger()) }
+    // ccc:// 딥링크(웹 QR 을 iOS 기본 카메라로 찍음 — §5-3 · E2E batch 1 #5) — 장면 생명주기로 받는다
+    if let r = engineBridge.pluginRegistry.registrar(forPlugin: "ProcedureLink") { r.addSceneDelegate(links) }
+  }
+
+  // 링크 → Dart(준비 전이면 takeLink 때). ccc://display?t= 만 — 나머지는 Dart 가 거른다
+  func openLink(_ url: URL) {
+    guard url.scheme?.lowercased() == "ccc" else { return }
+    if dartReady, let ch = channel {
+      ch.invokeMethod("onLink", arguments: url.absoluteString)
+    } else {
+      pendingLink = url.absoluteString
+    }
+  }
+
+  // 장면 없이 열린 경우(옛 경로) — 같은 곳으로
+  override func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
+    if url.scheme?.lowercased() == "ccc" {
+      openLink(url)
+      return true
+    }
+    return super.application(app, open: url, options: options)
   }
 
   private func handle(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {
@@ -61,6 +85,13 @@ import UserNotifications
         }
         DispatchQueue.main.async { result(v) }
       }
+    case "takeLink":
+      result(pendingLink)
+      pendingLink = nil
+    case "installId":
+      // 설치 단위 id(E2E batch 1 #1) — 처음 한 번 identifierForVendor 를 키체인에 두고 그 뒤로는 키체인 값.
+      // 토큰이 바뀌어도(sandbox ↔ production · 재설치) 같은 값이라 back 이 옛 기기 행을 바꿔 끼운다
+      result(InstallId.value())
     case "setAuth":
       let a = call.arguments as? [String: Any]
       if let base = a?["base"] as? String, let token = a?["token"] as? String {
@@ -174,6 +205,54 @@ import UserNotifications
     if let v = visitId { c.userInfo = ["visitId": v] }
     let req = UNNotificationRequest(identifier: UUID().uuidString, content: c, trigger: nil)
     UNUserNotificationCenter.current().add(req) { _ in DispatchQueue.main.async { done() } }
+  }
+}
+
+// ccc:// 링크 받기(장면 생명주기 — 꺼진 상태에서 열림 · 켜진 상태에서 열림 둘 다)
+final class LinkHandler: NSObject, FlutterSceneLifeCycleDelegate {
+  private let open: (URL) -> Void
+  init(_ open: @escaping (URL) -> Void) { self.open = open }
+
+  func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions?) -> Bool {
+    guard let url = connectionOptions?.urlContexts.first(where: { $0.url.scheme?.lowercased() == "ccc" })?.url else { return false }
+    open(url)
+    return true
+  }
+
+  func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) -> Bool {
+    guard let url = URLContexts.first(where: { $0.url.scheme?.lowercased() == "ccc" })?.url else { return false }
+    open(url)
+    return true
+  }
+}
+
+// 설치 단위 id — 키체인(이 기기만 · 첫 잠금 해제 뒤). 앱을 지워도 키체인은 남아 재설치 뒤에도 같은 값
+enum InstallId {
+  private static let service = "procedure.install"
+  private static let account = "id"
+
+  static func value() -> String {
+    let q: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: service,
+      kSecAttrAccount as String: account,
+      kSecReturnData as String: true,
+      kSecMatchLimit as String: kSecMatchLimitOne,
+    ]
+    var out: CFTypeRef?
+    if SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data, let s = String(data: d, encoding: .utf8), !s.isEmpty {
+      return s
+    }
+    let id = (UIDevice.current.identifierForVendor ?? UUID()).uuidString.lowercased()
+    let add: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: service,
+      kSecAttrAccount as String: account,
+      kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+      kSecValueData as String: Data(id.utf8),
+    ]
+    SecItemAdd(add as CFDictionary, nil)
+    return id
   }
 }
 

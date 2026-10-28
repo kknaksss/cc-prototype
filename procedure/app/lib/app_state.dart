@@ -61,6 +61,13 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   String? deviceName;
   static const _deviceIdKey = 'push.deviceId';
   static const _deviceNameKey = 'device.name';
+  // 설치 단위 id(E2E batch 1 #1) — 키체인 값(네이티브). 등록 때마다 실어 옛 토큰 행을 바꿔 끼운다
+  String? installId;
+  // 첫 로그인 「이 기기 이름」 시트(E2E batch 1 #2) — 이름을 정했거나 [나중에] 한 기기는 다시 묻지 않는다
+  final ValueNotifier<bool> askDeviceName = ValueNotifier(false);
+  static const _nameAskedKey = 'device.nameAsked';
+  // 로그인 전에 ccc:// 링크로 열림 — 로그인 뒤 claim(E2E batch 1 #5)
+  String? _pendingLink;
 
   // 탭(§6.8) · 상담사 호출로 열 예약(§5-2) · 종 배지 안 읽은 수(§5-4)
   final ValueNotifier<AppTab> tab = ValueNotifier(AppTab.reservations);
@@ -87,6 +94,9 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       final n = data['unread'];
       if (n is num) unread.value = n.toInt();
     } else if (event == 'display' && isMyDisplay(data, deviceId)) {
+      // 프레임으로 바로 연다(pending 읽기가 실패해도 열림 · E2E batch 1 #3) — 이어서 pending 으로 opened 표시 · 놓친 것
+      final r = DisplayReq.fromJson(data);
+      if (r != null) enqueueDisplays([r]);
       refreshDisplays();
     }
   }
@@ -144,10 +154,24 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  // SSE 가 (다시) 붙으면 종 배지를 다시 읽는다(§5-4 「SSE 연결 · 앞으로 올 때」)
+  // ccc://display?t= 링크(웹 QR 을 iOS 기본 카메라로 · §5-3 · E2E batch 1 #5) — 로그인 돼 있으면 claim · 아니면 로그인 뒤
+  Future<void> openLink(String url) async {
+    if (qrTokenOf(url) == null) return;
+    if (session == null || phase != Phase.loggedIn) {
+      _pendingLink = url;
+      toaster.show('로그인하면 고객 입력 화면을 열어요');
+      return;
+    }
+    await claimQr(url);
+  }
+
+  // SSE 가 (다시) 붙으면 종 배지 · 띄우기를 다시 읽는다(§5-4 「SSE 연결 · 앞으로 올 때」 · 끊긴 동안 놓친 display — E2E batch 1 #3)
   bool _wasConnected = false;
   void _onStreamChange() {
-    if (stream.connected && !_wasConnected) refreshUnread();
+    if (stream.connected && !_wasConnected) {
+      refreshUnread();
+      refreshDisplays();
+    }
     _wasConnected = stream.connected;
   }
 
@@ -203,10 +227,14 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       deviceId = p.getInt(_deviceIdKey);
       deviceName = p.getString(_deviceNameKey);
     } catch (_) {}
+    installId = await push.installId();
     push.onToken = _onDeviceToken;
     push.onTap = _onTap;
+    push.onLink = openLink;
     final launched = await push.ready();
     if (launched != null) _onTap(launched);
+    final link = await push.takeLink(); // 꺼진 상태에서 링크로 열림 — 로그인(저장된 계정 · 새 로그인) 뒤 claim
+    if (link != null && qrTokenOf(link) != null) _pendingLink = link;
     final saved = await store.read();
     if (saved != null) {
       try {
@@ -246,8 +274,49 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     stream.reset();
     stream.start();
     notifyListeners();
-    _refreshPush();
+    final link = _pendingLink;
+    _pendingLink = null;
+    // 링크 claim 은 기기 등록 뒤(deviceId 를 싣는다)
+    _refreshPush().then((_) {
+      if (link != null && session != null) claimQr(link);
+    });
     refreshDisplays(); // 로그인 · 시작 때 놓친 띄우기(§5-3 ③)
+    _maybeAskDeviceName();
+  }
+
+  // 첫 로그인 — 아직 이름을 정하지 않은 기기면 「이 기기 이름」 시트(Shell 이 연다 · E2E batch 1 #2)
+  Future<void> _maybeAskDeviceName() async {
+    try {
+      final p = await SharedPreferences.getInstance();
+      if (p.getString(_deviceNameKey) == null && p.getBool(_nameAskedKey) != true) askDeviceName.value = true;
+    } catch (_) {}
+  }
+
+  // 시트 닫힘 — 이름을 정했으면 저장 · 등록(토큰 있으면) · [나중에] 면 기본 이름 그대로. 둘 다 다시 묻지 않는다
+  Future<void> answerDeviceName(String? raw) async {
+    askDeviceName.value = false;
+    try {
+      await (await SharedPreferences.getInstance()).setBool(_nameAskedKey, true);
+    } catch (_) {}
+    final name = raw?.trim() ?? '';
+    if (name.isEmpty || name.length > 40) return;
+    await _saveDeviceName(name);
+    final t = deviceToken;
+    if (t != null && session != null) {
+      try {
+        await api.registerDevice(t, name: name, kind: deviceKind(), installId: installId);
+      } on ApiError {
+        // 다음 등록 때 저장된 이름으로 다시 간다
+      }
+    }
+  }
+
+  Future<void> _saveDeviceName(String name) async {
+    deviceName = name;
+    try {
+      await (await SharedPreferences.getInstance()).setString(_deviceNameKey, name);
+    } catch (_) {}
+    notifyListeners();
   }
 
   // 앱 시작 · 다시 로그인 — 이미 허용이면 토큰을 다시 받아 등록(멱등)
@@ -270,11 +339,25 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     await _registerDevice(token);
   }
 
-  Future<void> _registerDevice(String token) async {
+  // 등록은 한 번에 하나씩(E2E batch 1 #3) — 로그인 때 저장된 옛 토큰 · 새 토큰 등록이 겹치면 늦게 온 옛 응답이
+  // deviceId 를 옛 행으로 되돌려 SSE 가 다른 기기 id 로 붙을 수 있었다
+  Future<void>? _regChain;
+  Future<void> _registerDevice(String token) {
+    final prev = _regChain;
+    final next = prev == null ? _registerDeviceNow(token) : prev.then((_) => _registerDeviceNow(token));
+    _regChain = next.catchError((_) {});
+    return next;
+  }
+
+  Future<void> _registerDeviceNow(String token) async {
     if (session == null) return;
+    if (token != deviceToken && deviceToken != null) token = deviceToken!; // 기다리는 동안 새 토큰이 왔으면 새 것으로
     try {
-      deviceName ??= await push.deviceName();
-      final id = await api.registerDevice(token, name: deviceName, kind: deviceKind());
+      if (deviceName == null) {
+        final d = await push.deviceName(); // 기다리는 동안 사용자가 정한 이름(첫 로그인 시트)을 덮지 않게
+        deviceName ??= d;
+      }
+      final id = await api.registerDevice(token, name: deviceName, kind: deviceKind(), installId: installId);
       if (id != null && id != deviceId) {
         await _setDeviceId(id);
         stream.stop(); // SSE 를 deviceId 를 실어 다시 연다(§7.1)
@@ -295,20 +378,19 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     } catch (_) {}
   }
 
-  // 설정 「이 기기」 이름 고치기(§6.14 · D7-70) — POST /api/devices {token, name}
+  // 설정 「이 기기」 이름 고치기(§6.14 · D7-70) — POST /api/devices {token, name, installId}. 토큰 없으면(알림 꺼짐) 이 기기에만 두고 등록 때 보낸다
   Future<bool> renameDevice(String raw) async {
     final name = raw.trim();
     final t = deviceToken;
-    if (t == null || name.isEmpty || name.length > 40) return false;
-    final ok = await run(() async {
-      await api.registerDevice(t, name: name, kind: deviceKind());
-    }, '기기 이름을 바꿨어요');
+    if (name.isEmpty || name.length > 40) return false;
+    final ok = t == null
+        ? true
+        : await run(() async {
+            await api.registerDevice(t, name: name, kind: deviceKind(), installId: installId);
+          });
     if (ok) {
-      deviceName = name;
-      try {
-        await (await SharedPreferences.getInstance()).setString(_deviceNameKey, name);
-      } catch (_) {}
-      notifyListeners();
+      await _saveDeviceName(name);
+      toaster.show('기기 이름을 바꿨어요');
     }
     return ok;
   }
@@ -329,6 +411,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     unread.value = 0;
     displays.value = const [];
     _openedDisplays.clear();
+    _pendingLink = null;
+    askDeviceName.value = false;
     tab.value = AppTab.reservations;
     session = null;
     await store.clear();

@@ -53,6 +53,7 @@ class Device:
     name: str | None
     kind: str | None  # phone | tablet
     last_seen_at: datetime | None
+    install_id: str | None = None  # 앱 설치 단위 id(identifierForVendor) — 같은 설치의 새 토큰은 이 행을 바꿔 끼운다
 
 
 @dataclass

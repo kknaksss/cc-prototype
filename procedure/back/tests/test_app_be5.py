@@ -304,3 +304,16 @@ def test_scan_photo_kos_schedule_id(env):
     fake.fail_paths.pop("s3-put")
     assert run(c.photos.retry(coord, out["photoId"])) == "ok"
     assert fake.registered[-1]["images"][0]["scheduleId"] == "s1"
+
+
+def test_scan_photo_kos_category_passport(env):
+    """여권 사진 분류 — get-codes{IMAGE_CATEGORY} 에 이름 「여권」 이 있으면 그 객체 그대로 · 없으면(데모) category 키 없음."""
+    c, fake, coord, rid, cid, tab, photos = env
+    scan(c, coord, cid, rid, tab)
+    assert "category" not in fake.registered[-1]["images"][0]
+    assert {"category": "IMAGE_CATEGORY"} in sent(fake, "get-codes")
+    passport = {"id": "ic-9", "category": "IMAGE_CATEGORY", "name": "여권", "order": 2, "closed": False, "default": False}
+    fake.image_categories.append(passport)  # 운영 지점 꼴
+    scan(c, coord, cid, rid, tab)
+    img = fake.registered[-1]["images"][0]
+    assert img["category"] == passport and img["scheduleId"] == "s1" and img["equipment"]["name"] == "태블릿"

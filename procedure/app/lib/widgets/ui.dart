@@ -99,11 +99,18 @@ class MsBadge extends StatelessWidget {
   final String text;
   final BadgeVariant variant;
   final bool dot;
-  const MsBadge(this.text, this.variant, {super.key, this.dot = true});
+  final ChipLook? look; // 2계층 칩 색으로 덮기(§6.9)
+  const MsBadge(this.text, this.variant, {super.key, this.dot = true, this.look});
+
+  // 카드 · 머리 상태 Badge(덮어쓰기면 점 · 아니면 2계층 칩)
+  factory MsBadge.of(BadgeView v, {Key? key}) => MsBadge(v.text, v.variant, key: key, dot: v.dot, look: v.look);
+
+  // 칩 하나(2계층 · 점 없음)
+  factory MsBadge.chip(ChipLook l, {Key? key}) => MsBadge(l.text, BadgeVariant.neutral, key: key, dot: false, look: l);
 
   @override
   Widget build(BuildContext context) {
-    final (bg, fg) = badgeColors(variant);
+    final (bg, fg) = look != null ? (look!.bg, look!.fg) : badgeColors(variant);
     final dotColor = switch (variant) {
       BadgeVariant.neutral => Ms.gray600,
       BadgeVariant.primary => Ms.primary,
@@ -148,20 +155,38 @@ Widget visitTag(bool isNew) => isNew
 // 토스트 — 앱 한 곳(아래 쪽)에 2.6초
 class Toaster extends ChangeNotifier {
   String? text;
+  String? action; // 버튼 글자(예: 되돌리기) — 있으면 5초(웹 UNDO_TOAST_MS)
+  VoidCallback? onAction;
   int _n = 0;
   Timer? _t;
-  void show(String msg) {
+  // 문진 잠금 동안 앱 안 배너(토스트)를 그리지 않는다(§6.15 잠금 · D7-45)
+  bool muted = false;
+
+  void show(String msg, {String? action, VoidCallback? onAction}) {
+    if (muted) return;
     text = msg;
+    this.action = onAction == null ? null : action;
+    this.onAction = onAction;
     _n++;
     final n = _n;
     _t?.cancel();
-    _t = Timer(const Duration(milliseconds: 2600), () {
-      if (n == _n) {
-        text = null;
-        notifyListeners();
-      }
+    _t = Timer(Duration(milliseconds: this.action != null ? 5000 : 2600), () {
+      if (n == _n) hide();
     });
     notifyListeners();
+  }
+
+  void hide() {
+    text = null;
+    action = null;
+    onAction = null;
+    notifyListeners();
+  }
+
+  void tapAction() {
+    final f = onAction;
+    hide();
+    f?.call();
   }
 
   @override
@@ -188,6 +213,7 @@ class ToastLayer extends StatelessWidget {
               right: 16,
               top: MediaQuery.paddingOf(context).top + 68,
               child: IgnorePointer(
+                ignoring: t == null || toaster.action == null,
                 child: AnimatedOpacity(
                   opacity: t == null ? 0 : 1,
                   duration: const Duration(milliseconds: 180),
@@ -204,7 +230,17 @@ class ToastLayer extends StatelessWidget {
                                 borderRadius: BorderRadius.circular(10),
                                 boxShadow: const [BoxShadow(color: Color(0x29000000), blurRadius: 12, offset: Offset(0, 4))],
                               ),
-                              child: Text(t, textAlign: TextAlign.center, style: Typo.body500.copyWith(color: Ms.white)),
+                              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                                Flexible(child: Text(t, textAlign: TextAlign.center, style: Typo.body500.copyWith(color: Ms.white))),
+                                if (toaster.action != null) ...[
+                                  const SizedBox(width: 16),
+                                  GestureDetector(
+                                    behavior: HitTestBehavior.opaque,
+                                    onTap: toaster.tapAction,
+                                    child: Text(toaster.action!, style: Typo.body600.copyWith(color: Ms.primary300)),
+                                  ),
+                                ],
+                              ]),
                             ),
                     ),
                   ),

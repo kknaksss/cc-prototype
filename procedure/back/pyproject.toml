@@ -13,6 +13,7 @@ dependencies = [
     "opencc-python-reimplemented>=0.1.7",
     "pyjwt[crypto]>=2.8",
     "bcrypt>=4.1",
+    "python-multipart>=0.0.9",
 ]
 
 [dependency-groups]

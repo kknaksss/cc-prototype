@@ -160,8 +160,14 @@ def plus_allowed(fulls: list[bool]) -> bool:
     return any(not f for f in fulls)
 
 
+# 끌 수 있는 주 상태 = KOS 이동(내부 update-reservation)이 받은 단계(E2E b5 #1 · 데모 실호출 2026-10-27
+# move-stage 보고) — 예약 · 접수 · 상담 대기 · 상담 중 · 시술 중 · 귀가 대기 · 귀가 완료 · 취소 · 부도 = 200.
+# KOS 가 거절한 단계는 없었다(시술 대기 = 데모에서 만들 수 없어 미확인 · 앞뒤 단계가 받으므로 연다)
+DRAG_MAINS = frozenset({"reserved", "reception", "consultation", "procedure", "home", "canceled", "noshow"})
+
+
 def draggable(main: str) -> bool:
-    return main in ("reserved", "reception")
+    return main in DRAG_MAINS
 
 
 # ------------------------------------------------------------------ §5.9 수납 필요 · 금액

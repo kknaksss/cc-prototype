@@ -3,11 +3,13 @@ import 'package:procedure_app/model/board.dart';
 
 Map<String, dynamic> proc(int id, String state,
         {String kind = 'procedure', int seq = 1, String title = '시술', Map<String, dynamic>? doctor, Map<String, dynamic>? call,
-        String? started, String? completed, bool pickable = false, bool canStart = false, bool canFinish = false}) =>
+        String? started, String? completed, bool pickable = false, bool canStart = false, bool canFinish = false,
+        bool isRoomTask = false, bool canUndoStart = false, bool canUndoFinish = false}) =>
     {
       'id': id, 'kind': kind, 'sequence': seq, 'title': title, 'state': state, 'kosStatus': null,
       'startedAt': started, 'completedAt': completed, 'doctor': doctor, 'call': call,
       'pickable': pickable, 'canStart': canStart, 'canFinish': canFinish,
+      'isRoomTask': isRoomTask, 'canUndoStart': canUndoStart, 'canUndoFinish': canUndoFinish,
     };
 
 Map<String, dynamic> card(int visitId, {String state = 'waiting', String? inAt, String? homeAt, List<Map<String, dynamic>> procs = const [],

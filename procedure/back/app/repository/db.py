@@ -40,23 +40,15 @@ CREATE TABLE IF NOT EXISTS procedure (
 );
 -- ccc 원천
 CREATE TABLE IF NOT EXISTS account (
-    id INTEGER PRIMARY KEY, login_id TEXT NOT NULL UNIQUE, role TEXT NOT NULL,   -- admin | doctor | nurse
-    name TEXT NOT NULL, staff_id INTEGER REFERENCES staff(id),                  -- 의사만(KOS 원장)
+    id INTEGER PRIMARY KEY, login_id TEXT NOT NULL UNIQUE, role TEXT NOT NULL,   -- admin|doctor|nurse|coordinator|counselor
+    name TEXT NOT NULL, staff_id INTEGER REFERENCES staff(id),                  -- 의사(KOS 원장) · 상담사(KOS 상담사)만
     active INTEGER NOT NULL DEFAULT 1, card INTEGER NOT NULL DEFAULT 0,        -- card = PoC 계정(어드민 · 의사 1 · 간호사)
     password_hash TEXT,                                                         -- bcrypt · 없으면 로그인 불가
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS device (                                         -- 원장 호출 푸시 기기(SPEC-004 §5-1.1)
+CREATE TABLE IF NOT EXISTS device (                                         -- 푸시 기기(SPEC-004 §5-1.1) · id = 앱의 deviceId
     id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL REFERENCES account(id), token TEXT NOT NULL UNIQUE,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS push_log (  -- 원장 호출 푸시 내역 · 쌓기만(event_log 와 같은 원칙)
-    id INTEGER PRIMARY KEY, call_id INTEGER NOT NULL, visit_id INTEGER, account_id INTEGER, role TEXT,
-    device_id INTEGER, token_tail TEXT,                                     -- 기기 토큰은 끝 6자리만
-    category TEXT,                                                          -- CALL(의사 · 알림에서 수락) | null
-    status TEXT NOT NULL,                                                   -- sent | failed | skipped_no_key | token_removed
-    apns_status INTEGER, apns_reason TEXT, apns_id TEXT, attempts INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL, sent_at TEXT
 );
 CREATE TABLE IF NOT EXISTS anesthesia (
     id INTEGER PRIMARY KEY, visit_id INTEGER NOT NULL REFERENCES visit(id), started_at TEXT NOT NULL, ended_at TEXT,
@@ -154,10 +146,56 @@ CREATE TABLE IF NOT EXISTS questionnaire_history (   -- 문진 방문별 이력(
 );
 """
 
+# 푸시 내역(SPEC-004 §5-1.2 · §5-2 · §7.4) — 0.4.0 모양. 옛 DB(call_id NOT NULL)는 Database 가 한 번 다시 만든다
+PUSH_LOG = """
+CREATE TABLE IF NOT EXISTS {name} (    -- 푸시 내역 · 쌓기만(event_log 와 같은 원칙)
+    id INTEGER PRIMARY KEY, call_id INTEGER, visit_id INTEGER, account_id INTEGER, role TEXT,
+    device_id INTEGER, token_tail TEXT,                                     -- 기기 토큰은 끝 6자리만
+    category TEXT,                                                          -- CALL(의사 · 알림에서 수락) | null
+    status TEXT NOT NULL,                                                   -- sent | failed | skipped_no_key | token_removed
+    apns_status INTEGER, apns_reason TEXT, apns_id TEXT, attempts INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL, sent_at TEXT,
+    kind TEXT NOT NULL DEFAULT 'doctor_call',                               -- doctor_call | counselor_call | display
+    reservation_id INTEGER, display_request_id INTEGER, notification_id INTEGER
+);
+"""
+
+# 앱 다음 판(SPEC-004 0.4.1 §7.4) — 추가만
+APP_SCHEMA = """
+CREATE TABLE IF NOT EXISTS notification (      -- 발송 1회 × 받는 계정 1(§5-4) — doctor_call | counselor_call 둘만
+    id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL REFERENCES account(id), kind TEXT NOT NULL,
+    call_id INTEGER, visit_id INTEGER, reservation_id INTEGER, title TEXT NOT NULL, body TEXT NOT NULL,
+    created_at TEXT NOT NULL, read_at TEXT
+);
+CREATE INDEX IF NOT EXISTS notification_account ON notification (account_id, created_at);
+CREATE TABLE IF NOT EXISTS notification_setting (
+    account_id INTEGER NOT NULL REFERENCES account(id), kind TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL, PRIMARY KEY (account_id, kind)
+);
+CREATE TABLE IF NOT EXISTS display_request (   -- 띄우기 요청(§5-3) — QR 토큰은 해시만
+    id INTEGER PRIMARY KEY, reservation_id INTEGER NOT NULL, customer_id INTEGER, kind TEXT NOT NULL,
+    device_id INTEGER, qr_token_hash TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL,                      -- pending | opened | done | canceled | expired
+    created_by TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, opened_at TEXT, closed_at TEXT
+);
+-- 법적 검토 필요: 신분증 이미지 · 주민번호 처리 — 파일은 PROC_PHOTO_DIR 볼륨 · 지우는 때 없음(PoC · D7-55)
+CREATE TABLE IF NOT EXISTS id_photo (
+    id INTEGER PRIMARY KEY, customer_id INTEGER NOT NULL, reservation_id INTEGER,
+    doc_type TEXT NOT NULL DEFAULT 'passport', file_name TEXT NOT NULL, bytes INTEGER NOT NULL, sha256 TEXT NOT NULL,
+    kos_status TEXT NOT NULL,                  -- ok | failed | skipped
+    kos_error TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL
+);
+"""
+
 
 MIGRATIONS = (("procedure", "room_kos_id", "TEXT"), ("visit", "open_task_seqs", "TEXT NOT NULL DEFAULT '[]'"),
               ("procedure", "kind", "TEXT NOT NULL DEFAULT 'procedure'"), ("account", "password_hash", "TEXT"),
-              ("customer", "gender", "TEXT"))
+              ("customer", "gender", "TEXT"),
+              # 앱 다음 판(SPEC-004 §7.4)
+              ("device", "name", "TEXT"), ("device", "kind", "TEXT"), ("device", "last_seen_at", "TEXT"),
+              ("questionnaire_history", "source", "TEXT NOT NULL DEFAULT 'read'"), ("questionnaire_history", "language", "TEXT"),
+              ("questionnaire_history", "device_id", "INTEGER"), ("questionnaire_history", "display_request_id", "INTEGER"),
+              ("identity_check", "photo_id", "INTEGER"))
 
 
 class Database:
@@ -167,10 +205,14 @@ class Database:
         with self.connect() as con:
             con.executescript(SCHEMA)
             con.executescript(RESV_SCHEMA)
+            con.executescript(PUSH_LOG.format(name="push_log"))
+            con.executescript(APP_SCHEMA)
             for table, column, kind in MIGRATIONS:  # 이미 있는 DB 파일(compose 볼륨)에 새 열을 더한다
                 cols = {r["name"] for r in con.execute(f"PRAGMA table_info({table})")}
                 if column not in cols:
                     con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
+            _rebuild_push_log(con)
+
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -186,3 +228,23 @@ class Database:
             raise
         finally:
             con.close()
+
+
+def _rebuild_push_log(con: sqlite3.Connection) -> None:
+    """옛 push_log(call_id NOT NULL)를 0.4.0 모양으로 한 번 다시 만든다(SPEC-004 §7.4 r2) — 이미 null 가능이면 건너뜀(멱등).
+
+    SQLite 는 ALTER 로 NOT NULL 을 못 푼다 → 한 트랜잭션 안에서 새 표 · 옛 행 복사(kind = doctor_call) · 옛 표 지움 · 이름 바꿈.
+    """
+    info = {r["name"]: r for r in con.execute("PRAGMA table_info(push_log)")}
+    if not info.get("call_id") or not info["call_id"]["notnull"]:
+        return
+    old = [c for c in ("id", "call_id", "visit_id", "account_id", "role", "device_id", "token_tail", "category", "status",
+                       "apns_status", "apns_reason", "apns_id", "attempts", "created_at", "sent_at") if c in info]
+    cols = ", ".join(old)
+    if not con.in_transaction:  # 다섯 줄을 한 트랜잭션으로(connect() 가 끝에 commit)
+        con.execute("BEGIN")
+    con.execute("DROP TABLE IF EXISTS push_log_new")
+    con.execute(PUSH_LOG.format(name="push_log_new"))  # executescript 는 COMMIT 을 먼저 하므로 execute 로
+    con.execute(f"INSERT INTO push_log_new ({cols}, kind) SELECT {cols}, 'doctor_call' FROM push_log")
+    con.execute("DROP TABLE push_log")
+    con.execute("ALTER TABLE push_log_new RENAME TO push_log")

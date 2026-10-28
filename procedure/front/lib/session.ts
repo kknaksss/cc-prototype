@@ -1,4 +1,4 @@
-// 로그인 상태 — ccc 토큰 + 역할 · 이름을 localStorage 에(SPEC-004 §3.6). 웹은 admin · coordinator 계정(SPEC-005 §3.4)
+// 로그인 상태 — ccc 토큰 + 역할 · 이름을 localStorage 에(SPEC-004 §3.6). 웹도 다섯 역할 모두(SPEC-004 §3.4 · §6.17)
 import type { Role } from './types';
 
 export interface Session {
@@ -9,7 +9,7 @@ export interface Session {
   name: string;
 }
 
-const ROLES: Role[] = ['admin', 'doctor', 'nurse', 'coordinator'];
+const ROLES: Role[] = ['admin', 'doctor', 'nurse', 'coordinator', 'counselor'];
 
 const KEY = 'procedure.session';
 

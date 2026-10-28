@@ -6,6 +6,9 @@ import type {
   CreateReservation,
   CustomerSearch,
   CustomerSearchQuery,
+  DisplayCreated,
+  DisplayKind,
+  DisplayTarget,
   DuplicateCandidate,
   LoginResult,
   Me,
@@ -14,6 +17,7 @@ import type {
   ResvBoard,
   ResvDetail,
   ResvForm,
+  ResvNotice,
 } from './types';
 
 // NEXT_PUBLIC_* 는 Next 가 빌드(또는 dev 시작) 때 번들에 박는다 — 값은 둘 중 하나로 들어온다
@@ -131,3 +135,35 @@ export const discharge = (id: number) => post<Ok>(`/api/reservations/${id}/disch
 export const savePersonal = (customerId: number, personal: Partial<Personal>) => put<Ok>(`/api/customers/${customerId}/personal`, { personal });
 export const saveRemark = (customerId: number, memo: string) => put<Ok>(`/api/customers/${customerId}/remark`, { memo });
 export const setIdentity = (customerId: number, status: 'confirmed' | 'unconfirmed') => put<Ok>(`/api/customers/${customerId}/identity`, { status });
+// §5.15 공지 저장 — back 이 그 날 공지를 다시 읽어 고침 · 새로 · 지우기(빈 내용). noticeId = 화면이 고친 ccc 행 id(기록용)
+export const saveNotice = (date: string, noticeId: number | null, content: string) =>
+  put<{ ok: true; notice: ResvNotice | null }>('/api/reservations/notice', { date, noticeId, content });
+
+// ─── 띄우기 요청(SPEC-004 §5-3) — deviceId 없으면 QR 만 · 같은 예약 · 종류 pending 은 back 이 canceled 로 닫고 새로
+export const displayTargets = () => request<DisplayTarget[]>('/api/devices/targets');
+export const createDisplay = (reservationId: number, kind: DisplayKind, deviceId?: number) =>
+  post<DisplayCreated>('/api/display-requests', deviceId === undefined ? { reservationId, kind } : { reservationId, kind, deviceId });
+export const closeDisplay = (id: number, status: 'done' | 'canceled') => post<Ok>(`/api/display-requests/${id}/close`, { status });
+// QR 내용 = 앱 스킴(브라우저 주소 아님 · §5-3)
+export const displayQrText = (qrToken: string) => 'ccc://display?t=' + encodeURIComponent(qrToken);
+
+// §6.17 신분증 사진 — Bearer 헤더로 받아 blob(쿠키 · 쿼리 토큰 · <img src> 경로 없음). 부른 쪽이 URL.revokeObjectURL 로 지운다
+// 법적 검토 필요: 신분증 이미지 · 주민번호 처리 — 화면 메모리(blob URL)에만 두고 캐시하지 않는다
+export async function idPhotoUrl(photoId: number): Promise<string> {
+  if (CONFIG_ERROR) throw new ApiError(0, 'config', CONFIG_ERROR);
+  const token = readSession()?.token;
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/api/id-photos/${photoId}`, {
+      headers: token ? { Authorization: 'Bearer ' + token } : {},
+      cache: 'no-store',
+    });
+  } catch {
+    throw new ApiError(0, 'network', '서버에 연결할 수 없어요');
+  }
+  if (!res.ok) {
+    const data = (await res.json().catch(() => null)) as { error?: { code?: string; message?: string } } | null;
+    throw new ApiError(res.status, data?.error?.code ?? 'error', data?.error?.message ?? '사진을 불러오지 못했어요');
+  }
+  return URL.createObjectURL(await res.blob());
+}

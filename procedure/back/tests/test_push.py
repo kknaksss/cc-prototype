@@ -144,9 +144,10 @@ def test_content_and_headers(env, key):
     alert = {"title": "원장 호출", "body": "A-룸1 · 시술 2건 · 전체 호출"}
     by_token = {r["token"]: r["payload"] for r in fake.requests}
     # 관리자 = category 없음(앱에서 원장 고름) · 의사 = category CALL(알림 · 워치에서 바로 수락)
-    assert by_token[tok(IDS["admin"])] == {"aps": {"alert": alert, "sound": "default"}, "visitId": v["visit"], "callId": call}
+    assert by_token[tok(IDS["admin"])] == {"aps": {"alert": alert, "sound": "default"}, "kind": "doctor_call",
+                                           "visitId": v["visit"], "callId": call}
     assert by_token[tok(IDS["doctor"])] == {"aps": {"alert": alert, "sound": "default", "category": "CALL"},
-                                            "visitId": v["visit"], "callId": call}
+                                            "kind": "doctor_call", "visitId": v["visit"], "callId": call}
     assert all(p["aps"].get("category") == "CALL" for t, p in by_token.items() if t != tok(IDS["admin"]))
     text = json.dumps(req["payload"], ensure_ascii=False)
     assert "고객1" not in text and "시술1" not in text and "KR" not in text  # 고객 이름 · 시술 이름 · 국적 없음
@@ -217,8 +218,9 @@ def test_devices_api(env):
         return {"Authorization": f"Bearer {token}"}
 
     t = tok("shared-ipad")
-    assert client.post("/api/devices", json={"token": t}, headers=auth("admin")).json() == {"ok": True}
-    assert client.post("/api/devices", json={"token": t.upper()}, headers=auth("doctor")).json() == {"ok": True}
+    first = client.post("/api/devices", json={"token": t}, headers=auth("admin")).json()
+    assert first["ok"] is True and isinstance(first["deviceId"], int)
+    assert client.post("/api/devices", json={"token": t.upper()}, headers=auth("doctor")).json() == first  # 같은 행 · 옮김
     with c.repo.tx() as tx:  # 한 기기 = 마지막 로그인 계정
         assert t in tx.device_tokens([acc[IDS["doctor"]].id]) and t not in tx.device_tokens([acc[IDS["admin"]].id])
     assert client.delete(f"/api/devices/{t}", headers=auth("nurse")).json() == {"ok": True}  # 남의 토큰

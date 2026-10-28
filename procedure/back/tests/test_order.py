@@ -234,13 +234,25 @@ def test_old_schema_db_keeps_rows(tmp_path):
 
 
 # ------------------------------------------------------------------ 경로 수(§7.4)
-def test_route_count_34(client):
-    """back 경로 34 = HTTP 33(router 32 + health) + 통역 WS 1 — 시술 현황 19 에 예약 현황 HTTP 15 더함(SPEC-005 §7.6)."""
+# 앱 다음 판 새 HTTP 15(SPEC-004 0.4.1 §7.3)
+APP_ROUTES = {("GET", "/api/notifications"), ("POST", "/api/notifications/read"), ("GET", "/api/me/notification-settings"),
+              ("PUT", "/api/me/notification-settings"), ("GET", "/api/devices/targets"), ("POST", "/api/display-requests"),
+              ("GET", "/api/display-requests/pending"), ("POST", "/api/display-requests/claim"),
+              ("POST", "/api/display-requests/{request_id}/close"), ("GET", "/api/questionnaires/{reservation_id}"),
+              ("POST", "/api/questionnaires/{reservation_id}"), ("POST", "/api/auth/unlock"),
+              ("POST", "/api/customers/{customer_id}/passport-scan"), ("GET", "/api/id-photos/{photo_id}"),
+              ("POST", "/api/id-photos/{photo_id}/kos-retry")}
+
+def test_route_count_50(client):
+    """back 경로 50 = HTTP 49 + 통역 WS 1 — 앞 판 35(SPEC-005 §7.6 · 시술 현황 19 + 예약 현황 HTTP 16)
+    + 앱 다음 판 새 HTTP 15(SPEC-004 0.4.1 §7.3 — 띄우기 5 · 문진 2 · 스캔 · 사진 3 · 알림 4 · unlock 1)."""
     from app.api import interpret
 
     http = {(m.upper(), p) for p, ops in client.app.openapi()["paths"].items() for m in ops}
     ws = [r.path for r in interpret.router.routes if type(r).__name__ == "APIWebSocketRoute"]
     assert ("PUT", URL) in http and ws == ["/api/interpret"]
     assert {("POST", "/api/procedures/{procedure_id}/undo-start"), ("POST", "/api/procedures/{procedure_id}/undo-finish")} <= http
-    assert len([x for x in http if "/reservations" in x[1] or "/customers" in x[1]]) == 15
-    assert len(http) + len(ws) == 34, sorted(http)
+    assert ("PUT", "/api/reservations/notice") in http
+    assert len([x for x in http - APP_ROUTES if "/reservations" in x[1] or "/customers" in x[1]]) == 16
+    assert len(APP_ROUTES) == 15 and APP_ROUTES <= http
+    assert len(http) + len(ws) == 50, sorted(http)

@@ -1,8 +1,10 @@
-"""원장 호출 푸시(SPEC-004 §5-1.2) — 호출이 생긴 뒤(커밋 뒤) 비동기로 보낸다. 조작 응답 · SSE 를 기다리게 하지 않는다.
+"""푸시(SPEC-004 §5-1.2 · §5-2 · §5-3) — 커밋 뒤 비동기로 보낸다. 조작 응답 · SSE 를 기다리게 하지 않는다.
 
-받는 사람: 전체 호출 = active 의사 전원 + 관리자 · 지정 호출 = 지정 원장의 의사 계정 + 관리자 · 간호사 = 없음.
-누른 계정이 의사면 그 의사 자신은 뺀다(관리자는 빼지 않는다 — 간호 스테이션 · 의국이 같이 쓴다).
-발송 내역은 push_log 에 받는 기기마다 1행 쌓는다(sent · failed · skipped_no_key · token_removed).
+원장 호출(doctor_call): 전체 호출 = active 의사 전원 + 관리자 · 지정 호출 = 지정 원장의 의사 계정 + 관리자 · 간호사 · 코디 ·
+상담사 = 없음. 누른 계정이 의사면 그 의사 자신은 뺀다(관리자는 빼지 않는다 — 간호 스테이션 · 의국이 같이 쓴다).
+상담사 호출(counselor_call): 그 상담사 계정(active)만 — 관리자 · 코디 · 의사 안 받음.
+알림 목록(§5-4): 받는 계정마다 notification 1행(기기가 없어도) · 설정을 끈 계정은 notification · push_log 둘 다 안 씀.
+발송 내역은 push_log 에 받는 기기마다 1행 쌓는다(sent · failed · skipped_no_key · token_removed · kind).
 내용에 고객 이름 · 국적 · 시술 이름을 넣지 않는다(잠금 화면). 실패는 로그만(상태 · reason · 토큰 끝 6자리).
 의사 수신자 알림에만 `aps.category = "CALL"` — 알림(워치 포함)에서 바로 수락. 의사 수신자는 늘 그 호출을 수락할 수 있는
 원장이다(전체 호출 = 전원 · 지정 = 그 원장). 관리자 알림은 category 없음(앱을 열어 원장을 고른다).
@@ -17,7 +19,8 @@ from app.config import Settings
 from app.domain.clock import Clock
 from app.domain.models import Account
 from app.push.apns import ApnsClient, ApnsResult
-from app.repository.repo import Repository
+from app.repository.repo import Repository, Tx
+from app.service.notifications import NotificationService
 
 log = logging.getLogger("procedure.push")
 
@@ -31,14 +34,18 @@ DEAD_400 = ("BadDeviceToken", "DeviceTokenNotForTopic", "Unregistered")
 class Delivery:
     """받는 사람 기기 하나에 보낼 것."""
 
-    call_id: int
-    visit_id: int
+    call_id: int | None
+    visit_id: int | None
     account_id: int
     role: str
     device_id: int
     token: str
     category: str | None
     payload: dict[str, Any]
+    kind: str = "doctor_call"  # doctor_call | counselor_call | display
+    reservation_id: int | None = None
+    notification_id: int | None = None
+    display_request_id: int | None = None
 
 
 def _tail(token: str) -> str:
@@ -46,10 +53,12 @@ def _tail(token: str) -> str:
 
 
 class PushService:
-    def __init__(self, repo: Repository, settings: Settings, client: ApnsClient | None = None, clock: Clock | None = None):
+    def __init__(self, repo: Repository, settings: Settings, client: ApnsClient | None = None, clock: Clock | None = None,
+                 notifications: NotificationService | None = None):
         self.repo = repo
         self.s = settings
         self.clock = clock or Clock()
+        self.notifications = notifications or NotificationService(repo, self.clock)
         self.enabled = settings.apns_enabled
         self.client = client if client is not None else (ApnsClient(settings) if self.enabled else None)
         self.tasks: set[asyncio.Task] = set()
@@ -69,8 +78,16 @@ class PushService:
         return True
 
     # ------------------------------------------------------------------ 받는 사람 · 내용
+    def _rows(self, tx: Tx, to: list[Account], kind: str, title: str, body: str, **target: int | None) -> dict[int, int]:
+        """설정이 켜진 계정마다 notification 1행 → {계정 id: notification id}. 끈 계정은 빠진다(발송도 없음)."""
+        out = {}
+        for a in to:
+            if self.notifications.enabled(tx, a.id, kind):
+                out[a.id] = self.notifications.add(tx, a.id, kind, title, body, **target)
+        return out
+
     def message(self, call_id: int, actor_login: str) -> list[Delivery] | None:
-        """받는 사람 기기마다 하나. 호출이 없으면 None."""
+        """원장 호출 — 받는 계정마다 notification 1행 쓰고, 받는 기기마다 Delivery 하나. 호출이 없으면 None."""
         with self.repo.tx() as tx:
             w = tx.world()
             call = w.calls.get(call_id)
@@ -85,20 +102,51 @@ class PushService:
                 to += [a for a in accounts if a.role == "doctor"]
             if actor is not None and actor.role == "doctor":
                 to = [a for a in to if a.id != actor.id]
-            role_of = {a.id: a.role for a in to}
-            devices = tx.devices_of([a.id for a in to])
             v = w.visits.get(call.visit_id)
             room = w.rooms.get(v.room_id) if v is not None and v.room_id is not None else None
-        kind = "전체 호출" if call.kind == "all" else "지정 호출"
-        body = f"{room.title if room else '방'} · 시술 {len(call.procedure_ids)}건 · {kind}"
+            kind = "전체 호출" if call.kind == "all" else "지정 호출"
+            body = f"{room.title if room else '방'} · 시술 {len(call.procedure_ids)}건 · {kind}"
+            notes = self._rows(tx, to, "doctor_call", "원장 호출", body, call_id=call.id, visit_id=call.visit_id)
+            role_of = {a.id: a.role for a in to if a.id in notes}
+            devices = tx.devices_of(list(role_of))
+        self.notifications.announce(list(notes))
         aps = {"alert": {"title": "원장 호출", "body": body}, "sound": "default"}
         out = []
         for device_id, account_id, token in devices:
             category = "CALL" if role_of[account_id] == "doctor" else None  # 의사만 알림에서 바로 수락
             a = {**aps, "category": category} if category else aps
             out.append(Delivery(call.id, call.visit_id, account_id, role_of[account_id], device_id, token, category,
-                                {"aps": a, "visitId": call.visit_id, "callId": call.id}))
+                                {"aps": a, "kind": "doctor_call", "visitId": call.visit_id, "callId": call.id},
+                                notification_id=notes[account_id]))
         return out
+
+    def counselor_message(self, reservation_id: int, counselor_staff_id: int) -> list[Delivery]:
+        """상담사 호출(§5-2) — 그 상담사 계정(active)만 · 본문 「<방> · 상담 대기」(방 없으면 「상담 대기」)."""
+        with self.repo.tx() as tx:
+            r = tx.reservation(reservation_id)
+            to = [a for a in tx.accounts() if a.active and a.role == "counselor" and a.staff_id == counselor_staff_id]
+            body = f"{r.room_title} · 상담 대기" if r is not None and r.room_title else "상담 대기"
+            notes = self._rows(tx, to, "counselor_call", "상담사 호출", body, reservation_id=reservation_id)
+            devices = tx.devices_of(list(notes))
+        self.notifications.announce(list(notes))
+        payload = {"aps": {"alert": {"title": "상담사 호출", "body": body}, "sound": "default"},
+                   "kind": "counselor_call", "reservationId": reservation_id}
+        return [Delivery(None, None, account_id, "counselor", device_id, token, None, payload, kind="counselor_call",
+                         reservation_id=reservation_id, notification_id=notes[account_id])
+                for device_id, account_id, token in devices]
+
+    def display_message(self, request_id: int) -> list[Delivery]:
+        """띄우기 푸시(§5-3 ②) — 그 기기 하나 · 보이는 알림 · 소리 없음 · 고객 이름 없음 · 알림 목록 · 설정 밖(D7-67)."""
+        with self.repo.tx() as tx:
+            d = tx.display(request_id)
+            dev = tx.device(d.device_id) if d is not None and d.device_id is not None else None
+            owner = next((a for a in tx.accounts() if dev is not None and a.id == dev.account_id), None)
+        if d is None or dev is None or owner is None:
+            return []
+        title = "고객 입력 요청" if d.kind == "questionnaire" else "여권 스캔 요청"
+        payload = {"aps": {"alert": {"title": title, "body": "데스크에서 보냈어요"}}, "kind": "display", "requestId": d.id}
+        return [Delivery(None, None, owner.id, owner.role, dev.id, dev.token, None, payload, kind="display",
+                         reservation_id=d.reservation_id, display_request_id=d.id)]
 
     def _log(self, d: "Delivery", status: str, created_at, res: ApnsResult | None = None, attempts: int = 0) -> None:
         with self.repo.tx() as tx:
@@ -106,47 +154,78 @@ class PushService:
                             device_id=d.device_id, token_tail=d.token[-6:], category=d.category, status=status,
                             apns_status=res.status if res else None, apns_reason=res.reason if res else None,
                             apns_id=res.apns_id if res else None, attempts=attempts, created_at=created_at,
-                            sent_at=self.clock.now() if res is not None and res.status == 200 else None)
+                            sent_at=self.clock.now() if res is not None and res.status == 200 else None,
+                            kind=d.kind, reservation_id=d.reservation_id, notification_id=d.notification_id,
+                            display_request_id=d.display_request_id)
 
     # ------------------------------------------------------------------ 발송
     def schedule(self, call_id: int, actor_login: str) -> None:
-        """커밋 뒤 부른다 — 돌고 있는 이벤트 루프에 태스크로 띄운다. 키가 없으면 받는 사람마다 skipped_no_key 로 쌓기만."""
+        """원장 호출 — 커밋 뒤 부른다."""
+        self._dispatch(lambda: self.message(call_id, actor_login) or [], f"원장 호출 call={call_id}")
+
+    def schedule_counselor(self, reservation_id: int, counselor_staff_id: int) -> None:
+        """상담사 호출 — KOS 200 + event_log 커밋 뒤 부른다(§5-2)."""
+        self._dispatch(lambda: self.counselor_message(reservation_id, counselor_staff_id),
+                       f"상담사 호출 reservation={reservation_id}")
+
+    def schedule_display(self, request_id: int) -> None:
+        """띄우기 — 그 기기 SSE 가 닫혀 있을 때(§5-3 ②)."""
+        self._dispatch(lambda: self.display_message(request_id), f"띄우기 request={request_id}")
+
+    def _dispatch(self, prepare, what: str) -> None:
+        """돌고 있는 이벤트 루프에 태스크로 띄운다. 키가 없으면 받는 기기마다 skipped_no_key 로 쌓기만(알림 행은 쓴다)."""
         if not self.enabled:
-            self.skip(call_id, actor_login)
+            self._skip(prepare, what)
             return
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            log.warning("원장 호출 푸시 건너뜀(이벤트 루프 없음) call=%d", call_id)
+            log.warning("%s 푸시 건너뜀(이벤트 루프 없음)", what)
             return
-        task = loop.create_task(self.notify(call_id, actor_login))
+        task = loop.create_task(self._notify(prepare, what))
         self.tasks.add(task)
         task.add_done_callback(self.tasks.discard)
 
     def skip(self, call_id: int, actor_login: str) -> int:
+        return self._skip(lambda: self.message(call_id, actor_login) or [], f"원장 호출 call={call_id}")
+
+    def _skip(self, prepare, what: str) -> int:
         try:
-            msg = self.message(call_id, actor_login) or []
+            msg = prepare()
             now = self.clock.now()
             for d in msg:
                 self._log(d, "skipped_no_key", now)
         except Exception as e:
-            log.error("원장 호출 푸시 내역 오류: %s", type(e).__name__)
+            log.error("%s 푸시 내역 오류: %s", what, type(e).__name__)
             return 0
-        log.info("원장 호출 푸시 건너뜀(APNS_* 없음) call=%d 받는 기기 %d", call_id, len(msg))
+        log.info("%s 푸시 건너뜀(APNS_* 없음) 받는 기기 %d", what, len(msg))
         return len(msg)
 
     async def notify(self, call_id: int, actor_login: str) -> dict[str, int]:
-        out = {"sent": 0, "failed": 0, "removed": 0}
+        return await self._notify(lambda: self.message(call_id, actor_login) or [], f"원장 호출 call={call_id}")
+
+    async def notify_counselor(self, reservation_id: int, counselor_staff_id: int) -> dict[str, int]:
+        return await self._notify(lambda: self.counselor_message(reservation_id, counselor_staff_id),
+                                  f"상담사 호출 reservation={reservation_id}")
+
+    async def notify_display(self, request_id: int) -> dict[str, int]:
+        return await self._notify(lambda: self.display_message(request_id), f"띄우기 request={request_id}")
+
+    async def _notify(self, prepare, what: str) -> dict[str, int]:
         if not self.enabled or self.client is None:
+            return {"sent": 0, "failed": 0, "removed": 0}
+        try:
+            msg = prepare()
+        except Exception as e:  # 발송 준비 실패로 조작에 영향 주지 않는다
+            log.error("%s 푸시 준비 오류: %s", what, type(e).__name__)
+            return {"sent": 0, "failed": 0, "removed": 0}
+        return await self.deliver(msg, what)
+
+    async def deliver(self, msg: list[Delivery], what: str) -> dict[str, int]:
+        out = {"sent": 0, "failed": 0, "removed": 0}
+        if not msg or self.client is None:
             return out
         created = self.clock.now()
-        try:
-            msg = self.message(call_id, actor_login)
-        except Exception as e:  # 발송 준비 실패로 조작에 영향 주지 않는다
-            log.error("원장 호출 푸시 준비 오류: %s", type(e).__name__)
-            return out
-        if not msg:
-            return out
         for d in msg:
             res, attempts = await self._send_with_retry(d.token, d.payload)
             if res.status == 200:
@@ -154,8 +233,7 @@ class PushService:
                 self._log(d, "sent", created, res, attempts)
                 continue
             out["failed"] += 1
-            log.warning("원장 호출 푸시 실패 call=%d token=%s status=%s reason=%s", call_id, _tail(d.token), res.status,
-                        res.reason)
+            log.warning("%s 푸시 실패 token=%s status=%s reason=%s", what, _tail(d.token), res.status, res.reason)
             if res.status == 410 or (res.status == 400 and res.reason in DEAD_400):  # 죽은 토큰 — 그 기기 행 삭제
                 with self.repo.tx() as tx:
                     tx.delete_device(d.token)
@@ -163,7 +241,7 @@ class PushService:
                 self._log(d, "token_removed", created, res, attempts)
             else:
                 self._log(d, "failed", created, res, attempts)
-        log.info("원장 호출 푸시 call=%d 보냄 %d · 실패 %d", call_id, out["sent"], out["failed"])
+        log.info("%s 푸시 보냄 %d · 실패 %d", what, out["sent"], out["failed"])
         return out
 
     async def _send_with_retry(self, token: str, payload: dict[str, Any]) -> tuple[ApnsResult, int]:

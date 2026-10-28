@@ -103,7 +103,7 @@ def fake_snapshot(now: datetime) -> BoardSnapshot:
         },
         {  # 시술 진행 · 완료 1 · 진행 1 · 담당의 미정 1
             "visitId": 103, "room": room(3, "A-룸3"), "inAt": ago(55), "homeAt": None,
-            "customer": cust("LI MEI", "リメイ", "CN", True, "F-0003"),
+            "customer": cust("(TW) CHEN WANLING ALEXANDRA", "첸 완링 알렉산드라 테스트 발음", "TW", True, "F-0003"),
             "state": "doing", "paymentRequired": False, "orderMemo": None,
             "anesthesia": anes(last=18),
             "procedures": [

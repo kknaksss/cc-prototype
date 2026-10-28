@@ -7,7 +7,7 @@ import { MemoCard } from '@/lib/memo';
 import { hm, minutesSince, pad } from '@/lib/time';
 import type { Board, Card, Procedure } from '@/lib/types';
 import type { UndoKind } from './UndoConfirm';
-import { STATE_BADGE, STATE_NAME, cardLook, checkBox, needView, orderedProcs, procsOf, procLine, visitCls } from './view';
+import { cardLook, checkBox, needView, orderedProcs, procChip, procsOf, procLine, stateBadge, visitCls } from './view';
 
 export interface CardActions {
   onPick: (ids: number[]) => void; // 고른 시술 id 전체(바꾼 뒤)
@@ -19,13 +19,13 @@ export interface CardActions {
   onOpenCall: (c: Card, rect: DOMRect | null) => void;
 }
 
-// 카드 드래그(SPEC-003 §5.12 · §6.3) — 귀가 대기 카드는 끌 수 없고 놓을 곳도 아니다(handlers 없음)
+// 카드 드래그(SPEC-003 §5.12 · §6.3) — 귀가 대기 카드는 끌 수 없고 미리보기 대상도 아니다(handlers 없음).
+// 놓기(drop)는 카드가 받지 않고 판(live/page.tsx)이 받는다 — 카드 위 drop 은 판으로 올라간다
 export interface CardDrag {
   dragging: boolean; // 이 카드를 끄는 중
   order: number; // 격자 안 그리는 자리(미리보기 포함)
   onStart?: () => void;
-  onOver?: () => void;
-  onDrop?: () => void;
+  onOver?: () => void; // 이 카드 위 = 미리보기 대상
   onEnd?: () => void;
 }
 
@@ -50,8 +50,9 @@ export function OrderCard({
   const need = c.need ? needView(board, c, c.need, now) : null;
   const anesOn = !!c.anesthesia.runningSince;
   const look = cardLook(c, focus, drag.dragging);
-  const badgeVariant = need ? 'danger' : home ? 'neutral' : anesOn ? 'purple' : STATE_BADGE[c.state];
-  const badgeText = need ? need.state : !home && anesOn ? '마취 중' : STATE_NAME[c.state];
+  // 머리 Badge — 덮어쓰기(확인 필요 danger · 마취 중 purple · sm dot)가 있으면 그것, 없으면 상태 2계층(점 없음 · §5.14)
+  const st = stateBadge(c.state);
+  const over = need ? { variant: 'danger' as const, text: need.state } : !home && anesOn ? { variant: 'purple' as const, text: '마취 중' } : null;
 
   const pickable = procsOf(c).filter((p) => p.pickable);
   const sel = picks.filter((id) => pickable.some((p) => p.id === id));
@@ -66,9 +67,15 @@ export function OrderCard({
           <span className="text-typo-title-lg-600 text-ms-gray-800" style={{ whiteSpace: 'nowrap' }}>
             {c.room.title}
           </span>
-          <Badge variant={badgeVariant} size="sm" dot>
-            {badgeText}
-          </Badge>
+          {over ? (
+            <Badge variant={over.variant} size="sm" dot>
+              {over.text}
+            </Badge>
+          ) : (
+            <Badge variant={st.variant} size="sm" className={st.cls}>
+              {st.text}
+            </Badge>
+          )}
         </div>
         <span className="text-typo-caption-md-400 text-ms-gray-600" style={{ whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
           {c.inAt ? '입실 ' + hm(c.inAt) : ''}
@@ -83,6 +90,16 @@ export function OrderCard({
         >
           {c.customer.name}
         </span>
+        {/* 한글 발음 — 이름 바로 오른쪽 · KOS 값 그대로 · 빈 값이면 그리지 않는다 · 이름보다 먼저 줄어든다(shrink 3 · §6.3) */}
+        {!!c.customer.phoneticName?.trim() && (
+          <span
+            className="text-typo-caption-md-400 text-ms-gray-500"
+            title={c.customer.phoneticName}
+            style={{ flex: '0 3 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+          >
+            {c.customer.phoneticName}
+          </span>
+        )}
         {c.customer.nationality && (
           <span
             className="bg-ms-gray-200 text-typo-caption-md-500 text-ms-gray-700"
@@ -234,7 +251,8 @@ export function OrderCard({
                 >
                   {p.title}
                 </span>
-                <div data-compact-buttons="true" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                {/* 오른쪽 칸(호출함 · 칩 · 아이콘 · 버튼)은 한 줄로 — 줄바꿈은 시술 이름 칸에서만 */}
+                <div data-compact-buttons="true" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'nowrap', whiteSpace: 'nowrap' }}>
                   {/* 「호출함」은 누르지 못한다 — 수락은 호출 탭에서만(§6.7 #4) */}
                   {waitingCall && (
                     <span data-badge-call="true" style={{ display: 'inline-flex' }}>
@@ -243,12 +261,14 @@ export function OrderCard({
                       </Badge>
                     </span>
                   )}
+                  {/* 부상태 칩(§5.14) — 차례 = 「호출함」 → 칩 → 되돌리기 아이콘 → 버튼 · 완료 줄은 칩이 맨 오른쪽(아이콘은 그 왼쪽 · §5.9) */}
+                  {p.state !== 'done' && <SubChip state={p.state} />}
                   {!home && p.state === 'wait' && (
                     <Button variant="outlined" color="blue" size="sm" disabled={!p.canStart} onClick={() => act.onStart(c, p)}>
                       시작
                     </Button>
                   )}
-                  {/* 되돌리기 아이콘 — 진행 줄 [종료] 왼쪽 · 완료 줄 「완료」 왼쪽. 조건은 스냅샷 canUndo* 만(§5.13) */}
+                  {/* 되돌리기 아이콘 — 진행 줄 [종료] 왼쪽 · 완료 줄 「완료」 칩 왼쪽. 조건은 스냅샷 canUndo* 만(§5.13) */}
                   {p.state === 'doing' && p.canUndoStart && <UndoIcon onClick={() => act.onUndo(c, p, 'start')} />}
                   {p.state === 'done' && p.canUndoFinish && <UndoIcon onClick={() => act.onUndo(c, p, 'finish')} />}
                   {!home && p.state === 'doing' && (
@@ -256,11 +276,7 @@ export function OrderCard({
                       종료
                     </Button>
                   )}
-                  {p.state === 'done' && (
-                    <Badge variant="neutral" size="sm">
-                      완료
-                    </Badge>
-                  )}
+                  {p.state === 'done' && <SubChip state={p.state} />}
                 </div>
                 <span className={line.cls} style={{ gridColumn: '2 / -1', fontVariantNumeric: 'tabular-nums' }}>
                   {line.text}
@@ -310,25 +326,8 @@ export function OrderCard({
             }
           : undefined
       }
-      // 놓을 곳 = dragenter · dragover 를 모두 막아야 한다(dragenter 를 안 막으면 미리보기로 옮겨 온 카드 위에서 drop 이 안 온다)
-      onDragEnter={drag.onOver ? (e: React.DragEvent<HTMLDivElement>) => e.preventDefault() : undefined}
-      onDragOver={
-        drag.onOver
-          ? (e: React.DragEvent<HTMLDivElement>) => {
-              e.preventDefault();
-              e.dataTransfer.dropEffect = 'move';
-              drag.onOver?.();
-            }
-          : undefined
-      }
-      onDrop={
-        drag.onDrop
-          ? (e: React.DragEvent<HTMLDivElement>) => {
-              e.preventDefault();
-              drag.onDrop?.();
-            }
-          : undefined
-      }
+      // 놓기 허락(dragenter · dragover preventDefault)은 판이 한다 — 여기서는 미리보기 대상만 알린다
+      onDragOver={drag.onOver}
       onDragEnd={drag.onEnd}
       className={'cc-room ' + (c.need ? 'bg-ms-white border-red text-ms-gray-800' : 'bg-ms-white border-ms-gray-300 text-ms-gray-800')}
       style={{
@@ -357,6 +356,16 @@ export function OrderCard({
       {/* 큰 버튼은 marginTop:auto 로 카드 바닥(줄 높이가 카드 내용보다 클 때도) */}
       {bottomEl}
     </div>
+  );
+}
+
+// 부상태 칩 — 예약 현황 스케줄 표 부상태 칩과 같은 꼴(글자 11 · 줄 16 · 굵기 600 · 좌우 5 · 반경 4 · ScheduleTable.tsx) · 색 = phaseStyle chip
+function SubChip({ state }: { state: Procedure['state'] }) {
+  const k = procChip(state);
+  return (
+    <span className={k.cls} style={{ flexShrink: 0, fontSize: 11, lineHeight: '16px', fontWeight: 600, padding: '0 5px', borderRadius: 4, whiteSpace: 'nowrap' }}>
+      {k.text}
+    </span>
   );
 }
 

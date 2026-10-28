@@ -168,5 +168,17 @@ class KosClient:
         url = f"{self.s.kos_internal_api_base.rstrip('/')}/tenants/{self.s.kos_tenant_id}/{path}"
         return await self._call(url, body, "internal")
 
+    async def put_presigned(self, url: str, data: bytes, content_type: str) -> None:
+        """공개 `generate-uploading-url` 이 준 presigned URL 로 PUT(SPEC-004 §6.16 ④-c) — 인증 헤더 없음.
+
+        URL(서명 값)은 로그 · 오류에 싣지 않는다(httpx 로그는 WARNING 이상만 · main).
+        """
+        try:
+            resp = await self.http.put(url, content=data, headers={"Content-Type": content_type})
+        except httpx.HTTPError as e:
+            raise KosError(f"network {type(e).__name__}") from None
+        if resp.status_code // 100 != 2:
+            raise KosError(f"HTTP {resp.status_code} presigned-put", resp.status_code)
+
     async def send(self, api: str, path: str, body: dict[str, Any]) -> dict[str, Any]:
         return await (self.open(path, body) if api == "open" else self.internal(path, body))

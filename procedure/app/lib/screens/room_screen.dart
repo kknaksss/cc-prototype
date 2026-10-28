@@ -13,6 +13,8 @@ import '../widgets/call_sheet.dart';
 import '../widgets/interpret_bar.dart';
 import '../widgets/interpret_drawer.dart';
 import '../widgets/ui.dart';
+import '../widgets/undo_sheet.dart';
+import '../view/state.dart' show procChip;
 import 'board_screen.dart' show clockText, isTablet;
 
 class RoomScreen extends StatefulWidget {
@@ -135,7 +137,7 @@ class _RoomScreenState extends State<RoomScreen> {
             ),
           ),
           // Spacer + Flexible 은 남는 폭을 반씩 나눠 짧은 배지가 가운데 뜬다(E2E A4) — 한 칸에 오른쪽 정렬
-          Expanded(child: Align(alignment: Alignment.centerRight, child: MsBadge(badge.text, badge.variant))),
+          Expanded(child: Align(alignment: Alignment.centerRight, child: MsBadge.of(badge))),
           const SizedBox(width: 10),
           Ticker(builder: (_) => Text(clockText(app), style: Typo.headingSm400.copyWith(color: Ms.black, fontFeatures: tabular))),
         ]),
@@ -210,7 +212,7 @@ class _RoomScreenState extends State<RoomScreen> {
           ]),
         ),
         const SizedBox(width: 12),
-        MsBadge(badge.text, badge.variant),
+        MsBadge.of(badge),
         const SizedBox(width: 12),
         Ticker(builder: (_) => Text(clockText(app), style: Typo.headingSm400.copyWith(color: Ms.black, fontFeatures: tabular))),
       ]),
@@ -427,14 +429,21 @@ class _RoomScreenState extends State<RoomScreen> {
               child: Text(elapsed(p.startedAt, now),
                   style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w600, height: 1, color: Ms.primary, fontFeatures: tabular)),
             ),
-          if (called) const Padding(padding: EdgeInsets.only(bottom: 4), child: MsBadge('호출함', BadgeVariant.primary, dot: false)),
-          if (p.state == 'wait')
-            MsButton('시작',
-                variant: BtnVariant.outlined,
-                onPressed: p.canStart ? () => app.run(() => app.api.startProcedure(p.id), '${p.title} 시작') : null),
-          if (doing)
-            MsButton('종료', onPressed: p.canFinish ? () => app.run(() => app.api.finishProcedure(p.id), '${p.title} 종료') : null),
-          if (p.state == 'done') const MsBadge('완료', BadgeVariant.neutral, dot: false),
+          // 차례 = 「호출함」 → 부상태 칩 → 되돌리기 아이콘 → 버튼(웹 OrderCard · §6.3 #4) · 완료 줄은 칩이 맨 오른쪽
+          Row(mainAxisSize: MainAxisSize.min, children: [
+            if (called) ...[const MsBadge('호출함', BadgeVariant.primary, dot: false), const SizedBox(width: 6)],
+            if (p.state == 'done' && p.canUndoFinish) UndoIcon(onTap: () => confirmUndo(context, c, p, UndoKind.finish)),
+            MsBadge.chip(procChip(p.state)),
+            if (doing && p.canUndoStart) ...[const SizedBox(width: 4), UndoIcon(onTap: () => confirmUndo(context, c, p, UndoKind.start))],
+            if (p.state == 'wait') ...[
+              const SizedBox(width: 8),
+              MsButton('시작', variant: BtnVariant.outlined, onPressed: p.canStart ? () => runStart(app, c, p) : null),
+            ],
+            if (doing) ...[
+              const SizedBox(width: 8),
+              MsButton('종료', onPressed: p.canFinish ? () => runFinish(app, c, p) : null),
+            ],
+          ]),
         ]),
       ]),
     );

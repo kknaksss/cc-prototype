@@ -11,8 +11,11 @@ services:
         required: false
     environment:
       PROC_DB_PATH: /data/procedure.db
+      # 신분증 사진 폴더(SPEC-004 §2.3) — 아래 procedure-photos 볼륨. 법적 검토 필요: 신분증 이미지 · 주민번호 처리 — 볼륨 암호화 없음
+      PROC_PHOTO_DIR: /photos
     volumes:
       - procedure-data:/data
+      - procedure-photos:/photos
       # APNs 키 파일 하나만 읽기 전용 — 호스트 경로는 procedure/.env 의 APNS_KEY_HOST_PATH(레포 · 이미지에 키 0).
       # 컨테이너 안 경로 = APNS_KEY_PATH(/run/secrets/apns.p8). 비면 빈 자리(/dev/null)라 푸시는 꺼진 채
       - ${APNS_KEY_HOST_PATH:-/dev/null}:/run/secrets/apns.p8:ro
@@ -31,3 +34,4 @@ services:
 
 volumes:
   procedure-data:
+  procedure-photos:

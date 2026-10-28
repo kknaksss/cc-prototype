@@ -18,6 +18,8 @@ from app.domain.models import (
     Anesthesia,
     Call,
     Customer,
+    Device,
+    DisplayRequest,
     FunnelCode,
     IdentityCheck,
     KosOp,
@@ -76,6 +78,16 @@ def _procedure(r: sqlite3.Row) -> Procedure:
 def _account(r: sqlite3.Row) -> Account:
     return Account(r["id"], r["login_id"], r["role"], r["name"], r["staff_id"], bool(r["active"]), bool(r["card"]),
                    r["password_hash"])
+
+
+def _device(r: sqlite3.Row) -> Device:
+    return Device(r["id"], r["account_id"], r["token"], r["name"], r["kind"], parse(r["last_seen_at"]))
+
+
+def _display(r: sqlite3.Row) -> DisplayRequest:
+    return DisplayRequest(r["id"], r["reservation_id"], r["customer_id"], r["kind"], r["device_id"], r["status"],
+                          r["created_by"], parse(r["created_at"]), parse(r["expires_at"]), parse(r["opened_at"]),
+                          parse(r["closed_at"]))
 
 
 def _op(r: sqlite3.Row) -> KosOp:
@@ -302,13 +314,26 @@ class Tx:
         self._update("account", account_id, {**fields, "updated_at": at})
 
     # ---------------------------------------------------------------- 푸시 기기(SPEC-004 §5-1.1)
-    def put_device(self, account_id: int, token: str, at: datetime) -> None:
-        """같은 토큰이 다른 계정에 있으면 지금 계정으로 옮긴다(한 기기 = 마지막 로그인 계정)."""
+    def put_device(self, account_id: int, token: str, at: datetime, *, name: str | None = None,
+                   kind: str | None = None) -> int:
+        """같은 토큰이 다른 계정에 있으면 지금 계정으로 옮긴다(한 기기 = 마지막 로그인 계정). 이름 · 종류는 보낸 것만 고친다."""
         r = self.con.execute("SELECT id FROM device WHERE token = ?", (token,)).fetchone()
+        extra = {k: v for k, v in (("name", name), ("kind", kind)) if v is not None}
         if r:
-            self._update("device", r["id"], {"account_id": account_id, "updated_at": at})
-        else:
-            self._insert("device", {"account_id": account_id, "token": token, "created_at": at, "updated_at": at})
+            self._update("device", r["id"], {"account_id": account_id, **extra, "updated_at": at, "last_seen_at": at})
+            return int(r["id"])
+        return self._insert("device", {"account_id": account_id, "token": token, **extra, "created_at": at,
+                                       "updated_at": at, "last_seen_at": at})
+
+    def device(self, device_id: int) -> Device | None:
+        r = self.con.execute("SELECT * FROM device WHERE id = ?", (device_id,)).fetchone()
+        return _device(r) if r else None
+
+    def devices(self) -> list[Device]:
+        return [_device(r) for r in self.con.execute("SELECT * FROM device ORDER BY id")]
+
+    def touch_device(self, device_id: int, at: datetime) -> None:
+        self._update("device", device_id, {"last_seen_at": at})
 
     def delete_device(self, token: str, account_id: int | None = None) -> None:
         """account_id 를 주면 그 계정의 토큰일 때만 지운다."""
@@ -327,8 +352,47 @@ class Tx:
         return [(r["id"], r["account_id"], r["token"]) for r in rows]
 
     def add_push_log(self, **fields: Any) -> int:
-        """원장 호출 푸시 내역 — 쌓기만(고치거나 지우지 않는다)."""
+        """푸시 내역 — 쌓기만(고치거나 지우지 않는다)."""
         return self._insert("push_log", fields)
+
+    # ---------------------------------------------------------------- 알림 · 설정(SPEC-004 §5-4)
+    def add_notification(self, **fields: Any) -> int:
+        return self._insert("notification", fields)
+
+    def notifications(self, account_id: int, since: datetime, limit: int) -> list[dict[str, Any]]:
+        rows = self.con.execute("SELECT * FROM notification WHERE account_id = ? AND created_at >= ? "
+                                "ORDER BY created_at DESC, id DESC LIMIT ?", (account_id, to_db(since), limit))
+        return [dict(r) for r in rows]
+
+    def unread_count(self, account_id: int, since: datetime) -> int:
+        r = self.con.execute("SELECT COUNT(*) AS n FROM notification WHERE account_id = ? AND created_at >= ? "
+                             "AND read_at IS NULL", (account_id, to_db(since))).fetchone()
+        return int(r["n"])
+
+    def mark_read(self, account_id: int, at: datetime, *, ids: list[int] | None = None, call_id: int | None = None,
+                  reservation_id: int | None = None) -> int:
+        """그 계정의 안 읽은 행만 — ids · callId · reservationId 가 다 없으면 전부."""
+        where, args = ["account_id = ?", "read_at IS NULL"], [account_id]
+        if ids is not None:
+            where.append(f"id IN ({', '.join('?' for _ in ids) or 'NULL'})")
+            args += ids
+        if call_id is not None:
+            where.append("call_id = ?")
+            args.append(call_id)
+        if reservation_id is not None:
+            where.append("reservation_id = ?")
+            args.append(reservation_id)
+        cur = self.con.execute(f"UPDATE notification SET read_at = ? WHERE {' AND '.join(where)}", [to_db(at), *args])
+        return cur.rowcount
+
+    def notification_settings(self, account_id: int) -> dict[str, bool]:
+        rows = self.con.execute("SELECT kind, enabled FROM notification_setting WHERE account_id = ?", (account_id,))
+        return {r["kind"]: bool(r["enabled"]) for r in rows}
+
+    def put_notification_setting(self, account_id: int, kind: str, enabled: bool, at: datetime) -> None:
+        self.con.execute("INSERT INTO notification_setting (account_id, kind, enabled, updated_at) VALUES (?, ?, ?, ?) "
+                         "ON CONFLICT (account_id, kind) DO UPDATE SET enabled = excluded.enabled, "
+                         "updated_at = excluded.updated_at", (account_id, kind, int(enabled), to_db(at)))
 
     def push_logs(self) -> list[dict[str, Any]]:
         return [dict(r) for r in self.con.execute("SELECT * FROM push_log ORDER BY id")]
@@ -437,6 +501,14 @@ class Tx:
                                 "ORDER BY released_at, id", (to_db(start), to_db(end)))
         return [Notice(r["id"], r["kos_id"], r["content"], parse(r["released_at"])) for r in rows]
 
+    def notice_row(self, *, id_: int | None = None, kos_id: str | None = None) -> Notice | None:
+        """ccc 행 하나(지운 행 포함) — 행 id 또는 kos_id 로."""
+        if id_ is None and kos_id is None:
+            return None
+        r = self.con.execute("SELECT * FROM notice WHERE " + ("id = ?" if id_ is not None else "kos_id = ?"),
+                             (id_ if id_ is not None else kos_id,)).fetchone()
+        return Notice(r["id"], r["kos_id"], r["content"], parse(r["released_at"])) if r else None
+
     def funnel_codes(self) -> list[FunnelCode]:
         return [FunnelCode(r["id"], r["kos_id"], r["name"], r["order"], bool(r["closed"]), bool(r["is_default"]))
                 for r in self.con.execute('SELECT * FROM funnel_code ORDER BY "order", id')]
@@ -459,14 +531,67 @@ class Tx:
     def staff(self) -> list[Staff]:
         return [_staff(r) for r in self.con.execute("SELECT * FROM staff ORDER BY name, id")]
 
-    def add_identity_check(self, customer_id: int, status: str, at: datetime, actor: str, event_id: int) -> int:
-        return self._insert("identity_check", {"customer_id": customer_id, "status": status, "method": "web_manual",
-                                               "device": None, "checked_at": at, "actor": actor, "event_id": event_id})
+    def add_identity_check(self, customer_id: int, status: str, at: datetime, actor: str, event_id: int, *,
+                           method: str = "web_manual", device: str | None = None, photo_id: int | None = None) -> int:
+        return self._insert("identity_check", {"customer_id": customer_id, "status": status, "method": method,
+                                               "device": device, "checked_at": at, "actor": actor, "event_id": event_id,
+                                               "photo_id": photo_id})
 
     def last_identity_check(self, customer_id: int) -> IdentityCheck | None:
         r = self.con.execute("SELECT * FROM identity_check WHERE customer_id = ? ORDER BY id DESC LIMIT 1",
                              (customer_id,)).fetchone()
-        return IdentityCheck(r["customer_id"], r["status"], r["method"], parse(r["checked_at"]), r["actor"]) if r else None
+        return IdentityCheck(r["customer_id"], r["status"], r["method"], parse(r["checked_at"]), r["actor"], r["device"],
+                             r["photo_id"]) if r else None
+
+    # ---------------------------------------------------------------- 신분증 사진(SPEC-004 §7.4)
+    # 법적 검토 필요: 신분증 이미지 · 주민번호 처리
+    def add_id_photo(self, **fields: Any) -> int:
+        return self._insert("id_photo", fields)
+
+    def id_photo(self, photo_id: int) -> dict[str, Any] | None:
+        r = self.con.execute("SELECT * FROM id_photo WHERE id = ?", (photo_id,)).fetchone()
+        return dict(r) if r else None
+
+    def update_id_photo(self, photo_id: int, **fields: Any) -> None:
+        self._update("id_photo", photo_id, fields)
+
+    # ---------------------------------------------------------------- 띄우기 요청(SPEC-004 §5-3)
+    def add_display(self, **fields: Any) -> int:
+        return self._insert("display_request", fields)
+
+    def display(self, request_id: int) -> DisplayRequest | None:
+        r = self.con.execute("SELECT * FROM display_request WHERE id = ?", (request_id,)).fetchone()
+        return _display(r) if r else None
+
+    def display_by_hash(self, token_hash: str) -> DisplayRequest | None:
+        r = self.con.execute("SELECT * FROM display_request WHERE qr_token_hash = ?", (token_hash,)).fetchone()
+        return _display(r) if r else None
+
+    def displays(self, *, reservation_id: int | None = None, device_id: int | None = None,
+                 statuses: tuple[str, ...] | None = None, kind: str | None = None,
+                 since: datetime | None = None) -> list[DisplayRequest]:
+        where, args = ["1 = 1"], []
+        for col, v in (("reservation_id", reservation_id), ("device_id", device_id), ("kind", kind)):
+            if v is not None:
+                where.append(f"{col} = ?")
+                args.append(v)
+        if statuses is not None:
+            where.append(f"status IN ({', '.join('?' for _ in statuses)})")
+            args += list(statuses)
+        if since is not None:
+            where.append("created_at >= ?")
+            args.append(to_db(since))
+        rows = self.con.execute(f"SELECT * FROM display_request WHERE {' AND '.join(where)} ORDER BY id", args)
+        return [_display(r) for r in rows]
+
+    def update_display(self, request_id: int, **fields: Any) -> None:
+        self._update("display_request", request_id, fields)
+
+    def expire_displays(self, now: datetime) -> int:
+        """유효 시간이 지난 pending → expired(열린 것은 그대로 — 고객이 쓰는 중)."""
+        cur = self.con.execute("UPDATE display_request SET status = 'expired', closed_at = ? "
+                               "WHERE status = 'pending' AND expires_at <= ?", (to_db(now), to_db(now)))
+        return cur.rowcount
 
     def last_questionnaire_at(self, customer_id: int) -> str | None:
         r = self.con.execute("SELECT kos_submitted_at FROM questionnaire_history WHERE customer_id = ? ORDER BY id DESC LIMIT 1",
@@ -479,6 +604,21 @@ class Tx:
                                "answers, fetched_at) VALUES (?, ?, ?, ?, ?)",
                                (customer_id, reservation_id, submitted_at, _val(answers), to_db(at)))
         return cur.rowcount > 0
+
+    def put_app_questionnaire(self, customer_id: int, reservation_id: int | None, submitted_at: str, answers: list,
+                              at: datetime, *, language: str | None, device_id: int | None,
+                              display_request_id: int | None) -> int:
+        """앱 제출(SPEC-004 §6.15 ⑥ r2) — 같은 제출본 행(read)이 있으면 그 행을 app_submit 으로 고친다 · 없으면 새 행."""
+        fields = {"source": "app_submit", "language": language, "device_id": device_id,
+                  "display_request_id": display_request_id}
+        r = self.con.execute("SELECT id FROM questionnaire_history WHERE customer_id = ? AND kos_submitted_at = ?",
+                             (customer_id, submitted_at)).fetchone()
+        if r:
+            self._update("questionnaire_history", r["id"], fields)
+            return int(r["id"])
+        return self._insert("questionnaire_history", {"customer_id": customer_id, "reservation_id": reservation_id,
+                                                      "kos_submitted_at": submitted_at, "answers": answers,
+                                                      "fetched_at": at, **fields})
 
     def questionnaire_history(self, customer_id: int) -> list[dict[str, Any]]:
         return [dict(r) for r in self.con.execute("SELECT * FROM questionnaire_history WHERE customer_id = ? ORDER BY id",

@@ -1,7 +1,7 @@
 'use client';
 
 // 예약 현황(SPEC-005 §6 · 전체현황판 시안 「현황 › 예약 현황」 M:93-715) — 제목 줄 · 스케줄 표 · 오른쪽 패널 · 등록 모달 · 상세 모달 · 토스트
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Badge, Button, Calendar, Popover, PopoverContent, PopoverTrigger } from '@medisolve-ai/medikit';
 import * as api from '@/lib/api';
 import { useNow, useResvBoard, useSession, useWide } from '@/lib/hooks';
@@ -10,7 +10,7 @@ import { hms } from '@/lib/time';
 import type { ResvBoard, ResvCard, ResvColumn, ResvState } from '@/lib/types';
 import { HEADER_H } from '@/components/common/AppHeader';
 import { ScheduleTable, cardKey } from '@/components/reservations/ScheduleTable';
-import { ResvAside, type ResvTab } from '@/components/reservations/ResvAside';
+import { ResvAside, type NoticeDraft, type ResvTab } from '@/components/reservations/ResvAside';
 import { NewReservationModal, type NewDraft } from '@/components/reservations/NewReservationModal';
 import { DetailModal } from '@/components/reservations/DetailModal';
 import { LEGEND, MAIN_NAME, dateTitle, isoAt, shiftDate } from '@/components/reservations/view';
@@ -53,6 +53,7 @@ export default function ReservationsLivePage() {
   const [focus, setFocus] = useState<number | null>(null);
   const [draft, setDraft] = useState<NewDraft | null>(null);
   const [detailId, setDetailId] = useState<number | null>(null);
+  const [noticeDraft, setNoticeDraft] = useState<NoticeDraft | null>(null); // 공지 편집 중 글자(§5.15)
 
   const [toast, setToast] = useState<{ text: string; n: number } | null>(null);
   const flash = useCallback((text: string) => setToast((t) => ({ text, n: (t?.n ?? 0) + 1 })), []);
@@ -67,6 +68,12 @@ export default function ReservationsLivePage() {
   const raw = live.board ?? live.prev;
   const board = useMemo(() => (raw ? withMoves(raw, moves, received) : null), [raw, moves, received]);
   const shownDate = date ?? (live.board ? live.board.date : kstToday(now));
+  // 지금 보는 날짜 — 늦게 온 공지 다시 읽기 응답을 거르려고(리뷰 r3 W3)
+  const shownRef = useRef(shownDate);
+  useEffect(() => {
+    shownRef.current = shownDate;
+  }, [shownDate]);
+  const isShownDate = useCallback((d: string) => d === shownRef.current, []);
 
   if (!session) return null;
 
@@ -78,13 +85,21 @@ export default function ReservationsLivePage() {
     flash(e instanceof Error ? e.message : '요청을 처리하지 못했어요');
   };
 
+  // 날짜를 옮기면(‹ › · [오늘] · 달력) 저장 안 한 공지 편집은 막지 않고 버린다 + 토스트(추가 지시 1)
+  const leaveDate = () => {
+    if (!noticeDraft) return;
+    setNoticeDraft(null);
+    flash('저장하지 않은 공지 편집을 취소했어요');
+  };
   const go = (n: number) => {
     if (!shownDate) return;
+    leaveDate();
     setFocus(null);
     setDate(shiftDate(shownDate, n));
   };
   const goToday = () => {
     setFocus(null);
+    if (shownDate !== kstToday(now)) leaveDate(); // 이미 오늘이면 편집 그대로(리뷰 r3 W2)
     setDate(null);
   };
 
@@ -159,6 +174,7 @@ export default function ReservationsLivePage() {
                       if (!d) return;
                       setCalOpen(false);
                       setFocus(null);
+                      if (dateToYmd(d) !== shownDate) leaveDate();
                       setDate(dateToYmd(d));
                     }}
                   />
@@ -203,7 +219,7 @@ export default function ReservationsLivePage() {
           )}
           {board && wide && (
             <div style={{ display: 'flex', minHeight: 0, opacity: stale ? 0.45 : 1, pointerEvents: stale ? 'none' : undefined, transition: 'opacity 120ms' }}>
-              <ResvAside board={board} tab={tab} onTab={setTab} onOpen={openFromClinic} />
+              <ResvAside board={board} tab={tab} onTab={setTab} onOpen={openFromClinic} draft={noticeDraft} onDraft={setNoticeDraft} isShownDate={isShownDate} onNoticeSaved={live.refreshSoon} onToast={flash} onError={fail} />
             </div>
           )}
         </div>

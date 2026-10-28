@@ -16,9 +16,15 @@ from app.service.accounts import AccountService
 from app.service.actions import ActionService
 from app.service.auth import AuthService
 from app.service.board_service import BoardService
+from app.service.devices import DeviceService
+from app.service.display import DisplayService
 from app.service.fake_board import fake_snapshot
+from app.service.id_photo import PhotoService
 from app.service.interpret.soniox import SonioxStt, SonioxTts, SttConn, TtsConn
+from app.service.notifications import NotificationService
+from app.service.passport_scan import PassportScanService
 from app.service.push import PushService
+from app.service.questionnaire import QuestionnaireService
 from app.service.reception import ReceptionService
 from app.service.reservations import ReservationService
 from app.service.stream import StreamHub
@@ -34,7 +40,13 @@ class Container:
     actions: ActionService
     accounts: AccountService
     push: PushService
+    devices: DeviceService
+    notifications: NotificationService
     hub: StreamHub = field(init=False)
+    display: Any = None  # DisplayService — 띄우기 요청(SPEC-004 §5-3)
+    questionnaire: Any = None  # QuestionnaireService — QR 문진(SPEC-004 §6.15)
+    photos: Any = None  # PhotoService — 신분증 사진(SPEC-004 §6.16)
+    scan: Any = None  # PassportScanService
     resv: Any = None  # ReservationService — 예약 현황(SPEC-005)
     reception: Any = None  # ReceptionService
     kos: Any = None  # app.kos.runtime.KosRuntime — KOS env 가 있을 때만
@@ -44,6 +56,9 @@ class Container:
 
     def __post_init__(self) -> None:
         self.hub = StreamHub(self.snapshot)
+        # 새 알림 행 → 그 계정 스트림에만 `notification {unread}`(SPEC-004 §5-4 · §7.1)
+        self.notifications.on_new = lambda account_id, unread: self.hub.send_to_account(
+            account_id, "notification", {"unread": unread})
 
     def snapshot(self) -> BoardSnapshot:
         if self.settings.proc_fake_board:
@@ -86,17 +101,30 @@ def build_container(settings: Settings, clock: Clock | None = None) -> Container
     repo = Repository(Database(settings.db_path))
     actions = ActionService(repo, clock)
     accounts = AccountService(repo, settings, clock)
-    accounts.sync()  # 서버 시작 — admin · nurse(env) · 지금 원장 목록의 doctor
+    accounts.sync()  # 서버 시작 — admin · nurse · coordinator(env) · 지금 원장 · 상담사 목록의 doctor · counselor
+    notifications = NotificationService(repo, clock)
     c = Container(settings=settings, clock=clock, repo=repo, auth=AuthService(settings, clock, repo, accounts),
                   board=BoardService(repo, clock, settings.poll_window), actions=actions, accounts=accounts,
-                  push=PushService(repo, settings, clock=clock))
+                  push=PushService(repo, settings, clock=clock, notifications=notifications),
+                  devices=DeviceService(repo, clock), notifications=notifications)
     actions.on_change = c.changed
+    c.display = DisplayService(repo, clock, settings, c.devices)
+    c.display.online = c.hub.online
+    c.display.send = lambda device_id, data: c.hub.send_to_device(device_id, "display", data)
+    c.display.push = lambda request_id: c.push.schedule_display(request_id)
     c.resv = ReservationService(settings, repo, clock, lambda: c.kos)
+    c.resv.displays_of = c.display.of_reservation  # 상세 응답 displays[](§5-3 「닫기」)
     c.reception = ReceptionService(c.resv)
+    c.questionnaire = QuestionnaireService(repo, clock, c.resv, c.devices, c.display)
+    c.photos = PhotoService(repo, clock, settings, c.resv.client)
+    c.scan = PassportScanService(repo, c.resv, c.devices, c.photos, c.display)
+    if not settings.proc_photo_dir:
+        logging.getLogger("procedure").warning("PROC_PHOTO_DIR 가 비어 신분증 사진 저장을 끈다(스캔 = 고객 수정만)")
+    c.reception.on_counselor_call = lambda rid, sid: c.push.schedule_counselor(rid, sid)  # KOS 200 + 커밋 뒤(§5-2)
     actions.on_call = c.push.schedule  # 호출이 생긴 뒤(커밋 뒤) 원장 호출 푸시
     if settings.kos_enabled:
         from app.kos.runtime import KosRuntime
 
         c.kos = KosRuntime(settings, repo, clock, c.hub.publish)
-        c.kos.on_staff = accounts.sync  # 직원 조회(서버 시작 · 1시간)마다 원장 한 명당 doctor 계정
+        c.kos.on_staff = accounts.sync  # 직원 조회(서버 시작 · 1시간)마다 원장 · 상담사 한 명당 계정
     return c

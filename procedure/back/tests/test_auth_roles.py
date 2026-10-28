@@ -10,17 +10,20 @@ from app.service.auth import _b64, _unb64
 from tests.conftest import PW, make_settings
 from tests.helpers import T0, seed_staff, seed_visit
 
-IDS = {"admin": "admin1", "doctor": "doctor1", "nurse": "nurse1", "coordinator": "coord1"}
+IDS = {"admin": "admin1", "doctor": "doctor1", "nurse": "nurse1", "coordinator": "coord1", "counselor": "counsel1"}
 
 
 @pytest.fixture
 def env(tmp_path):
     s = make_settings(tmp_path, ccc_admin_id=IDS["admin"], ccc_doctor_id=IDS["doctor"], ccc_doctor_kos_account_id="doc-a",
-                      ccc_nurse_id=IDS["nurse"], ccc_nurse_name="간호 A", ccc_coord_id=IDS["coordinator"])
+                      ccc_nurse_id=IDS["nurse"], ccc_nurse_name="간호 A", ccc_coord_id=IDS["coordinator"],
+                      ccc_counselor_id=IDS["counselor"], ccc_counselor_kos_account_id="cs-1")
     with TestClient(create_app(s)) as client:
         c = client.app.state.container
         c.clock.set(T0)
         staff = seed_staff(c.repo)
+        with c.repo.tx() as tx:  # 상담사(SPEC-004 §3.7)
+            staff["CS"] = tx.upsert("staff", "cs-1", {"name": "상담 1", "role_tags": ["COUNSELOR"], "active": True})
         c.accounts.sync()  # 직원 조회 뒤와 같은 자리
         yield client, c, staff
 
@@ -72,7 +75,7 @@ def prepare(c, staff, n, op):
     return f"/api/visits/{vid}/home", None
 
 
-@pytest.mark.parametrize("role", ["admin", "doctor", "nurse", "coordinator"])
+@pytest.mark.parametrize("role", ["admin", "doctor", "nurse", "coordinator", "counselor"])
 def test_role_matrix(env, role):
     client, c, staff = env
     auth, _ = login(client, role)

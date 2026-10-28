@@ -2,9 +2,15 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show Uint8List;
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart' show MediaType;
 
 import '../model/account.dart';
+import '../model/board.dart' show Json;
+import '../model/display.dart';
+import '../model/questionnaire.dart';
+import '../model/reservation.dart';
 
 class ApiError implements Exception {
   final int status;
@@ -86,13 +92,107 @@ class Api {
   Future<void> reassignAll(int callId) => _post('/api/calls/$callId/reassign-all');
   Future<void> startProcedure(int procedureId) => _post('/api/procedures/$procedureId/start');
   Future<void> finishProcedure(int procedureId) => _post('/api/procedures/$procedureId/finish');
+  // [시작] · [종료] 되돌리기(SPEC-003 §5.13 · §7.3)
+  Future<void> undoStart(int procedureId) => _post('/api/procedures/$procedureId/undo-start');
+  Future<void> undoFinish(int procedureId) => _post('/api/procedures/$procedureId/undo-finish');
   Future<void> goHome(int visitId) => _post('/api/visits/$visitId/home');
 
-  // §5-1.1 원장 호출 푸시 기기 토큰(16진)
-  Future<void> registerDevice(String deviceToken) => _post('/api/devices', {'token': deviceToken});
+  // §5-1.1 푸시 기기 토큰(16진) · 이름 · 배치 → deviceId(§5-3 · 0.4.0 — 옛 back 은 없음 = null)
+  Future<int?> registerDevice(String deviceToken, {String? name, String? kind}) async {
+    final data = await _post('/api/devices', {'token': deviceToken, 'name': ?name, 'kind': ?kind});
+    final id = data is Map ? data['deviceId'] : null;
+    return id is num ? id.toInt() : null;
+  }
+
   Future<void> unregisterDevice(String deviceToken) => _req('DELETE', '/api/devices/${Uri.encodeComponent(deviceToken)}');
 
-  // §7.1 SSE 주소 — ?token=
-  Uri streamUri(String tokenValue) =>
-      Uri.parse('${base()}/api/board/stream').replace(queryParameters: {'token': tokenValue});
+  // §5-4 알림 목록 · 읽음 · 설정
+  Future<Json> notifications() async => ((await _req('GET', '/api/notifications')) as Map).cast<String, dynamic>();
+  // 읽음 — ids 없으면 전부 · 푸시를 눌러 열 때는 callId · reservationId 로(back 이 계정 + 발송으로 찾음 · 후속 #3)
+  Future<void> readNotifications([List<int>? ids]) => _post('/api/notifications/read', ids == null ? const <String, Object>{} : {'ids': ids});
+  Future<void> readNotificationOf({int? callId, int? reservationId}) =>
+      _post('/api/notifications/read', {'callId': ?callId, 'reservationId': ?reservationId});
+  Future<Json> notificationSettings() async =>
+      ((await _req('GET', '/api/me/notification-settings')) as Map).cast<String, dynamic>();
+  Future<void> setNotificationSetting(String kind, bool enabled) =>
+      _req('PUT', '/api/me/notification-settings', body: {'kind': kind, 'enabled': enabled});
+
+  // ─── 예약 현황(SPEC-005 §7.2 ~ §7.5 그대로 · SPEC-004 §6.10 ~ §6.12) — 수납 · 처방전 · 등록 · 이동 · 공지는 부르지 않는다
+  Future<ResvBoard> reservationBoard(String date) async =>
+      ResvBoard.fromJson(((await _req('GET', '/api/reservations/board?date=$date')) as Map).cast<String, dynamic>());
+  Future<ResvDetail> reservation(int id) async =>
+      ResvDetail.fromJson(((await _req('GET', '/api/reservations/$id')) as Map).cast<String, dynamic>());
+  Future<void> cancelReservation(int id, String reason) => _post('/api/reservations/$id/cancel', {'reason': reason});
+  Future<void> receive(int id, int roomId, String route) => _post('/api/reservations/$id/reception', {'roomId': roomId, 'route': route});
+  Future<void> callCounselor(int id, int staffId) => _post('/api/reservations/$id/counselor-call', {'staffId': staffId});
+  Future<void> addConsultation(int id) => _post('/api/reservations/$id/consultation-add');
+  Future<void> discharge(int id) => _post('/api/reservations/$id/discharge');
+  Future<void> saveMemo(int id, String memo) => _req('PUT', '/api/reservations/$id/memo', body: {'memo': memo});
+  Future<void> saveRemark(int customerId, String memo) => _req('PUT', '/api/customers/$customerId/remark', body: {'memo': memo});
+  Future<void> savePersonal(int customerId, Json personal) => _req('PUT', '/api/customers/$customerId/personal', body: {'personal': personal});
+  Future<void> setIdentity(int customerId, String status) => _req('PUT', '/api/customers/$customerId/identity', body: {'status': status});
+
+  // §5-3 띄우기 — 기기 목록 · 만들기(deviceId 없으면 QR 만)
+  Future<List<DisplayTarget>> displayTargets() async {
+    final d = await _req('GET', '/api/devices/targets');
+    final l = d is List ? d : (d is Map ? d['items'] : null);
+    return [for (final e in (l is List ? l : const [])) if (e is Map) DisplayTarget.fromJson(e.cast<String, dynamic>())];
+  }
+
+  Future<Json> createDisplay(int reservationId, String kind, {int? deviceId}) async =>
+      ((await _post('/api/display-requests', {'reservationId': reservationId, 'kind': kind, 'deviceId': ?deviceId})) as Map).cast<String, dynamic>();
+
+  // §5-3 이 기기 띄우기 — pending(deviceId 필수 · 돌려주며 opened) · QR claim · 닫기
+  Future<List<DisplayReq>> pendingDisplays(int deviceId) async =>
+      DisplayReq.listFrom(((await _req('GET', '/api/display-requests/pending?deviceId=$deviceId')) as Map).cast<String, dynamic>());
+  Future<DisplayReq?> claimDisplay(String qrToken, {int? deviceId}) async =>
+      DisplayReq.fromJson(await _post('/api/display-requests/claim', {'qrToken': qrToken, 'deviceId': ?deviceId}));
+  Future<void> closeDisplay(int requestId, String status) => _post('/api/display-requests/$requestId/close', {'status': status});
+
+  // §6.15 문진 — deviceId 는 자기 기기(기기 행 없으면 뺌 · r2) · 잠금 나가기 = unlock(기기별 5회 · 1분)
+  Future<QForm> questionnaire(int reservationId, {int? deviceId}) async => QForm.fromJson(
+      ((await _req('GET', '/api/questionnaires/$reservationId${deviceId == null ? '' : '?deviceId=$deviceId'}')) as Map).cast<String, dynamic>());
+  Future<void> submitQuestionnaire(int reservationId, Json body) => _post('/api/questionnaires/$reservationId', body);
+  Future<void> unlock(String password, {int? deviceId}) => _post('/api/auth/unlock', {'password': password, 'deviceId': ?deviceId});
+
+  // §6.16 ④ 여권 스캔 저장 — multipart: fields(json · 바꿀 칸) · photo(JPEG) · reservationId · displayRequestId? · deviceId? · manual
+  // 법적 검토 필요: 신분증 이미지 · 주민번호 처리 — 사진 바이트는 메모리에서 바로 요청 본문으로만(파일 · 캐시 없음)
+  Future<Json> passportScan(int customerId,
+      {required Json fields, Uint8List? photo, int? reservationId, int? displayRequestId, int? deviceId, bool manual = false}) async {
+    final req = http.MultipartRequest('POST', Uri.parse('${base()}/api/customers/$customerId/passport-scan'));
+    final t = token();
+    req.headers['Accept'] = 'application/json';
+    if (t != null) req.headers['Authorization'] = 'Bearer $t';
+    req.fields['fields'] = jsonEncode(fields);
+    if (reservationId != null) req.fields['reservationId'] = '$reservationId';
+    if (displayRequestId != null) req.fields['displayRequestId'] = '$displayRequestId';
+    if (deviceId != null) req.fields['deviceId'] = '$deviceId';
+    req.fields['manual'] = manual ? 'true' : 'false';
+    if (photo != null) req.files.add(http.MultipartFile.fromBytes('photo', photo, filename: 'scan.jpg', contentType: MediaType('image', 'jpeg')));
+    http.Response res;
+    try {
+      res = await http.Response.fromStream(await client.send(req).timeout(const Duration(seconds: 40)));
+    } on TimeoutException {
+      throw const ApiError(0, 'network', '서버 응답이 없어요');
+    } catch (_) {
+      throw const ApiError(0, 'network', '서버에 연결할 수 없어요');
+    }
+    dynamic data;
+    try {
+      data = jsonDecode(utf8.decode(res.bodyBytes));
+    } catch (_) {}
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      final err = data is Map && data['error'] is Map ? data['error'] as Map : const {};
+      throw ApiError(res.statusCode, '${err['code'] ?? 'error'}', '${err['message'] ?? '요청을 처리하지 못했어요'}');
+    }
+    return (data as Map).cast<String, dynamic>();
+  }
+
+  // [사진 다시 올리기](KOS 사진 실패 · D7-56)
+  Future<String> photoKosRetry(int photoId) async =>
+      '${((await _post('/api/id-photos/$photoId/kos-retry')) as Map)['kos'] ?? 'failed'}';
+
+  // §7.1 SSE 주소 — ?token= (+ deviceId · 0.4.0)
+  Uri streamUri(String tokenValue, {int? deviceId}) => Uri.parse('${base()}/api/board/stream')
+      .replace(queryParameters: {'token': tokenValue, 'deviceId': ?deviceId?.toString()});
 }

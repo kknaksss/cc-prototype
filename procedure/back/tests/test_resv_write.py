@@ -303,17 +303,33 @@ def test_move_slot_full_and_same_spot(env):
     assert len(sent(fake, "update-reservation")) == 1
 
 
-def test_move_not_movable_and_reception_movable(env):
+@pytest.mark.parametrize(("flow", "status"), [
+    ("RECEPTION", "IN_PROGRESS"), ("CONSULTATION_WAITING", "IN_PROGRESS"), ("CONSULTATION", "IN_PROGRESS"),
+    ("PROCEDURE_WAITING", "IN_PROGRESS"), ("PROCEDURE", "IN_PROGRESS"), ("PROCEDURE_DONE", "IN_PROGRESS"),
+    ("COMPLETED", "COMPLETED"), ("RESERVED", "CANCELED"), ("RESERVED", "NO_SHOW")])
+def test_move_every_stage_kos_accepts(env, flow, status):
+    """단계별 이동 = KOS 그대로(E2E b5 #1 · 데모 실호출) — 어느 단계든 끌리고 같은 update-reservation 본문."""
     c, fake, _ = env
-    fake.add_resv("c1", flow="CONSULTATION_WAITING", status="IN_PROGRESS")
-    fake.add_resv("r1", "v2", flow="RECEPTION", status="IN_PROGRESS")
-    fake.add_resv("x1", "v3", status="CANCELED")
+    fake.add_resv("c1", flow=flow, status=status)
+    b = load(c)
+    assert all(x.draggable for x in b.cards)
+    move(c, "c1", "grp-1", "2026-10-21T16:00:00+09:00")
+    body = sent(fake, "update-reservation")[-1]
+    assert body["occupiedResources"]["items"][0]["reservationTime"]["startDateTimeUtc"] == "2026-10-21T07:00:00.000Z"
+    assert events(c, "resv_move")
+
+
+def test_move_unknown_main_not_movable(env, monkeypatch):
+    """끌 수 없는 주 상태(지금은 없음)면 KOS 를 부르지 않고 409 not_movable — 검사 자리는 남긴다."""
+    import app.service.reservations as svc
+
+    c, fake, _ = env
+    fake.add_resv("x1", status="CANCELED")
     load(c)
-    for k in ("c1", "x1"):
-        with pytest.raises(Conflict) as e:
-            move(c, k, "grp-1", "2026-10-21T16:00:00+09:00")
-        assert e.value.code == "not_movable"
-    move(c, "r1", "grp-1", "2026-10-21T16:00:00+09:00")
+    monkeypatch.setattr(svc, "draggable", lambda main: main != "canceled")
+    with pytest.raises(Conflict) as e:
+        move(c, "x1", "grp-1", "2026-10-21T16:00:00+09:00")
+    assert e.value.code == "not_movable" and not sent(fake, "update-reservation")
 
 
 def test_move_kos_rejected_message(env):

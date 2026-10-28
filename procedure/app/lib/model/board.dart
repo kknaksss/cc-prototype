@@ -133,6 +133,9 @@ class Procedure {
   final bool pickable;
   final bool canStart;
   final bool canFinish;
+  final bool isRoomTask; // 「방 배정」 — 앱은 그리지 않는다(§6.0 · 스냅샷 값)
+  final bool canUndoStart; // [시작] 되돌리기(§6.3 #4 · SPEC-003 §5.13)
+  final bool canUndoFinish;
   const Procedure({
     required this.id,
     this.kind = 'procedure',
@@ -147,6 +150,9 @@ class Procedure {
     this.pickable = false,
     this.canStart = false,
     this.canFinish = false,
+    this.isRoomTask = false,
+    this.canUndoStart = false,
+    this.canUndoFinish = false,
   });
   bool get isEtc => kind == 'etc';
   factory Procedure.fromJson(Json j) => Procedure(
@@ -163,6 +169,9 @@ class Procedure {
         pickable: _b(j['pickable']),
         canStart: _b(j['canStart']),
         canFinish: _b(j['canFinish']),
+        isRoomTask: _b(j['isRoomTask']),
+        canUndoStart: _b(j['canUndoStart']),
+        canUndoFinish: _b(j['canUndoFinish']),
       );
 }
 

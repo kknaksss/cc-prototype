@@ -31,10 +31,18 @@ interface LocalOrder {
   saved: number[] | null;
 }
 // 끄는 중 — from = 끄는 카드 · start = 드래그 시작 때의 전체 순서(앞 · 뒤 판정 기준) · over = 지금 올라간 카드
+// home = 끄는 카드의 원래 자리(판 내용 좌표 — 스크롤 무관). 포인터가 여기로 돌아오면 미리보기를 지운다
 interface Drag {
   from: number;
   start: number[];
   over: number | null;
+  home: { left: number; top: number; right: number; bottom: number } | null;
+}
+
+// 화면 좌표 → 판 내용 좌표(스크롤 더함)
+function inBoard(el: HTMLElement, x: number, y: number) {
+  const b = el.getBoundingClientRect();
+  return { x: x - b.left + el.scrollLeft, y: y - b.top + el.scrollTop };
 }
 
 export default function ProceduresLivePage() {
@@ -47,6 +55,8 @@ export default function ProceduresLivePage() {
   const [local, setLocal] = useState<LocalOrder | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
   const reqNo = useRef(0);
+  // 가운데 흰 판(스크롤 컨테이너) — 놓는 곳 · 끄는 카드 원래 자리 좌표 기준
+  const boardRef = useRef<HTMLDivElement>(null);
   const [tab, setTab] = useState<TabId>('status');
   const [filter, setFilter] = useState<FilterId>('all');
   const [focus, setFocus] = useState<number | null>(null);
@@ -169,26 +179,48 @@ export default function ProceduresLivePage() {
   const cards = board ? ordered.filter(filterFn(filter, board)) : [];
   const dragOf = (c: Card) => {
     const order = slot.get(c.visitId) ?? 0;
-    if (c.state === 'home') return { dragging: false, order }; // 귀가 대기 = 끌기 · 놓기 모두 없음(§5.12)
+    // 귀가 대기 = 끌 수 없고 미리보기 대상도 아님. 그 위 drop 은 판이 받는다(마지막 미리보기 자리 · §5.12)
+    if (c.state === 'home') return { dragging: false, order };
     return {
       dragging: drag?.from === c.visitId,
       order,
-      onStart: () => setDrag({ from: c.visitId, start: liveIds(ordered), over: null }),
+      onStart: () => {
+        const el = boardRef.current;
+        const r = el?.querySelector(`[data-visit="${c.visitId}"]`)?.getBoundingClientRect();
+        const a = el && r ? inBoard(el, r.left, r.top) : null;
+        const home = el && r && a ? { left: a.x, top: a.y, right: a.x + r.width, bottom: a.y + r.height } : null;
+        setDrag({ from: c.visitId, start: liveIds(ordered), over: null, home });
+      },
       onOver: () => {
         if (drag && drag.from !== c.visitId && drag.over !== c.visitId) setDrag({ ...drag, over: c.visitId });
       },
-      onDrop: () => {
-        if (!drag) return;
-        const target = drag.over ?? c.visitId;
-        setDrag(null);
-        if (target === drag.from) return;
-        const ids = moveCard(drag.start, drag.from, target);
-        if (ids.every((id, i) => id === drag.start[i])) return;
-        void saveOrder(ids);
-      },
-      // 놓지 않고 끝남(판 밖 · 취소) = 원래 순서
+      // 놓지 않고 끝남(판 밖 · 취소 — 판이 drop 을 받지 않음) = 원래 순서. 판 안에 놓았으면 drop(아래 board) 뒤에 온다
       onEnd: () => setDrag(null),
     };
+  };
+  // 놓는 곳 = 판(가운데 격자 영역 전체 — 카드 · 틈 · 여백 · 빈 칸 · 카드 아래 빈 공간 · §5.12 「놓는 곳」).
+  // 카드 위 drop 도 여기로 올라온다 → 저장은 이 한 곳에서 한 번. 우리 카드를 끄는 중일 때만 놓기를 허락한다(파일 끌기 등은 그대로)
+  // 놓으면 마지막 미리보기 순서로 확정 — 놓은 지점이 아니라 미리보기가 기준 · 미리보기가 시작 순서와 같으면 저장 없음
+  // 끄는 카드의 원래 자리로 돌아오면 미리보기를 지운다(= 원래 순서 · 놓으면 저장 없음 · 리뷰 r3 W1 코디 기본값).
+  // 원래 자리 = 시작 때 카드 칸 좌표 — 미리보기로 그 칸에 다른 카드가 와 있어도 같다(카드 위 onOver 뒤에 이것이 와서 덮는다)
+  const allowDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    if (!drag) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const h = drag.home;
+    if (!h || drag.over == null || !boardRef.current) return;
+    const p = inBoard(boardRef.current, e.clientX, e.clientY);
+    if (p.x >= h.left && p.x <= h.right && p.y >= h.top && p.y <= h.bottom) setDrag({ ...drag, over: null });
+  };
+  const dropOnBoard = (e: React.DragEvent<HTMLDivElement>) => {
+    if (!drag) return;
+    e.preventDefault();
+    const d = drag;
+    setDrag(null);
+    if (d.over == null) return;
+    const ids = moveCard(d.start, d.from, d.over);
+    if (ids.every((id, i) => id === d.start[i])) return;
+    void saveOrder(ids);
   };
 
   return (
@@ -232,7 +264,7 @@ export default function ProceduresLivePage() {
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px 20px', flexWrap: 'wrap' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                 {LEGEND.map((k) => (
-                  <Badge key={k.name} variant={k.variant} size="sm" dot>
+                  <Badge key={k.name} variant={k.variant} size="sm" dot={k.dot} className={k.cls}>
                     {k.name}
                   </Badge>
                 ))}
@@ -243,7 +275,11 @@ export default function ProceduresLivePage() {
           <div style={{ display: 'flex', gap: 12, flex: 1, minHeight: 0 }}>
             {/* 가운데 — 흰 판 안 회색 격자 · 칸 = 오더지 카드 */}
             <div
+              ref={boardRef}
               className="bg-ms-white"
+              onDragEnter={allowDrop}
+              onDragOver={allowDrop}
+              onDrop={dropOnBoard}
               style={{
                 flex: 1,
                 minWidth: 0,

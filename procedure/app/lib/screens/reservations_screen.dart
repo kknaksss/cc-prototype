@@ -165,7 +165,7 @@ class _ReservationsScreenState extends State<ReservationsScreen> with TabPolling
     return TabScaffold(
       tab: AppTab.reservations,
       body: Column(children: [
-        // 날짜 줄 ‹ 날짜 › · [오늘] · 범례(주 상태 7 · 개수) · 총 예약 N건
+        // 1줄 = [‹ 날짜 ›] [오늘] ……… [총 예약 N건](오른쪽 끝) / 2줄 = 범례(주 상태 7 · 개수) 한 줄(넘치면 가로 스크롤) — 사용자 2026-10-28
         Container(
           color: Ms.white,
           padding: EdgeInsets.fromLTRB(tablet ? 24 : 12, 8, tablet ? 24 : 16, 8),
@@ -173,19 +173,22 @@ class _ReservationsScreenState extends State<ReservationsScreen> with TabPolling
             Row(children: [
               IconButton(
                   visualDensity: VisualDensity.compact, onPressed: () => _go(shiftDate(_date, -1)), icon: const Icon(Icons.chevron_left_rounded), tooltip: '전날'),
-              Flexible(child: Text(dateTitle(_date), maxLines: 1, style: Typo.headingMd600)),
+              // 날짜 글자 폭 그대로 — ‹ 날짜 › 가 붙는다. 전에는 Flexible 이 남는 자리의 반만 받아 「(요일)」이 숨은 줄로
+              // 넘어가며 날짜와 › 사이가 벌어졌다
+              Text(dateTitle(_date), key: const Key('resv-date'), maxLines: 1, softWrap: false, style: Typo.headingMd600),
               IconButton(
                   visualDensity: VisualDensity.compact, onPressed: () => _go(shiftDate(_date, 1)), icon: const Icon(Icons.chevron_right_rounded), tooltip: '다음 날'),
-              const Spacer(),
+              const SizedBox(width: 4),
               MsButton('오늘', size: BtnSize.sm, variant: BtnVariant.outlined, color: BtnColor.gray, onPressed: _date == today ? null : () => _go(today)),
+              if (b != null) ...[
+                // 총 예약은 날짜 줄 오른쪽 끝(사용자 batch 4 #1)
+                const Spacer(),
+                Text('총 예약 ${b.counts['total'] ?? 0}건', key: const Key('resv-total'), maxLines: 1, style: Typo.body600.copyWith(color: Ms.gray700)),
+              ],
             ]),
             if (b != null) ...[
               const SizedBox(height: 6),
-              Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Expanded(child: ResvLegend(b.counts)),
-                const SizedBox(width: 8),
-                Text('총 예약 ${b.counts['total'] ?? 0}건', style: Typo.body600.copyWith(color: Ms.gray700)),
-              ]),
+              ResvLegend(b.counts),
             ],
           ]),
         ),
@@ -203,42 +206,19 @@ class _ReservationsScreenState extends State<ReservationsScreen> with TabPolling
     );
   }
 
-  // 칩 줄 — 「전체」 + KOS 예약 그룹(order 순 · 가로 스크롤). 구역 칩 없음(D7-28)
-  Widget _chips(ResvBoard b) {
-    Widget chip(String name, bool on, VoidCallback tap) => Padding(
-          padding: const EdgeInsets.only(right: 6),
-          child: GestureDetector(
-            onTap: tap,
-            child: Container(
-              height: 32,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: on ? Ms.primary : Ms.white,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: on ? Ms.primary : Ms.gray300),
-              ),
-              child: Text(name, style: Typo.body500.copyWith(color: on ? Ms.white : Ms.gray700, height: 1.2)),
-            ),
-          ),
-        );
-    return Container(
-      color: Ms.white,
-      height: 48,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-        children: [
-          chip('전체', !_filterOn, () => setState(() => _filterOn = false)),
+  // 칩 줄 — 「전체」 + KOS 예약 그룹(order 순 · 가로 스크롤). 구역 칩 없음(D7-28) · 공통 StatusChip(2026-10-28)
+  Widget _chips(ResvBoard b) => Container(
+        color: Ms.white,
+        child: ChipRow([
+          StatusChip('전체', selected: !_filterOn, onTap: () => setState(() => _filterOn = false)),
           for (final c in b.columns)
-            chip(c.title, _filterOn && _group == c.groupId, () => setState(() {
+            StatusChip(c.title, selected: _filterOn && _group == c.groupId, onTap: () => setState(() {
                   _filterOn = true;
                   _group = c.groupId;
                 })),
-        ],
-      ),
-    );
-  }
+        ], left: 12, right: 16),
+      );
+
 
   // 폰 — 30분 시간대 목록 · 지금 시간대 파란 바탕
   Widget _slots(ResvBoard b) {

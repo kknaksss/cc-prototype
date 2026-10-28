@@ -6,6 +6,7 @@ import '../app_state.dart';
 import '../interpret/langs.dart';
 import '../model/board.dart';
 import '../theme/tokens.dart';
+import '../widgets/header.dart' show DetailHeader;
 import '../view/time.dart';
 import '../view/view.dart';
 import '../widgets/accept.dart';
@@ -62,6 +63,8 @@ class _RoomScreenState extends State<RoomScreen> {
             SafeArea(
               bottom: false,
               child: Column(children: [
+                // 머리 = 다른 상세와 같은 꼴 [‹ 시술 현황] 「룸 상세」(정가운데 · 사용자 2026-10-28) → 그 아래 룸 정보 줄
+                const DetailHeader(back: '시술 현황', title: '룸 상세'),
                 tablet ? _tabletHeader(app, b, card) : _header(app, b, card),
                 Expanded(
                   child: Ticker(builder: (context) {
@@ -119,23 +122,12 @@ class _RoomScreenState extends State<RoomScreen> {
       decoration: const BoxDecoration(color: Ms.white, border: Border(bottom: BorderSide(color: Ms.gray200))),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Row(children: [
-          GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () => Navigator.of(context).maybePop(),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(minHeight: 44),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: Row(children: [
-                  Text('← 현황', style: Typo.body600),
-                  if (others > 0) ...[
-                    const SizedBox(width: 6),
-                    Text('다른 룸 확인 $others', style: Typo.caption600.copyWith(color: Ms.red)),
-                  ],
-                ]),
-              ),
+          // 뒤로는 위 DetailHeader — 여기엔 다른 룸 확인 수만
+          if (others > 0)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Text('다른 룸 확인 $others', style: Typo.caption600.copyWith(color: Ms.red)),
             ),
-          ),
           // Spacer + Flexible 은 남는 폭을 반씩 나눠 짧은 배지가 가운데 뜬다(E2E A4) — 한 칸에 오른쪽 정렬
           Expanded(child: Align(alignment: Alignment.centerRight, child: MsBadge.of(badge))),
           const SizedBox(width: 10),
@@ -174,20 +166,11 @@ class _RoomScreenState extends State<RoomScreen> {
       padding: const EdgeInsets.fromLTRB(12, 0, 24, 0),
       decoration: const BoxDecoration(color: Ms.white, border: Border(bottom: BorderSide(color: Ms.gray200))),
       child: Row(children: [
-        GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: () => Navigator.of(context).maybePop(),
-          child: Container(
-            constraints: const BoxConstraints(minHeight: 48),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-            decoration: BoxDecoration(color: Ms.gray100, borderRadius: BorderRadius.circular(10)),
-            child: Column(mainAxisSize: MainAxisSize.min, mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('← 현황', style: Typo.body600),
-              if (others > 0) Text('다른 룸 확인 $others', style: Typo.caption600.copyWith(color: Ms.red)),
-            ]),
-          ),
-        ),
-        const SizedBox(width: 16),
+        // 뒤로는 위 DetailHeader — 여기엔 다른 룸 확인 수만
+        if (others > 0) ...[
+          Text('다른 룸 확인 $others', style: Typo.caption600.copyWith(color: Ms.red)),
+          const SizedBox(width: 16),
+        ],
         Text(c.room.title, style: Typo.titleMd600.copyWith(fontSize: 32, height: 1.3)),
         const SizedBox(width: 16),
         Container(width: 1, height: 28, color: Ms.gray300),

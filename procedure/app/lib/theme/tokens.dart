@@ -70,9 +70,25 @@ ThemeData ceramiqueTheme() {
     scaffoldBackgroundColor: Ms.gray100,
     splashFactory: NoSplash.splashFactory,
   );
+  // 입력 칸 = 웹 예약 상세 Input · Textarea 와 같게(사용자 2026-10-28 「테두리가 까맣다」) — 흰 바탕 · 연회색 테두리(gray-300) ·
+  // 둥근 8 · 회색 placeholder · 포커스 때만 primary · 못 고치는 칸 = gray-100 바탕 · gray-200 테두리 · 오류 = red. 모든 TextField 에 한 번에
+  OutlineInputBorder line(Color c, [double w = 1]) => OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: c, width: w));
   return base.copyWith(
     textTheme: base.textTheme.apply(fontFamily: 'Pretendard', bodyColor: Ms.gray800, displayColor: Ms.gray800),
     dividerColor: Ms.gray200,
+    inputDecorationTheme: InputDecorationTheme(
+      isDense: true,
+      filled: true,
+      fillColor: Ms.white,
+      hintStyle: Typo.body400.copyWith(color: Ms.gray400),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      border: line(Ms.gray300),
+      enabledBorder: line(Ms.gray300),
+      focusedBorder: line(Ms.primary, 1.5),
+      disabledBorder: line(Ms.gray200),
+      errorBorder: line(Ms.red),
+      focusedErrorBorder: line(Ms.red, 1.5),
+    ),
   );
 }
 

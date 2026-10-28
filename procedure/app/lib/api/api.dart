@@ -131,6 +131,10 @@ class Api {
   Future<void> saveRemark(int customerId, String memo) => _req('PUT', '/api/customers/$customerId/remark', body: {'memo': memo});
   Future<void> savePersonal(int customerId, Json personal) => _req('PUT', '/api/customers/$customerId/personal', body: {'personal': personal});
   Future<void> setIdentity(int customerId, String status) => _req('PUT', '/api/customers/$customerId/identity', body: {'status': status});
+  // 유입 채널(E2E batch 3 #2) — KOS 고객 칸 · null = 비움 · 같은 값이면 back 이 KOS 안 부름
+  Future<void> saveFunnel(int customerId, int? funnelId) => _req('PUT', '/api/customers/$customerId/funnel', body: {'funnelId': funnelId});
+  // 여권 사진 삭제(E2E batch 3 #1) — ccc 사진 · 그 사진으로 한 신분 확인(→ 미확인) · KOS 이미지. 응답 kos = deleted | not_found | skipped
+  Future<String> deleteIdPhoto(int photoId) async => '${((await _req('DELETE', '/api/id-photos/$photoId')) as Map)['kos'] ?? ''}';
 
   // §5-3 띄우기 — 기기 목록 · 만들기(deviceId 없으면 QR 만)
   Future<List<DisplayTarget>> displayTargets() async {

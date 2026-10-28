@@ -149,19 +149,79 @@ class ResvCardTile extends StatelessWidget {
 class ResvLegend extends StatelessWidget {
   final Map<String, int> counts;
   const ResvLegend(this.counts, {super.key});
+  // 한 줄(사용자 2026-10-28 — 두 줄로 꺾이지 않게) · 넘치면 가로 스크롤 · 공통 StatusChip
   @override
-  Widget build(BuildContext context) => Wrap(spacing: 6, runSpacing: 6, children: [
-        for (final l in legend)
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-            decoration: BoxDecoration(
-              color: l.bg,
-              borderRadius: BorderRadius.circular(999),
-              border: l.outline != null ? Border.all(color: l.outline!) : null,
-            ),
-            child: Text('${mainName[l.main]} ${counts[l.main.name] ?? 0}', style: Typo.caption600.copyWith(color: l.fg)),
-          ),
+  Widget build(BuildContext context) => ChipRow([
+        for (final l in legend) StatusChip(mainName[l.main]!, count: counts[l.main.name] ?? 0, bg: l.bg, fg: l.fg, outline: l.outline),
       ]);
+}
+
+// 공통 상태 칩(사용자 2026-10-28 「탭마다 칩 디자인이 다 다르다」) — 예약 현황 범례 칩이 기준: 알약 · caption 600 · 웹 2계층 색 · 「이름 개수」.
+// 범례(onTap 없음) = 상태 색 그대로 / 필터(onTap) = 고르지 않음 흰 바탕 · 회색 글자 · gray-300 테두리(점이 상태 색) ·
+// 고름 = primary-100 · primary 글자 · primary 테두리. 보이는 크기는 같고 누르는 자리만 위아래로 넓다
+class StatusChip extends StatelessWidget {
+  final String label;
+  final int? count;
+  final Color bg, fg;
+  final Color? outline;
+  final Color? dot, dotRing; // 필터 점(시술 현황 ○ 대기 · ● 진행 등)
+  final bool selected;
+  final VoidCallback? onTap;
+  const StatusChip(this.label,
+      {super.key, this.count, this.bg = Ms.gray100, this.fg = Ms.gray700, this.outline, this.dot, this.dotRing, this.selected = false, this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final filter = onTap != null;
+    final (b, f, o) = !filter ? (bg, fg, outline ?? bg) : selected ? (Ms.primary100, Ms.primary, Ms.primary) : (Ms.white, Ms.gray700, Ms.gray300);
+    final chip = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(color: b, borderRadius: BorderRadius.circular(999), border: Border.all(color: o)),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        if (dot != null) ...[
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(color: dot, shape: BoxShape.circle, border: dotRing != null ? Border.all(color: dotRing!, width: 1.5) : null),
+          ),
+          const SizedBox(width: 4),
+        ],
+        Text(count == null ? label : '$label $count', style: Typo.caption600.copyWith(color: f)),
+      ]),
+    );
+    if (!filter) return chip;
+    return Semantics(
+      button: true,
+      selected: selected,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: chip),
+      ),
+    );
+  }
+}
+
+// 칩 한 줄 — 넘치면 가로 스크롤 · 간격 4 · **위 · 아래 여백도 여기서**(모든 탭 같게 · 예약 현황 그룹 필터 줄이 기준 ·
+// 사용자 batch 4 #2 — 화면마다 감싸는 여백이 달라 탭마다 칩 위 · 아래가 달랐다). 화면은 좌우만 준다.
+// 보이는 칩 위 · 아래 = chipRowVertical(2) + 필터 칩 누르는 자리(6)
+const double chipRowVertical = 2;
+
+class ChipRow extends StatelessWidget {
+  final List<Widget> chips;
+  final double left, right;
+  const ChipRow(this.chips, {super.key, this.left = 0, this.right = 0});
+  @override
+  Widget build(BuildContext context) => Align(
+        alignment: Alignment.centerLeft, // 칩이 짧아도 왼쪽부터(가운데 뜨지 않게)
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: EdgeInsets.fromLTRB(left, chipRowVertical, right, chipRowVertical),
+          child: Row(children: [
+            for (final (i, c) in chips.indexed) ...[if (i > 0) const SizedBox(width: 4), c],
+          ]),
+        ),
+      );
 }
 
 // 원내(내원 현황) 카드 — 이름 · 발음 · 국기 / 수납 필요 Badge 또는 상태 칩 / 전체 · 결제 · 수납 필요 칸(웹 ClinicCard)

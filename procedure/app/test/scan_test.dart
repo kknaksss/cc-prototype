@@ -106,7 +106,7 @@ void main() {
       if (c.method == 'scanPassport') args = c.arguments;
       return null;
     });
-    expect(args, {'windows': 3, 'windowSec': 8.0});
+    expect(args, {'windows': 3, 'windowSec': 8.0, 'debug': true}); // 시험 = debug 빌드
     expect(find.byType(ScanScreen), findsNothing);
     app.stream.dispose();
   });

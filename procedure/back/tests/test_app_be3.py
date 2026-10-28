@@ -110,7 +110,7 @@ def test_display_sse_to_that_device_only(env):
         return q
 
     q = asyncio.run(go())
-    assert sent == []  # 앞에 있으면 푸시 없음
+    assert sent == [q["id"]]  # SSE 로 보내도 푸시도 1(E2E batch 2 — 둘 다)
     got = client.get(f"/api/display-requests/pending?deviceId={dev['phone']}", headers=auth["coordinator"]).json()
     assert got == {"items": []}
     got = client.get(f"/api/display-requests/pending?deviceId={dev['tab']}", headers=auth["coordinator"]).json()

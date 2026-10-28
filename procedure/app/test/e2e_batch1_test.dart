@@ -1,4 +1,4 @@
-// 실기기 E2E batch 1 — #1 installId · #2 첫 로그인 기기 이름 · #3 SSE display → 화면 열림(다른 탭) · #5 ccc 링크
+// 실기기 E2E batch 1 — #1 installId · #3 SSE display → 화면 열림(다른 탭) · #5 ccc 링크
 import 'dart:async';
 import 'dart:convert';
 
@@ -66,7 +66,7 @@ void main() {
     push.onToken!('beef01');
     await Future<void>.delayed(const Duration(milliseconds: 10));
     final dev = reqs.where((r) => r.url.path == '/api/devices').map((r) => jsonDecode(r.body) as Map).toList();
-    expect(dev.last, {'token': 'beef01', 'name': '코디 폰', 'kind': anyOf('phone', 'tablet'), 'installId': 'abcd-1234'});
+    expect(dev.first, {'token': 'beef01', 'name': '코디 폰', 'kind': anyOf('phone', 'tablet'), 'installId': 'abcd-1234'}); // name = 처음 등록만(batch 2)
     await app.renameDevice('데스크 태블릿');
     final last = jsonDecode(reqs.lastWhere((r) => r.url.path == '/api/devices').body) as Map;
     expect(last['installId'], 'abcd-1234');
@@ -118,47 +118,6 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 120));
     expect(app.deviceId, 9);
     app.stream.dispose();
-  });
-
-  testWidgets('#2 첫 로그인 — 「이 기기 이름」 → 저장 = 이름 등록 · 다시 안 물음 / [나중에] 도 다시 안 물음', (t) async {
-    SharedPreferences.setMockInitialValues({'push.deviceToken': 'beef03'});
-    messenger.setMockMethodCallHandler(ch, (c) async => switch (c.method) {
-          'status' => 'authorized',
-          'requestPermission' => true,
-          'installId' => 'iid',
-          _ => null,
-        });
-    late AppState app;
-    final (a, reqs) = api(() => app);
-    app = AppState(store: MemStore([]), api: a, push: PushChannel(ch), stream: _idleStream());
-    await t.runAsync(() async {
-      await app.boot();
-      await app.login('coord', 'pw');
-    });
-    expect(app.askDeviceName.value, isTrue);
-    await t.pumpWidget(AppScope(state: app, child: const MaterialApp(home: _ShellOnly())));
-    await t.pump();
-    await t.pump(const Duration(milliseconds: 300));
-    expect(find.text('이 기기 이름'), findsOneWidget);
-    await t.enterText(find.byKey(const Key('device-name')), '코디 폰');
-    await t.tap(find.text('저장'));
-    for (var i = 0; i < 100 && (app.deviceName != '코디 폰' || find.text('이 기기 이름').evaluate().isNotEmpty); i++) {
-      await t.pump(const Duration(milliseconds: 100));
-      await t.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
-    }
-    expect(find.text('이 기기 이름'), findsNothing);
-    expect(app.deviceName, '코디 폰');
-    final p = await SharedPreferences.getInstance();
-    expect(p.getString('device.name'), '코디 폰');
-    expect(p.getBool('device.nameAsked'), isTrue);
-    await t.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 30)));
-    final named = reqs.where((r) => r.url.path == '/api/devices').map((r) => jsonDecode(r.body) as Map).where((b) => b['name'] == '코디 폰');
-    expect(named.first, {'token': 'beef03', 'name': '코디 폰', 'kind': anyOf('phone', 'tablet'), 'installId': 'iid'});
-    // 다시 로그인해도 안 물음
-    app.askDeviceName.value = false;
-    await t.runAsync(() => app.login('coord', 'pw'));
-    expect(app.askDeviceName.value, isFalse);
-    await t.pumpWidget(const SizedBox());
   });
 
   testWidgets('#3 SSE display(이 기기) → 다른 탭에 있어도 스캔 화면이 열림 · pending 실패해도', (t) async {
@@ -255,13 +214,6 @@ void main() {
     app.stream.dispose();
   });
 }
-
-// 스트림 없는 시험용(연결 시도 안 함)
-BoardStream _idleStream() => BoardStream(
-      uri: () => Uri.parse('http://x/s'),
-      onUnauthorized: () {},
-      clientFactory: () => MockClient.streaming((req, _) async => http.StreamedResponse(const Stream.empty(), 200)),
-    );
 
 // 탭 화면은 빼고 Shell 의 띄우기 · 이름 시트만 — 탭 본문(예약 · 판)은 다른 시험이 본다
 class _ShellOnly extends StatelessWidget {

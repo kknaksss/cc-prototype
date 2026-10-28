@@ -57,15 +57,15 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   // 기기 행 id(§5-3 · r2) — POST /api/devices 응답. 알림 거부 기기 = null(띄우기 · pending 안 씀). 로그아웃 · 계정 바뀜 때 지운다
   int? deviceId;
-  // 이 기기 이름(설정 「이 기기」 · D7-70) — 고친 값을 기억해 다시 등록할 때 덮지 않는다
+  // 이 기기 이름(설정 「이 기기」 · D7-70) — 기본 = 기종 이름(E2E batch 2 #3) · 고친 값을 기억해 다시 등록할 때 덮지 않는다
   String? deviceName;
   static const _deviceIdKey = 'push.deviceId';
   static const _deviceNameKey = 'device.name';
+  // 이름을 한 번 등록했는가(E2E batch 2 #3) — name 은 처음 등록 · 설정에서 저장할 때만 싣는다(매번 실으면 back 의 이름을 덮는다)
+  static const _nameSentKey = 'device.nameSent';
+  bool _nameSent = false;
   // 설치 단위 id(E2E batch 1 #1) — 키체인 값(네이티브). 등록 때마다 실어 옛 토큰 행을 바꿔 끼운다
   String? installId;
-  // 첫 로그인 「이 기기 이름」 시트(E2E batch 1 #2) — 이름을 정했거나 [나중에] 한 기기는 다시 묻지 않는다
-  final ValueNotifier<bool> askDeviceName = ValueNotifier(false);
-  static const _nameAskedKey = 'device.nameAsked';
   // 로그인 전에 ccc:// 링크로 열림 — 로그인 뒤 claim(E2E batch 1 #5)
   String? _pendingLink;
 
@@ -226,8 +226,11 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       deviceToken = p.getString(_tokenKey);
       deviceId = p.getInt(_deviceIdKey);
       deviceName = p.getString(_deviceNameKey);
+      _nameSent = p.getBool(_nameSentKey) ?? false;
     } catch (_) {}
     installId = await push.installId();
+    // 설정에서 정한 이름이 없으면 기종 이름(E2E batch 2 #3 — 묻지 않는다) · 정한 이름은 그대로
+    deviceName ??= await push.deviceName();
     push.onToken = _onDeviceToken;
     push.onTap = _onTap;
     push.onLink = openLink;
@@ -281,34 +284,13 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       if (link != null && session != null) claimQr(link);
     });
     refreshDisplays(); // 로그인 · 시작 때 놓친 띄우기(§5-3 ③)
-    _maybeAskDeviceName();
   }
 
-  // 첫 로그인 — 아직 이름을 정하지 않은 기기면 「이 기기 이름」 시트(Shell 이 연다 · E2E batch 1 #2)
-  Future<void> _maybeAskDeviceName() async {
+  Future<void> _markNameSent() async {
+    _nameSent = true;
     try {
-      final p = await SharedPreferences.getInstance();
-      if (p.getString(_deviceNameKey) == null && p.getBool(_nameAskedKey) != true) askDeviceName.value = true;
+      await (await SharedPreferences.getInstance()).setBool(_nameSentKey, true);
     } catch (_) {}
-  }
-
-  // 시트 닫힘 — 이름을 정했으면 저장 · 등록(토큰 있으면) · [나중에] 면 기본 이름 그대로. 둘 다 다시 묻지 않는다
-  Future<void> answerDeviceName(String? raw) async {
-    askDeviceName.value = false;
-    try {
-      await (await SharedPreferences.getInstance()).setBool(_nameAskedKey, true);
-    } catch (_) {}
-    final name = raw?.trim() ?? '';
-    if (name.isEmpty || name.length > 40) return;
-    await _saveDeviceName(name);
-    final t = deviceToken;
-    if (t != null && session != null) {
-      try {
-        await api.registerDevice(t, name: name, kind: deviceKind(), installId: installId);
-      } on ApiError {
-        // 다음 등록 때 저장된 이름으로 다시 간다
-      }
-    }
   }
 
   Future<void> _saveDeviceName(String name) async {
@@ -354,10 +336,12 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     if (token != deviceToken && deviceToken != null) token = deviceToken!; // 기다리는 동안 새 토큰이 왔으면 새 것으로
     try {
       if (deviceName == null) {
-        final d = await push.deviceName(); // 기다리는 동안 사용자가 정한 이름(첫 로그인 시트)을 덮지 않게
+        final d = await push.deviceName(); // 기종 이름 — 기다리는 동안 설정에서 정한 이름을 덮지 않게
         deviceName ??= d;
       }
-      final id = await api.registerDevice(token, name: deviceName, kind: deviceKind(), installId: installId);
+      final sendName = !_nameSent && deviceName != null;
+      final id = await api.registerDevice(token, name: sendName ? deviceName : null, kind: deviceKind(), installId: installId);
+      if (sendName) await _markNameSent();
       if (id != null && id != deviceId) {
         await _setDeviceId(id);
         stream.stop(); // SSE 를 deviceId 를 실어 다시 연다(§7.1)
@@ -389,6 +373,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
             await api.registerDevice(t, name: name, kind: deviceKind(), installId: installId);
           });
     if (ok) {
+      if (t != null) await _markNameSent();
       await _saveDeviceName(name);
       toaster.show('기기 이름을 바꿨어요');
     }
@@ -412,7 +397,6 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     displays.value = const [];
     _openedDisplays.clear();
     _pendingLink = null;
-    askDeviceName.value = false;
     tab.value = AppTab.reservations;
     session = null;
     await store.clear();

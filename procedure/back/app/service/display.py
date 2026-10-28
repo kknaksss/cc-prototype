@@ -1,7 +1,8 @@
 """띄우기 요청(SPEC-004 §5-3) — 웹 · 앱 예약 상세에서 「이 예약의 문진 / 여권 스캔을 저 기기에 띄워라」.
 
 - 만들기: 같은 예약 · 같은 종류의 pending 은 canceled 로 닫고 새로 · 유효 PROC_DISPLAY_TTL_MIN(10분) · 지나면 expired
-- 닿기: 그 기기 SSE 가 열려 있으면 `event: display`(그 기기 스트림에만) · 아니면 띄우기 푸시(보이는 알림 · 소리 없음 · 목록 밖)
+- 닿기: 그 기기 SSE 가 열려 있으면 `event: display`(그 기기 스트림에만) + 늘 띄우기 푸시
+  (보이는 알림 · 소리 없음 · 목록 밖 · E2E batch 2)
 - QR: 무작위 32바이트 토큰 · DB 엔 sha256 만 · claim 1회 · 유효 10분
 - pending: 그 기기의 pending + 이미 열린 것(오래된 것 먼저) — 돌려주며 opened 로(코디 결정 2026-10-27)
 """
@@ -16,7 +17,7 @@ from app.config import Settings
 from app.domain.clock import Clock, iso, today_range_kst
 from app.domain.errors import BadRequest, Conflict, NotFound
 from app.domain.models import Account, DisplayRequest
-from app.repository.repo import Repository, Tx
+from app.repository.repo import Repository, Tx, live_devices
 from app.service.devices import DeviceNotFound, DeviceService
 
 KINDS = ("questionnaire", "scan")
@@ -56,7 +57,8 @@ class DisplayService:
         since = self.clock.now() - timedelta(hours=TARGET_HOURS)
         with self.repo.tx() as tx:
             coord = {a.id for a in tx.accounts() if a.active and a.role == TARGET_ROLE}
-            devs = [d for d in tx.devices() if d.account_id in coord and d.last_seen_at and d.last_seen_at >= since]
+            devs = [d for d in live_devices(tx.devices())
+                    if d.account_id in coord and d.last_seen_at and d.last_seen_at >= since]
         devs.sort(key=lambda d: d.last_seen_at, reverse=True)  # type: ignore[arg-type, return-value]
         seen: set[tuple] = set()  # 계정 · installId 당 하나(가장 최근 · 없으면 행마다 · E2E batch 1 #1)
         uniq = []
@@ -94,12 +96,12 @@ class DisplayService:
         return {"id": rid, "qrToken": token, "expiresAt": iso(expires)}
 
     def reach(self, request_id: int, device_id: int, kind: str, reservation_id: int) -> str:
-        """SSE 가 열려 있으면 그 기기 스트림 · 아니면 띄우기 푸시."""
+        """SSE(그 기기 스트림이 열려 있으면) **와** 띄우기 푸시를 둘 다 보낸다(E2E batch 2) — 허브는 죽은 연결을 ping 전까지
+        online 으로 보므로 잠긴 · 뒤 폰을 놓칠 수 있다. 앱은 requestId 로 한 번만 연다(batch 1 W1)."""
         data = {"requestId": request_id, "deviceId": device_id, "kind": kind, "reservationId": reservation_id}
-        if self.online(device_id) and self.send(device_id, data):
-            return "sse"
+        sse = self.online(device_id) and self.send(device_id, data) > 0
         self.push(request_id)
-        return "push"
+        return "sse+push" if sse else "push"
 
     # ------------------------------------------------------------------ 기기 쪽 — pending · claim
     def pending(self, actor: Account, device_id: int | None) -> list[dict[str, Any]]:

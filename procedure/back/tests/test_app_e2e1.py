@@ -89,7 +89,8 @@ def test_install_id_targets_one_per_install(env):
                        "VALUES (?, ?, 'iPhone', 'IFV-1', 'x', 'x', ?)",
                        (acc[IDS["coordinator"]].id, tok("dup"), (T0 - timedelta(hours=1)).isoformat()))
     got = client.get("/api/devices/targets", headers=a).json()
-    assert sorted(x["deviceId"] for x in got) == sorted([keep, legacy])
+    assert [x["deviceId"] for x in got] == [keep]  # 설치 행이 있으면 kind 없는 옛 행은 가림(E2E batch 2 #1)
+    assert legacy not in [x["deviceId"] for x in got]
     assert next(x for x in got if x["deviceId"] == keep)["name"] == "데스크 패드"
 
 
@@ -128,9 +129,9 @@ def test_sse_display_reaches_device_stream_via_route(env):
         assert frame.startswith("event: display\ndata: ")
         assert json.loads(frame.split("data: ", 1)[1]) == {"requestId": q["id"], "deviceId": phone, "kind": "scan",
                                                            "reservationId": rid}
-        assert pushed == []  # SSE 로 닿으면 푸시 없음(운영 #10 과 같은 길)
-        c.display.create(acc[IDS["admin"]], rid, "questionnaire", pad)  # 연결 없는 기기 = 푸시
-        assert len(pushed) == 1
+        assert pushed == [q["id"]]  # SSE 로 닿아도 푸시 1(E2E batch 2 — 둘 다)
+        c.display.create(acc[IDS["admin"]], rid, "questionnaire", pad)  # 연결 없는 기기 = 푸시만
+        assert len(pushed) == 2
         with pytest.raises(TimeoutError):  # 웹 연결엔 display 0(시간 초과가 생성기를 닫으므로 끝에)
             await asyncio.wait_for(wit.__anext__(), 0.1)
         await it.aclose()

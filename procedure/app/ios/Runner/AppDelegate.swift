@@ -3,7 +3,7 @@ import UIKit
 import UserNotifications
 
 // 원장 호출 푸시(SPEC-004 §5-1) — APNs 직접(Firebase 0). Dart 와는 채널 "procedure/push" 하나로:
-//   Dart → 앱: ready(눌러서 연 알림이 있으면 그 payload 를 돌려줌) · requestPermission · status · register · deviceName · appVersion
+//   Dart → 앱: ready(눌러서 연 알림이 있으면 그 payload 를 돌려줌) · requestPermission · status · register · deviceName · deviceModel · appVersion
 //             · installId(설치 단위 id · 키체인 — E2E batch 1 #1) · takeLink(앱을 연 ccc:// 링크 · #5)
 //             · setAuth({base, token}) · clearAuth — 알림 [수락] 을 앱 없이 보내려고 키체인에 둔다
 //   앱 → Dart: onToken(16진 기기 토큰) · onTokenError · onTap({kind?, visitId?, callId?, reservationId?, requestId?}) · onLink(ccc:// 링크)
@@ -104,6 +104,15 @@ import UserNotifications
     case "deviceName":
       // 기기 이름(설정 「이 기기」 처음 값 · SPEC-004 §5-1.1 D7-27)
       result(UIDevice.current.name)
+    case "deviceModel":
+      // 기종 코드(utsname.machine · 예 iPhone16,1) — 기본 기기 이름 = 기종 이름(E2E batch 2 #3 · entitlement 없이).
+      // 시뮬레이터는 machine 이 arm64 라 SIMULATOR_MODEL_IDENTIFIER
+      var u = utsname()
+      uname(&u)
+      let machine = withUnsafeBytes(of: &u.machine) { raw in
+        String(decoding: raw.prefix { $0 != 0 }, as: UTF8.self)
+      }
+      result(ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"] ?? machine)
     case "appVersion":
       // 설정 「앱 정보」 — 버전 · 빌드(§6.14)
       let b = Bundle.main.infoDictionary

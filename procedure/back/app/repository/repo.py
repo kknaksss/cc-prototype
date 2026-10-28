@@ -90,6 +90,17 @@ def _display(r: sqlite3.Row) -> DisplayRequest:
                           parse(r["closed_at"]))
 
 
+def live_devices(devices: list[Device]) -> list[Device]:
+    """옛 행 가리기(E2E batch 2 #1) — 어떤 계정에 installId 있는 행이 있으면 그 계정의 installId 없는 옛 행 중
+    같은 kind(옛 행 kind 가 비었으면 어느 kind 든)는 뺀다. 지우지는 않는다(targets · 푸시 대상에서만 뺌)."""
+    installed: dict[int, set[str | None]] = {}
+    for d in devices:
+        if d.install_id:
+            installed.setdefault(d.account_id, set()).add(d.kind)
+    return [d for d in devices if d.install_id or d.account_id not in installed
+            or (d.kind is not None and d.kind not in installed[d.account_id])]
+
+
 def _op(r: sqlite3.Row) -> KosOp:
     return KosOp(r["id"], r["event_id"], r["visit_id"], r["seq"], r["api"], r["path"], json.loads(r["body"]),
                  json.loads(r["expect"]), r["status"], r["attempts"], r["checks"], r["last_error"])
@@ -355,13 +366,11 @@ class Tx:
             self.con.execute("DELETE FROM device WHERE token = ? AND account_id = ?", (token, account_id))
 
     def devices_of(self, account_ids: list[int]) -> list[tuple[int, int, str]]:
-        """[(device id, account id, token)]."""
+        """[(device id, account id, token)] — 가려진 옛 행(installId 없음 · E2E batch 2 #1)은 빼고(푸시 대상)."""
         if not account_ids:
             return []
-        marks = ", ".join("?" for _ in account_ids)
-        rows = self.con.execute(f"SELECT id, account_id, token FROM device WHERE account_id IN ({marks}) ORDER BY id",
-                                account_ids)
-        return [(r["id"], r["account_id"], r["token"]) for r in rows]
+        wanted = set(account_ids)
+        return [(d.id, d.account_id, d.token) for d in live_devices(self.devices()) if d.account_id in wanted]
 
     def add_push_log(self, **fields: Any) -> int:
         """푸시 내역 — 쌓기만(고치거나 지우지 않는다)."""

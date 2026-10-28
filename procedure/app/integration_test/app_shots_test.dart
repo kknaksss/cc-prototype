@@ -68,18 +68,11 @@ void main() {
     await t.tap(find.text('로그인'));
     await wait(t, find.text('설정'));
     await settle(t, 2500);
-    // 첫 로그인 「이 기기 이름」(E2E batch 1 #2) — 모든 순회에서 닫고 간다 · B1 은 찍는다
-    if (find.text('이 기기 이름').evaluate().isNotEmpty) {
-      if (wp == 'B1') await take('device_name_sheet');
-      await t.enterText(find.byKey(const Key('device-name')), '코디 폰');
-      await settle(t, 600);
-      if (wp == 'B1') await take('device_name_typed');
-      await t.tap(find.text('저장'));
-      await settle(t, 1500);
-    }
-    if (wp == 'B1') {
+    // E2E batch 2 #3 — 이름 창 없음 · 설정 「기기 이름」 = 기종 이름 자동
+    if (wp == 'B2') {
+      await take('after_login_no_name_sheet');
       await tab(t, '설정');
-      await take('settings_after_name');
+      await take('settings_model_name');
       return;
     }
 

@@ -1,6 +1,7 @@
 // 여권 스캔 · 스캔 확인(SPEC-004 §6.16 · D7-17 ~ D7-20 · D7-48 ~ D7-56 · 시안 없음 → DS 기본값).
 // ① 카메라(가이드 틀 125 × 88 · MRZ 자리 · 빛 반사 안내 — Runner TextScanner.swift · AVCaptureSession 연속 · 자동 매크로) →
-// ② 영상 프레임의 MRZ 자리를 기기 안에서 계속 읽어 검사 숫자가 맞으면 자동 촬영(E2E batch 1 #6) →
+// ② 영상 프레임의 MRZ 자리를 기기 안에서 계속 읽어 같은 판독이 연속 두 번이면 자동 촬영(E2E batch 1 #6 · batch 2 #4) ·
+//   [촬영] 버튼은 늘 — 찍은 사진에서 다시 읽고 못 읽으면 바로 손 입력 →
 // 정해진 시간 3번(또는 [손으로 입력]) 못 읽음 → 「읽지 못했어요」 + [손으로 입력](빈 확인 화면) → ③ 「읽은 값」 ↔ 「KOS 지금 값」 나란히 · 다른 칸 강조 ·
 // 고칠 수 있음 · name(카드 이름) 칸 없음 → ④ multipart 저장 → ⑤ 「저장했어요」 + ccc · KOS 사진 결과 따로 · KOS 실패면 [사진 다시 올리기].
 //
@@ -117,6 +118,7 @@ class _ScanScreenState extends State<ScanScreen> {
     if (!mounted) return;
     if (shot == null) return _close(); // 카메라 [닫기] = 닫기
     final m = shot.failed ? null : findMrz(shot.lines);
+    if (m == null && shot.shutter) return _manualEntry(); // [촬영] 사진에서도 못 읽음 → 바로 손 입력(E2E batch 2 #4)
     if (m == null) {
       setState(() {
         _fails = shot!.failed ? 3 : _fails + 1;

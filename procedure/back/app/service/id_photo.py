@@ -60,13 +60,17 @@ class PhotoService:
     async def upload(self, photo_id: int, visitor_kos_id: str, data: bytes) -> str:
         """④-c — 법적 검토 필요: 신분증 이미지 · 주민번호 처리 — KOS 고객 이미지로 올린다(KOS 보관 기간은 KOS 규칙).
 
-        공개 generate-uploading-url → presigned PUT → 공개 register-visitor-images(category · scheduleId · path 없음).
+        공개 generate-uploading-url → presigned PUT → 공개 register-visitor-images.
+        `scheduleId` = 그 스캔의 예약 일정(KOS 일정 상세 「사진 · 펜차트」 탭이 `get-visitor-images{visitorId, scheduleId}` 로
+        읽는다 — KOS 자체 여권 스캔도 싣는다 · E2E batch 2 #5) · 예약이 없으면 뺀다. category · path 는 안 보냄(지점 분류 없음).
         장비 = 내부 get-codes 의 「태블릿」 코드 객체 그대로 · 못 찾으면 올리지 않고 failed(equipment_code_missing).
         결과 ok | failed 를 id_photo 에 적고 돌려준다. 실패해도 고객 수정 · ccc 사진은 남는다.
         """
         with self.repo.tx() as tx:
             row = tx.id_photo(photo_id)
+            resv = tx.reservation(row["reservation_id"]) if row and row["reservation_id"] else None
         assert row is not None
+        schedule = {"scheduleId": resv.kos_id} if resv is not None and resv.kos_id else {}
         status, error = "failed", None
         try:
             client = self._client()
@@ -82,7 +86,7 @@ class PhotoService:
                     raise ValueError("generate-uploading-url: url 없음")
                 await client.put_presigned(url, data, "image/jpeg")
                 await client.open(PATH_REGISTER, {"images": [{
-                    "fileName": row["file_name"], "visitorId": visitor_kos_id, "source": "HOSPITAL",
+                    "fileName": row["file_name"], "visitorId": visitor_kos_id, "source": "HOSPITAL", **schedule,
                     "shootingDateTimeUtc": kos_utc(self.clock.now()), "equipment": equipment, "memo": MEMO}]})
                 status = "ok"
         except Exception as e:  # 상태 · 이름만(URL · 본문 없음)

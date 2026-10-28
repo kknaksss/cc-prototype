@@ -140,7 +140,12 @@ export const saveNotice = (date: string, noticeId: number | null, content: strin
   put<{ ok: true; notice: ResvNotice | null }>('/api/reservations/notice', { date, noticeId, content });
 
 // ─── 띄우기 요청(SPEC-004 §5-3) — deviceId 없으면 QR 만 · 같은 예약 · 종류 pending 은 back 이 canceled 로 닫고 새로
-export const displayTargets = () => request<DisplayTarget[]>('/api/devices/targets');
+// 목록은 최근 순 — back 이 installId 당 하나로 주지만, 실려 오면 화면도 installId 당 첫 줄만 둔다(E2E batch 1 #1)
+export const displayTargets = () =>
+  request<DisplayTarget[]>('/api/devices/targets').then((xs) => {
+    const seen = new Set<string>();
+    return xs.filter((x) => !x.installId || (!seen.has(x.installId) && !!seen.add(x.installId)));
+  });
 export const createDisplay = (reservationId: number, kind: DisplayKind, deviceId?: number) =>
   post<DisplayCreated>('/api/display-requests', deviceId === undefined ? { reservationId, kind } : { reservationId, kind, deviceId });
 export const closeDisplay = (id: number, status: 'done' | 'canceled') => post<Ok>(`/api/display-requests/${id}/close`, { status });

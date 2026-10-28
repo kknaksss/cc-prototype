@@ -483,6 +483,7 @@ export interface DisplayItem {
 // GET /api/devices/targets — 코디 계정 기기 · last_seen_at 24시간 · 최근 순
 export interface DisplayTarget {
   deviceId: number;
+  installId?: string | null; // 설치 단위 id(E2E batch 1 #1 — back 이 실으면 화면도 그 값당 하나)
   name: string;
   kind: 'phone' | 'tablet' | string | null;
   lastSeenAt: string | null;

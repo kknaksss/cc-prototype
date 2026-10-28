@@ -81,7 +81,7 @@ def _account(r: sqlite3.Row) -> Account:
 
 
 def _device(r: sqlite3.Row) -> Device:
-    return Device(r["id"], r["account_id"], r["token"], r["name"], r["kind"], parse(r["last_seen_at"]))
+    return Device(r["id"], r["account_id"], r["token"], r["name"], r["kind"], parse(r["last_seen_at"]), r["install_id"])
 
 
 def _display(r: sqlite3.Row) -> DisplayRequest:
@@ -315,13 +315,25 @@ class Tx:
 
     # ---------------------------------------------------------------- 푸시 기기(SPEC-004 §5-1.1)
     def put_device(self, account_id: int, token: str, at: datetime, *, name: str | None = None,
-                   kind: str | None = None) -> int:
-        """같은 토큰이 다른 계정에 있으면 지금 계정으로 옮긴다(한 기기 = 마지막 로그인 계정). 이름 · 종류는 보낸 것만 고친다."""
-        r = self.con.execute("SELECT id FROM device WHERE token = ?", (token,)).fetchone()
-        extra = {k: v for k, v in (("name", name), ("kind", kind)) if v is not None}
-        if r:
-            self._update("device", r["id"], {"account_id": account_id, **extra, "updated_at": at, "last_seen_at": at})
-            return int(r["id"])
+                   kind: str | None = None, install_id: str | None = None) -> int:
+        """같은 토큰이 다른 계정에 있으면 지금 계정으로 옮긴다(한 기기 = 마지막 로그인 계정). 이름 · 종류는 보낸 것만 고친다.
+
+        install_id 가 오면(E2E batch 1 #1) 같은 설치의 옛 행에 새 토큰을 바꿔 끼운다 — 행 · deviceId 하나 유지.
+        새 토큰이 이미 다른 행에 있으면 그 행은 지운다(토큰은 유일).
+        """
+        by_token = self.con.execute("SELECT id FROM device WHERE token = ?", (token,)).fetchone()
+        by_install = self.con.execute("SELECT id FROM device WHERE install_id = ? ORDER BY id DESC LIMIT 1",
+                                      (install_id,)).fetchone() if install_id else None
+        extra = {k: v for k, v in (("name", name), ("kind", kind), ("install_id", install_id)) if v is not None}
+        if by_install:
+            if by_token and by_token["id"] != by_install["id"]:
+                self.con.execute("DELETE FROM device WHERE id = ?", (by_token["id"],))
+            self._update("device", by_install["id"], {"account_id": account_id, "token": token, **extra, "updated_at": at,
+                                                      "last_seen_at": at})
+            return int(by_install["id"])
+        if by_token:
+            self._update("device", by_token["id"], {"account_id": account_id, **extra, "updated_at": at, "last_seen_at": at})
+            return int(by_token["id"])
         return self._insert("device", {"account_id": account_id, "token": token, **extra, "created_at": at,
                                        "updated_at": at, "last_seen_at": at})
 

@@ -1,6 +1,7 @@
 // 여권 스캔 · 스캔 확인(SPEC-004 §6.16 · D7-17 ~ D7-20 · D7-48 ~ D7-56 · 시안 없음 → DS 기본값).
-// ① 카메라(가이드 틀 125 × 88 · MRZ 자리 · 빛 반사 안내 — Runner TextScanner.swift) → ② 기기 안 글자 인식 → MRZ · 검사 숫자 →
-// 틀리면 「읽지 못했어요 · 다시 찍어 주세요」 · 3번 실패 → [손으로 입력](빈 확인 화면) → ③ 「읽은 값」 ↔ 「KOS 지금 값」 나란히 · 다른 칸 강조 ·
+// ① 카메라(가이드 틀 125 × 88 · MRZ 자리 · 빛 반사 안내 — Runner TextScanner.swift · AVCaptureSession 연속 · 자동 매크로) →
+// ② 영상 프레임의 MRZ 자리를 기기 안에서 계속 읽어 검사 숫자가 맞으면 자동 촬영(E2E batch 1 #6) →
+// 정해진 시간 3번(또는 [손으로 입력]) 못 읽음 → 「읽지 못했어요」 + [손으로 입력](빈 확인 화면) → ③ 「읽은 값」 ↔ 「KOS 지금 값」 나란히 · 다른 칸 강조 ·
 // 고칠 수 있음 · name(카드 이름) 칸 없음 → ④ multipart 저장 → ⑤ 「저장했어요」 + ccc · KOS 사진 결과 따로 · KOS 실패면 [사진 다시 올리기].
 //
 // 법적 검토 필요: 신분증 이미지 · 주민번호 처리 — 찍은 원본은 이 화면 상태(메모리)에만 둔다. 사진첩 · 파일 · 캐시에 쓰지 않고
@@ -99,37 +100,33 @@ class _ScanScreenState extends State<ScanScreen> {
     super.dispose();
   }
 
-  // ① · ② 찍기 → 읽기
+  // ① · ② 연속 스캔 — 네이티브가 MRZ 검사 숫자가 맞는 프레임을 자동으로 찍어 온다(E2E batch 1 #6)
+  // 정해진 시간 동안 못 읽음 · [손으로 입력] = 실패 화면(3 / 3 · [손으로 입력] · [다시 찍기])
   Future<void> _capture() async {
     setState(() {
       _photo = null; // [다시 찍기] = 앞 사진 버림
       _stage = _Stage.capture;
     });
-    Uint8List? jpeg;
+    PassportShot? shot;
     try {
-      jpeg = await widget.channel.takePassportPhoto();
+      shot = await widget.channel.scanPassport();
     } on NoCamera {
       if (mounted) setState(() => _stage = _Stage.noCamera);
       return;
     }
     if (!mounted) return;
-    if (jpeg == null) return _close(); // 카메라 [취소] = 닫기
-    setState(() {
-      _photo = jpeg;
-      _stage = _Stage.reading;
-    });
-    final lines = await widget.channel.recognizeText(jpeg);
-    final m = findMrz(lines);
-    if (!mounted) return;
+    if (shot == null) return _close(); // 카메라 [닫기] = 닫기
+    final m = shot.failed ? null : findMrz(shot.lines);
     if (m == null) {
       setState(() {
-        _fails++;
+        _fails = shot!.failed ? 3 : _fails + 1;
         _stage = _Stage.failed;
       });
       return;
     }
     _fill(mrzValues(m));
     setState(() {
+      _photo = shot!.photo;
       _manual = false;
       _stage = _Stage.confirm;
     });

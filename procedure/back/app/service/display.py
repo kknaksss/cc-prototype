@@ -58,6 +58,14 @@ class DisplayService:
             coord = {a.id for a in tx.accounts() if a.active and a.role == TARGET_ROLE}
             devs = [d for d in tx.devices() if d.account_id in coord and d.last_seen_at and d.last_seen_at >= since]
         devs.sort(key=lambda d: d.last_seen_at, reverse=True)  # type: ignore[arg-type, return-value]
+        seen: set[tuple] = set()  # 계정 · installId 당 하나(가장 최근 · 없으면 행마다 · E2E batch 1 #1)
+        uniq = []
+        for d in devs:
+            key = (d.account_id, d.install_id) if d.install_id else ("row", d.id)
+            if key not in seen:
+                seen.add(key)
+                uniq.append(d)
+        devs = uniq
         return [{"deviceId": d.id, "name": d.name or "iPhone", "kind": d.kind, "lastSeenAt": iso(d.last_seen_at),
                  "online": self.online(d.id)} for d in devs]
 

@@ -55,6 +55,8 @@ class PushChannel {
 
   void Function(String token)? onToken;
   void Function(PushTap tap)? onTap;
+  // ccc:// 링크로 앱이 열림(웹 QR 을 iOS 기본 카메라로 · E2E batch 1 #5)
+  void Function(String url)? onLink;
 
   // 시작 — 앱 쪽 콜백을 걸고, 눌러서 연 알림이 있으면 그 payload
   Future<PushTap?> ready() async {
@@ -65,6 +67,8 @@ class PushChannel {
         case 'onTap':
           final t = PushTap.parse(call.arguments);
           if (t != null) onTap?.call(t);
+        case 'onLink':
+          if (call.arguments is String) onLink?.call(call.arguments as String);
       }
       return null;
     });
@@ -100,6 +104,25 @@ class PushChannel {
   Future<String?> deviceName() async {
     try {
       return await _ch.invokeMethod<String>('deviceName');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // 설치 단위 id(identifierForVendor · 키체인 · E2E batch 1 #1) — POST /api/devices installId. 토큰이 바뀌어도 같은 값
+  Future<String?> installId() async {
+    try {
+      final v = await _ch.invokeMethod<String>('installId');
+      return v == null || v.isEmpty ? null : v;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // 꺼진 상태에서 링크로 열렸으면 그 링크(한 번만)
+  Future<String?> takeLink() async {
+    try {
+      return await _ch.invokeMethod<String>('takeLink');
     } catch (_) {
       return null;
     }

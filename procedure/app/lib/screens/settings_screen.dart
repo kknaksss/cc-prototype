@@ -116,11 +116,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     for (final x in settings)
                       _SwitchRow(notifKindName[x.kind]!, x.enabled, (v) => _toggle(x, v)),
                 ]),
+                // 이름은 이 기기에 먼저 두고 등록 때 보낸다(E2E batch 1 #2) — 기기 행이 없으면(알림 꺼짐) 웹 목록엔 아직 안 보임
                 _Section('이 기기', [
-                  if (app.deviceId == null)
-                    _Row('알림을 켜면 이 기기 이름을 정할 수 있어요', '', muted: true)
-                  else
-                    _Row('기기 이름', '${app.deviceName ?? ''} ›', onTap: _rename),
+                  _Row('기기 이름', '${app.deviceName ?? ''} ›', onTap: _rename),
+                  if (app.deviceId == null) _Row('알림을 켜면 웹 기기 목록에 보여요', '', muted: true),
                 ]),
                 _Section('앱 정보', [
                   _Row('버전', _version),

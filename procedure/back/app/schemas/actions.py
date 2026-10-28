@@ -96,6 +96,7 @@ class DeviceRequest(_Req):
     token: str = Field(pattern=r"^[0-9a-fA-F]{32,200}$")  # APNs 기기 토큰(16진)
     name: str | None = Field(default=None, min_length=1, max_length=40)  # 기기 이름(0.4.0 · D7-27)
     kind: Literal["phone", "tablet"] | None = None
+    installId: str | None = Field(default=None, min_length=1, max_length=100)  # 설치 단위 id(E2E batch 1 #1)
 
 
 class DeviceResponse(OkResponse):

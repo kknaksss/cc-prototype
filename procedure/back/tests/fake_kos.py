@@ -163,6 +163,10 @@ class ResvFake:
                            "default": False},
                           {"id": "eq-2", "category": "IMAGE_EQUIPMENT", "name": "DSLR", "order": 2, "closed": False,
                            "default": True}]
+        self.image_categories = [{"id": "ic-1", "category": "IMAGE_CATEGORY", "name": "시술 전", "order": 0, "closed": False,
+                                   "default": False},
+                                  {"id": "ic-2", "category": "IMAGE_CATEGORY", "name": "시술 후", "order": -1, "closed": False,
+                                   "default": False}]  # 데모 지점 꼴(「여권」 없음)
         self.uploads: list[dict] = []  # {url, content, contentType}
         self.registered: list[dict] = []
         self.submit_at = "2026-10-21T02:05:00Z"  # 다음 제출본 createdDateTimeUtc
@@ -204,7 +208,8 @@ class ResvFake:
         if name == "get-reservation-groups":
             return httpx.Response(200, json={"data": deepcopy(self.groups)})
         if name == "get-codes":
-            codes = {"FUNNEL": self.funnels, "IMAGE_EQUIPMENT": self.equipment}.get(body.get("category"), [])
+            codes = {"FUNNEL": self.funnels, "IMAGE_EQUIPMENT": self.equipment,
+                     "IMAGE_CATEGORY": self.image_categories}.get(body.get("category"), [])
             return httpx.Response(200, json={"data": deepcopy(codes)})
         if name == "generate-uploading-url":
             return httpx.Response(200, json={"data": f"https://s3.fake.test/bucket/{body['fileName']}?X-Amz-Signature=sig"})

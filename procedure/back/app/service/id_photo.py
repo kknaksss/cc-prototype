@@ -22,6 +22,8 @@ log = logging.getLogger("procedure.photo")
 # 법적 검토 필요: 신분증 이미지 · 주민번호 처리 — 종류 = 여권 고정(주민번호 있는 신분증이면 마스킹 자리 · D7-51)
 DOC_TYPE = "passport"
 EQUIPMENT_CATEGORY = "IMAGE_EQUIPMENT"
+IMAGE_CATEGORY = "IMAGE_CATEGORY"
+CATEGORY_NAME = "여권"  # 이미지 분류 — 이름으로 업로드 때마다 찾는다(운영 지점엔 있음 · 데모엔 없음 → 안 보냄)
 EQUIPMENT_NAME = "태블릿"  # 코드 id 는 지점마다 다르다 — 이름으로 업로드 때마다 찾는다(레포 · env 에 id 없음 · Q-155)
 MEMO = "ccc 여권 스캔"
 PATH_CODES = "meta/codes/v1/queries/get-codes"
@@ -62,7 +64,9 @@ class PhotoService:
 
         공개 generate-uploading-url → presigned PUT → 공개 register-visitor-images.
         `scheduleId` = 그 스캔의 예약 일정(KOS 일정 상세 「사진 · 펜차트」 탭이 `get-visitor-images{visitorId, scheduleId}` 로
-        읽는다 — KOS 자체 여권 스캔도 싣는다 · E2E batch 2 #5) · 예약이 없으면 뺀다. category · path 는 안 보냄(지점 분류 없음).
+        읽는다 — KOS 자체 여권 스캔도 싣는다 · E2E batch 2 #5) · 예약이 없으면 뺀다.
+        `category` = 내부 get-codes{IMAGE_CATEGORY} 에서 이름 「여권」 코드 객체 그대로 — 없으면(데모 지점) 안 보낸다.
+        path 는 안 보냄.
         장비 = 내부 get-codes 의 「태블릿」 코드 객체 그대로 · 못 찾으면 올리지 않고 failed(equipment_code_missing).
         결과 ok | failed 를 id_photo 에 적고 돌려준다. 실패해도 고객 수정 · ccc 사진은 남는다.
         """
@@ -81,13 +85,17 @@ class PhotoService:
                 error = "equipment_code_missing"
                 log.warning("KOS 이미지 올리기 건너뜀 — 장비 코드 「%s」 없음", EQUIPMENT_NAME)
             else:
+                cats = await client.internal(PATH_CODES, {"category": IMAGE_CATEGORY})
+                category = next((x for x in cats.get("data") or [] if isinstance(x, dict)
+                                 and x.get("category") == IMAGE_CATEGORY and x.get("name") == CATEGORY_NAME), None)
                 url = (await client.open(PATH_UPLOAD_URL, {"fileName": row["file_name"]})).get("data")
                 if not isinstance(url, str) or not url:
                     raise ValueError("generate-uploading-url: url 없음")
                 await client.put_presigned(url, data, "image/jpeg")
                 await client.open(PATH_REGISTER, {"images": [{
                     "fileName": row["file_name"], "visitorId": visitor_kos_id, "source": "HOSPITAL", **schedule,
-                    "shootingDateTimeUtc": kos_utc(self.clock.now()), "equipment": equipment, "memo": MEMO}]})
+                    "shootingDateTimeUtc": kos_utc(self.clock.now()), "equipment": equipment,
+                    **({"category": category} if category else {}), "memo": MEMO}]})
                 status = "ok"
         except Exception as e:  # 상태 · 이름만(URL · 본문 없음)
             error = kos_errors.describe(e)[:80]

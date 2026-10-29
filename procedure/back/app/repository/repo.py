@@ -129,6 +129,14 @@ class Tx:
         self.con = con
 
     # ---------------------------------------------------------------- 공통
+    def lock_write(self) -> None:
+        """쓰기 잠금을 지금 잡는다(BEGIN IMMEDIATE) — 첫 INSERT/UPDATE 전의 읽기도 다른 쓰기 tx 와 직렬화(r4 W3-2).
+
+        sqlite3 기본은 첫 쓰기 바로 앞에서만 BEGIN(DEFERRED)을 걸어 그 전 SELECT 는 남의 커밋 사이에 낀다.
+        """
+        if not self.con.in_transaction:
+            self.con.execute("BEGIN IMMEDIATE")
+
     def _insert(self, table: str, fields: dict[str, Any]) -> int:
         cols = ", ".join(f'"{k}"' for k in fields)
         marks = ", ".join("?" for _ in fields)
@@ -767,6 +775,12 @@ class Tx:
 
     def update_chat_photo(self, photo_id: int, **fields: Any) -> None:
         self._update("chat_photo", photo_id, fields)
+
+    def chat_photo_live_refs(self, file_name: str) -> int:
+        """같은 파일을 가리키는 안 지운 첨부 행 수(원본 + 전달본 · r4) — 0 이면 파일을 지워도 된다."""
+        r = self.con.execute("SELECT COUNT(*) AS n FROM chat_photo WHERE file_name = ? AND deleted_at IS NULL",
+                             (file_name,)).fetchone()
+        return int(r["n"])
 
 
 class Repository:

@@ -8,6 +8,7 @@ import '../model/board.dart';
 import '../theme/tokens.dart';
 import '../view/view.dart';
 import 'ui.dart';
+import 'sheet.dart';
 
 // 관리자가 이 호출을 수락할 때 쓸 원장 — 지정 호출이면 그 원장, 전체 호출이면 null(골라야 함)
 int? fixedDoctor(OpenCall k) => k.kind == 'one' ? k.targetDoctorId : null;
@@ -31,7 +32,7 @@ Future<void> acceptCall(BuildContext context, Board b, BoardCard c, OpenCall k) 
 // 관리자 · 전체 호출 — 원장 하나를 고르고 [<원장> 수락 · N건]
 Future<void> pickDoctorToAccept(BuildContext context, Board b, BoardCard c, OpenCall k) {
   final app = AppScope.read(context);
-  return showModalBottomSheet(
+  return showAppSheet(
     context: context,
     isScrollControlled: true,
     backgroundColor: Ms.white,

@@ -1,4 +1,4 @@
-"""직원 채팅(SPEC-007) — 1:1 · 그룹 · 텍스트 · 사진 · 동영상 · 글 수정(r3). 다섯 역할 모두 같은 권한 · 가짜 판에서도 됨(KOS 없음).
+"""직원 채팅(SPEC-007) — 1:1 · 그룹 · 텍스트 · 사진 · 동영상 · 글 수정(r3) · 전달(r4). 다섯 역할 같은 권한 · 가짜 판에서도 됨.
 
 법적 검토 필요: 직원 채팅 — 고객 정보가 메시지 · 사진으로 오갈 수 있음(보존 기간 없음 · 열람 로그 없음 · 잠금 화면에 본문 앞부분)
 
@@ -19,7 +19,7 @@ from typing import Any, BinaryIO
 
 from app.config import Settings
 from app.domain.clock import Clock, iso_ms, parse, to_db_ms
-from app.domain.errors import BadRequest, Conflict, Forbidden, NotFound
+from app.domain.errors import BadRequest, Conflict, DomainError, Forbidden, NotFound
 from app.domain.models import Account
 from app.repository.repo import Repository, Tx
 from app.service.id_photo import MAX_BYTES
@@ -39,6 +39,7 @@ PHOTO_SUBDIR = "chat"  # PROC_PHOTO_DIR/chat/ — 신분증(바로 아래)과 �
 # 동영상(r3 · §9.2) — 변환 뒤 본 파일 90MB(코디 처분 D-58: 운영 앞단 본문 한도 100MB 에 multipart 덧붙는 것까지) · 3분
 VIDEO_MAX_BYTES = 90 * 1024 * 1024
 VIDEO_MAX_MS = 180000
+FORWARD_MAX = 10  # 전달 대상 한 번에(D9-63)
 MP4_BOX = b"ftyp"  # MP4 머리 = 4 ~ 8 바이트
 CHUNK = 1024 * 1024  # 임시 파일 → 저장 자리 조각 복사
 
@@ -188,29 +189,35 @@ class ChatService:
         return {"items": items, "unreadRooms": sum(1 for r in items if r["unread"] > 0)}
 
     # ------------------------------------------------------------------ #3 · #4 방 만들기
+    def _open_direct(self, tx: Tx, actor: Account, account_id: int, at: str,
+                     accounts: dict[int, Account]) -> tuple[int, bool, list[int]]:
+        """1:1 열기 · 만들기 · 내 숨김 풂(같은 tx 안 — #3 · 전달 사람 대상 r4). (방 id, 새로 만들었나, chat_room 받을 사람)."""
+        if account_id == actor.id or not candidate(accounts.get(account_id)):
+            raise BadRequest("chat_person_invalid", "대화할 수 없는 직원이에요")
+        lo, hi = sorted((actor.id, account_id))
+        room_id, created = tx.add_direct_room(f"{lo}:{hi}", actor.id, at)
+        to: list[int] = []
+        if created:
+            for i in (actor.id, account_id):
+                self._join(tx, room_id, i, at)
+            to = [actor.id, account_id]
+        elif (tx.chat_member(room_id, actor.id) or {}).get("hidden_at") is not None:
+            tx.update_chat_member(room_id, actor.id, hidden_at=None)
+            to = [actor.id]
+        if created:
+            log.info("채팅 1:1 만듦 room=%d account=%d", room_id, actor.id)
+        return room_id, created, to
+
     def open_direct(self, actor: Account, account_id: int) -> dict[str, Any]:
         """1:1 열기(§4.1) — 같은 두 사람 = 같은 방 · 내가 숨겼으면 다시 보임."""
         at = to_db_ms(self.clock.now())
         with self.repo.tx() as tx:
             accounts = self._accounts(tx)
-            if account_id == actor.id or not candidate(accounts.get(account_id)):
-                raise BadRequest("chat_person_invalid", "대화할 수 없는 직원이에요")
-            lo, hi = sorted((actor.id, account_id))
-            room_id, created = tx.add_direct_room(f"{lo}:{hi}", actor.id, at)
-            to: list[int] = []
-            if created:
-                for i in (actor.id, account_id):
-                    self._join(tx, room_id, i, at)
-                to = [actor.id, account_id]
-            elif (tx.chat_member(room_id, actor.id) or {}).get("hidden_at") is not None:
-                tx.update_chat_member(room_id, actor.id, hidden_at=None)
-                to = [actor.id]
+            room_id, _, to = self._open_direct(tx, actor, account_id, at, accounts)
             room = tx.chat_room(room_id)
             assert room is not None
             out = self._room(tx, room, actor.id, accounts)
             events = self._room_events(tx, room, to, accounts)
-        if created:
-            log.info("채팅 1:1 만듦 room=%d account=%d", room_id, actor.id)
         self._emit(events)
         return out
 
@@ -326,6 +333,41 @@ class ChatService:
             items = self._messages(tx, rows, self._accounts(tx))
         return {"items": items, "hasMore": more}
 
+    def _check_peer(self, tx: Tx, room: dict[str, Any], actor: Account, accounts: dict[int, Account]) -> None:
+        """비활성 상대 1:1 = 새 메시지 없음(D9-42) — 보내기 · 전달 대상(r4)."""
+        if room["kind"] == "direct":
+            peer = next((accounts.get(m["account_id"]) for m in tx.chat_members(room["id"]) if m["account_id"] != actor.id),
+                        None)
+            if peer is None or not peer.active:
+                raise Conflict("chat_peer_inactive", "비활성 계정이에요")
+
+    def _insert(self, tx: Tx, room: dict[str, Any], actor: Account, accounts: dict[int, Account], *, kind: str,
+                body: str | None, attach: int | None, client_id: str, at: str,
+                also: list[int] | tuple[int, ...] = ()) -> tuple[int, dict[str, Any], list[Event]]:
+        """새 메시지 한 줄(보내기 · 전달 r4 같이 씀) — 넣기 · 첨부 붙이기 · 방 last_message_at · 내 읽음 · 숨김 다시 보임.
+
+        (메시지 id, Message, 커밋 뒤 낼 이벤트). also = chat_room 을 더 받을 사람(전달이 열거나 만든 1:1).
+        """
+        room_id = room["id"]
+        members = tx.chat_members(room_id)
+        mid = tx.add_chat_message(room_id=room_id, account_id=actor.id, kind=kind, body=body, photo_id=attach,
+                                  client_id=client_id, created_at=at, updated_at=at)
+        if attach is not None:
+            tx.update_chat_photo(attach, message_id=mid)
+        prev = room["last_message_at"]
+        tx.update_chat_room(room_id, last_message_at=at)
+        tx.update_chat_member(room_id, actor.id, last_viewed_at=at, last_read_message_id=mid)
+        # 숨긴 1:1 이 이 메시지로 다시 보이는 사람(§4.3) — 그 사람에게 chat_room
+        shown = [m["account_id"] for m in members
+                 if m["hidden_at"] is not None and (prev is None or prev <= m["hidden_at"]) and at > m["hidden_at"]]
+        to = [*also, *(i for i in shown if i not in also)]
+        fresh = tx.chat_room(room_id)
+        assert fresh is not None
+        msg = self._messages(tx, [tx.chat_message(mid) or {}], accounts)[0]
+        events = [*self._room_events(tx, fresh, to, accounts),
+                  *((m["account_id"], "chat_message", {"roomId": room_id, "message": msg}) for m in members)]
+        return mid, msg, events
+
     def post(self, actor: Account, room_id: int, client_id: str, text: str | None, photo_id: int | None,
              video_id: int | None = None) -> dict[str, Any]:
         """보내기(§5) — 같은 계정 · 같은 clientId = 처음 것 그대로(SSE · 푸시 다시 안 함) · 커밋 뒤 SSE · 푸시.
@@ -355,35 +397,109 @@ class ChatService:
                     if kind == "video":
                         raise BadRequest("chat_video_invalid", "보낼 수 없는 동영상이에요")
                     raise BadRequest("chat_photo_invalid", "보낼 수 없는 사진이에요")
-            members = tx.chat_members(room_id)
-            if room["kind"] == "direct":
-                peer = next((accounts.get(m["account_id"]) for m in members if m["account_id"] != actor.id), None)
-                if peer is None or not peer.active:
-                    raise Conflict("chat_peer_inactive", "비활성 계정이에요")
-            mid = tx.add_chat_message(room_id=room_id, account_id=actor.id, kind=kind,
-                                      body=None if attach is not None else text, photo_id=attach, client_id=client_id,
-                                      created_at=at, updated_at=at)
-            if attach is not None:
-                tx.update_chat_photo(attach, message_id=mid)
-            prev = room["last_message_at"]
-            tx.update_chat_room(room_id, last_message_at=at)
-            tx.update_chat_member(room_id, actor.id, last_viewed_at=at, last_read_message_id=mid)
-            # 숨긴 1:1 이 이 메시지로 다시 보이는 사람(§4.3) — 그 사람에게 chat_room
-            shown = [m["account_id"] for m in members
-                     if m["hidden_at"] is not None and (prev is None or prev <= m["hidden_at"]) and at > m["hidden_at"]]
-            room = tx.chat_room(room_id)
-            assert room is not None
-            msg = self._messages(tx, [tx.chat_message(mid) or {}], accounts)[0]
-            events = [*self._room_events(tx, room, shown, accounts),
-                      *((m["account_id"], "chat_message", {"roomId": room_id, "message": msg}) for m in members)]
+            self._check_peer(tx, room, actor, accounts)
+            mid, msg, events = self._insert(tx, room, actor, accounts, kind=kind,
+                                            body=None if attach is not None else text, attach=attach,
+                                            client_id=client_id, at=at)
         log.info("채팅 보냄 room=%d message=%d account=%d", room_id, mid, actor.id)
         self._emit(events)
         self.push(mid)
         return msg
 
+    def forward(self, actor: Account, message_id: int, targets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """전달(r4 · §5 · D9-62 ~ D9-64) — 고른 곳(1 ~ 10)마다 같은 내용의 새 메시지(보낸 사람 = 나 · 「전달됨」 없음).
+
+        오류 차례(코디 처분 W-4): 모양 · 개수 · 중복 400 → 원본 없음 · 원본 방 지금 멤버 아님 404 → 시스템 줄 · 지운 것 ·
+        첨부 행 지움 · 파일 없음 400 chat_not_forwardable(폴더 빔 = 409 photo_disabled). 대상별 실패는 결과에만(200).
+        대상마다 clientId(D9-16) — 다시 보내면 만든 대상은 처음 것(SSE · 푸시 다시 없음). 같은 방이 두 번 되면 앞 대상 하나.
+        첨부 = 대상마다 새 chat_photo 행 · 같은 파일(복사 0 · D9-64). 한 tx(첫머리에 쓰기 잠금 · W3-2) · 커밋 뒤 만든
+        메시지마다 SSE · 푸시.
+        """
+        if not 1 <= len(targets) <= FORWARD_MAX:
+            raise BadRequest("invalid_request", f"targets: 1 ~ {FORWARD_MAX}곳이에요")
+        for key in ("roomId", "accountId", "clientId"):
+            vals = [t[key] for t in targets if t.get(key) is not None]
+            if len(set(vals)) != len(vals):
+                raise BadRequest("invalid_request", f"targets: 같은 {key} 가 두 번 있어요")
+        at = to_db_ms(self.clock.now())
+        made: list[int] = []
+        events: list[Event] = []
+        with self.repo.tx() as tx:
+            # 원본(첨부 행 · 파일) 확인을 쓰기 잠금 안에서 — delete 가 잠금(UPDATE) 뒤 남은 참조를 세는 것과 같은 순서라
+            # 「확인 → 남이 마지막 참조 지움 · unlink → 같은 file_name 새 행」(파일 없는 전달본)이 안 생긴다(W3-2)
+            tx.lock_write()
+            m = tx.chat_message(message_id)
+            me = tx.chat_member(m["room_id"], actor.id) if m else None
+            if m is None or me is None or me["left_at"] is not None:
+                raise NotFound("메시지를 찾을 수 없어요", "chat_message_not_found")
+            unfit = BadRequest("chat_not_forwardable", "전달할 수 없는 메시지예요")
+            if m["kind"] == "system" or m["deleted_at"] is not None:
+                raise unfit
+            src = None
+            if m["kind"] in ("photo", "video"):
+                src = tx.chat_photo(m["photo_id"]) if m["photo_id"] else None
+                if src is None or src["deleted_at"] is not None:
+                    raise unfit
+                folder = self._folder()
+                if folder is None:
+                    raise Conflict("photo_disabled", "사진 저장이 꺼져 있어요")
+                if not all((folder / n).is_file() for n in (src["file_name"], src["thumb_file_name"]) if n):
+                    raise unfit
+            accounts = self._accounts(tx)
+            done: dict[int, dict[str, Any]] = {}  # 방 id → 이 요청에서 이미 낸 성공 결과
+            results: list[dict[str, Any]] = []
+            for t in targets:
+                room_id = t.get("roomId")
+                try:
+                    also: list[int] = []
+                    if room_id is None:
+                        aid = t["accountId"]
+                        if aid == actor.id or not candidate(accounts.get(aid)):
+                            raise BadRequest("chat_person_invalid", "대화할 수 없는 직원이에요")
+                        lo, hi = sorted((actor.id, aid))
+                        existing = tx.chat_room_by_key(f"{lo}:{hi}")
+                        if existing is not None and existing["id"] in done:
+                            results.append(done[existing["id"]])
+                            continue
+                        room_id, _, also = self._open_direct(tx, actor, aid, at, accounts)
+                    elif room_id in done:
+                        results.append(done[room_id])
+                        continue
+                    room = self._member(tx, room_id, actor)
+                    old = tx.chat_message_by_client(actor.id, t["clientId"])
+                    if old is not None:  # 다시 보내기 — 처음 것 그대로(SSE · 푸시 없음 · 숨김을 풀었으면 chat_room 만)
+                        msg = self._messages(tx, [old], accounts)[0]
+                        events += self._room_events(tx, tx.chat_room(room_id) or room, also, accounts)
+                    else:
+                        self._check_peer(tx, room, actor, accounts)
+                        attach = None
+                        if src is not None:
+                            attach = tx.add_chat_photo(
+                                room_id=room_id, account_id=actor.id, kind=src["kind"], file_name=src["file_name"],
+                                thumb_file_name=src["thumb_file_name"], bytes=src["bytes"], sha256=src["sha256"],
+                                width=src["width"], height=src["height"], duration_ms=src["duration_ms"], created_at=at)
+                        mid, msg, ev = self._insert(tx, room, actor, accounts, kind=m["kind"],
+                                                    body=None if src is not None else m["body"], attach=attach,
+                                                    client_id=t["clientId"], at=at, also=also)
+                        made.append(mid)
+                        events += ev
+                    done[room_id] = {"ok": True, "roomId": msg["roomId"], "message": msg}
+                    results.append(done[room_id])
+                except DomainError as e:
+                    results.append({"ok": False, "roomId": room_id, "error": {"code": e.code, "message": e.message}})
+        log.info("채팅 전달 room=%d message=%d account=%d targets=%d ok=%d made=%d", m["room_id"], message_id, actor.id,
+                 len(targets), sum(1 for r in results if r["ok"]), len(made))
+        self._emit(events)
+        for mid in made:
+            self.push(mid)
+        return results
+
     def delete(self, actor: Account, message_id: int) -> None:
-        """삭제(§5) — 내 것만 · 소프트(body null · deleted_at · updated_at) · 첨부면 파일 지움(동영상 = 본 파일 + 썸네일) ·
-        이미 지운 것 = 그대로 200."""
+        """삭제(§5) — 내 것만 · 소프트(body null · deleted_at · updated_at) · 첨부 행 지움 · 이미 지운 것 = 그대로 200.
+
+        파일(동영상 = 본 파일 + 썸네일)은 같은 file_name 을 가리키는 안 지운 첨부 행이 하나도 없을 때만 지운다(전달본 · r4 ·
+        D9-66) — 셈은 tx 안 · 지우기는 커밋 뒤.
+        """
         at = to_db_ms(self.clock.now())
         with self.repo.tx() as tx:
             m = tx.chat_message(message_id)
@@ -398,8 +514,9 @@ class ChatService:
             photo = tx.chat_photo(m["photo_id"]) if m["photo_id"] else None
             if photo is not None and photo["deleted_at"] is None:
                 tx.update_chat_photo(photo["id"], deleted_at=at)
+            last_ref = photo is not None and tx.chat_photo_live_refs(photo["file_name"]) == 0
             members = [r["account_id"] for r in tx.chat_members(m["room_id"])]
-        if photo is not None:
+        if last_ref:
             path = self._folder()
             if path is not None:
                 for name in (photo["file_name"], photo["thumb_file_name"]):

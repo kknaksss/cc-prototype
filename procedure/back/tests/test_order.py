@@ -244,7 +244,7 @@ APP_ROUTES = {("GET", "/api/notifications"), ("POST", "/api/notifications/read")
               ("POST", "/api/customers/{customer_id}/passport-scan"), ("GET", "/api/id-photos/{photo_id}"),
               ("POST", "/api/id-photos/{photo_id}/kos-retry")}
 
-# 직원 채팅 HTTP 18(SPEC-007 §6.2 · §6.4 — 1판 14 + r3 수정 · 동영상 올리기 · 열기 · 썸네일 4)
+# 직원 채팅 HTTP 19(SPEC-007 §6.2 · §6.4 — 1판 14 + r3 수정 · 동영상 올리기 · 열기 · 썸네일 4 + r4 전달 1)
 CHAT_ROUTES = {("GET", "/api/chat/people"), ("GET", "/api/chat/rooms"), ("POST", "/api/chat/rooms/direct"),
                ("POST", "/api/chat/rooms"), ("POST", "/api/chat/rooms/{room_id}/members"),
                ("POST", "/api/chat/rooms/{room_id}/leave"), ("POST", "/api/chat/rooms/{room_id}/hide"),
@@ -252,11 +252,12 @@ CHAT_ROUTES = {("GET", "/api/chat/people"), ("GET", "/api/chat/rooms"), ("POST",
                ("POST", "/api/chat/rooms/{room_id}/messages"), ("DELETE", "/api/chat/messages/{message_id}"),
                ("POST", "/api/chat/rooms/{room_id}/read"), ("POST", "/api/chat/photos"), ("GET", "/api/chat/photos/{photo_id}"),
                ("PATCH", "/api/chat/messages/{message_id}"), ("POST", "/api/chat/videos"),
-               ("GET", "/api/chat/videos/{video_id}"), ("GET", "/api/chat/videos/{video_id}/thumbnail")}
+               ("GET", "/api/chat/videos/{video_id}"), ("GET", "/api/chat/videos/{video_id}/thumbnail"),
+               ("POST", "/api/chat/messages/{message_id}/forward")}
 
 
-def test_route_count_69(client):
-    """back 경로 69 = HTTP 68 + 통역 WS 1 — 51(아래) + 직원 채팅 HTTP 18(SPEC-007 §6.4 · 1판 14 + r3 4).
+def test_route_count_70(client):
+    """back 경로 70 = HTTP 69 + 통역 WS 1 — 51(아래) + 직원 채팅 HTTP 19(SPEC-007 §6.4 · 1판 14 + r3 4 + r4 전달 1).
 
     51 = HTTP 50 + 통역 WS 1 — 앞 판 35(SPEC-005 §7.6 · 시술 현황 19 + 예약 현황 HTTP 16)
     + 앱 다음 판 새 HTTP 16(띄우기 5 · 스캔 · 사진 3 · 알림 4 · 고객 문진 웹 공개 2 — SPEC-006 §6.7:
@@ -273,7 +274,7 @@ def test_route_count_69(client):
     gone = {("GET", "/api/questionnaires/{reservation_id}"), ("POST", "/api/questionnaires/{reservation_id}"),
             ("POST", "/api/auth/unlock")}
     assert not gone & http
-    assert len(CHAT_ROUTES) == 18 and CHAT_ROUTES <= http
-    assert len([x for x in http if x[1].startswith("/api/chat")]) == 18
+    assert len(CHAT_ROUTES) == 19 and CHAT_ROUTES <= http
+    assert len([x for x in http if x[1].startswith("/api/chat")]) == 19
     assert len(http - CHAT_ROUTES) + len(ws) == 51, sorted(http)
-    assert len(http) + len(ws) == 69, sorted(http)
+    assert len(http) + len(ws) == 70, sorted(http)

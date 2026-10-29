@@ -1,4 +1,4 @@
-"""직원 채팅 API 18(SPEC-007 §6.2 · 1판 14 + r3 4) — Bearer · 다섯 역할 모두 · 가짜 판에서도 됨(require_real_board 안 씀).
+"""직원 채팅 API 19(SPEC-007 §6.2 · 1판 14 + r3 4 + r4 전달 1) — Bearer · 다섯 역할 모두 · 가짜 판에서도 됨.
 
 경로는 모두 `async def` — SSE(`send_to_account` 의 `asyncio.Queue`) · 푸시(`PushService._dispatch` 의 이벤트 루프)가
 루프 스레드에서 돌아야 한다. 동기 `def` 면 스레드풀에서 돌아 푸시가 「이벤트 루프 없음」으로 0 이 된다(§6.1).
@@ -15,6 +15,8 @@ from app.schemas.actions import OkResponse
 from app.schemas.chat import (
     DirectRequest,
     EditRequest,
+    ForwardRequest,
+    ForwardResponse,
     GroupRequest,
     MembersRequest,
     Message,
@@ -108,6 +110,13 @@ async def edit_message(message_id: int, body: EditRequest, c: Ctr, actor: Actor)
 async def delete_message(message_id: int, c: Ctr, actor: Actor) -> OkResponse:
     c.chat.delete(actor, message_id)
     return OkResponse()
+
+
+@router.post("/messages/{message_id}/forward", response_model=ForwardResponse)
+async def forward_message(message_id: int, body: ForwardRequest, c: Ctr, actor: Actor) -> ForwardResponse:
+    """전달(r4 · §6.2 #19) — 대상마다 새 메시지 · 대상별 실패는 결과에(전부 실패도 200) · 결과 = 요청 대상 차례 그대로."""
+    targets = [t.model_dump() for t in body.targets]
+    return ForwardResponse.model_validate({"results": c.chat.forward(actor, message_id, targets)})
 
 
 @router.post("/rooms/{room_id}/read", response_model=ReadResponse)

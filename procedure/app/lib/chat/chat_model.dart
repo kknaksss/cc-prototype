@@ -291,6 +291,36 @@ class MediaItem {
   const MediaItem({required this.video, required this.prepare, this.preview, this.width = 0, this.height = 0});
 }
 
+// 전달 대상(r4 · §6.2 #19) — 방(roomId) 또는 사람(accountId — 그 1:1 을 열거나 만든다) 둘 중 하나 · 대상마다 clientId(D9-16)
+class ForwardTarget {
+  final int? roomId;
+  final int? accountId;
+  final String clientId;
+  const ForwardTarget.room(int this.roomId, this.clientId) : accountId = null;
+  const ForwardTarget.person(int this.accountId, this.clientId) : roomId = null;
+  Json toJson() => {'roomId': ?roomId, 'accountId': ?accountId, 'clientId': clientId};
+}
+
+// 전달 결과 한 곳 — ok = {roomId, message} · 실패 = {roomId|null, error{code, message}}
+class ForwardResult {
+  final bool ok;
+  final int? roomId;
+  final ChatMessage? message;
+  final String? errorCode;
+  final String? errorMessage;
+  const ForwardResult({required this.ok, this.roomId, this.message, this.errorCode, this.errorMessage});
+  factory ForwardResult.fromJson(Json j) {
+    final m = j['message'], e = _map(j['error']);
+    return ForwardResult(
+      ok: j['ok'] == true && m is Map,
+      roomId: _int(j['roomId']),
+      message: m is Map ? ChatMessage.fromJson(m.cast<String, dynamic>()) : null,
+      errorCode: _str(e['code']),
+      errorMessage: _str(e['message']),
+    );
+  }
+}
+
 // 앞에서 받은 채팅 · SSE 로 만든 앱 안 배너 한 개(§10.12)
 class ChatBanner {
   final int roomId;

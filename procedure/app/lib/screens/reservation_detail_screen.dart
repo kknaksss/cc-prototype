@@ -20,6 +20,7 @@ import 'board_screen.dart' show isTablet;
 import '../widgets/header.dart' show DetailHeader;
 import '../widgets/autosave.dart';
 import 'launchers.dart';
+import '../widgets/sheet.dart';
 
 class ReservationDetailScreen extends StatefulWidget {
   final int reservationId;
@@ -499,7 +500,7 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
       onPressed: _busy
           ? null
           : () async {
-              final reason = await showModalBottomSheet<String>(
+              final reason = await showAppSheet<String>(
                 context: context,
                 backgroundColor: Ms.white,
                 barrierColor: Ms.dim,
@@ -571,7 +572,7 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
   Future<void> _pickRoom(ResvDetail d) async {
     final free = d.rooms.where((r) => !r.busy).length;
     final rooms = [...d.rooms]..sort((a, b) => (a.busy ? 0 : 1) - (b.busy ? 0 : 1)); // 사용 중 위
-    final id = await showModalBottomSheet<int>(
+    final id = await showAppSheet<int>(
       context: context,
       backgroundColor: Ms.white,
       barrierColor: Ms.dim,
@@ -618,7 +619,7 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
   // 상담사 시트 — 비어있음 먼저 · 「{방} 상담 중」(M:254 · T:156-183)
   Future<void> _pickCounselor(ResvDetail d) async {
     final list = [...d.counselors]..sort((a, b) => (a.busyRoom == null ? 0 : 1) - (b.busyRoom == null ? 0 : 1));
-    final id = await showModalBottomSheet<int>(
+    final id = await showAppSheet<int>(
       context: context,
       backgroundColor: Ms.white,
       barrierColor: Ms.dim,

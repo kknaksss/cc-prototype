@@ -13,6 +13,7 @@ import '../widgets/ui.dart';
 import 'board_screen.dart' show isTablet;
 import 'qr_show_screen.dart' show showQrScreen;
 import 'scan_screen.dart' show showPassportScan;
+import '../widgets/sheet.dart';
 
 // [태블릿에 띄우기] — 기기 고르기 시트(§5-3 targets · 이름 · 폰/태블릿 · 접속 중 점) → POST /api/display-requests {deviceId}
 Future<void> sendQuestionnaireToDevice(BuildContext context, ResvDetail d) async {
@@ -65,7 +66,7 @@ Future<void> sendQuestionnaireToDevice(BuildContext context, ResvDetail d) async
             child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 460), child: SingleChildScrollView(child: body(ctx))),
           ),
         )
-      : await showModalBottomSheet<DisplayTarget>(
+      : await showAppSheet<DisplayTarget>(
           context: context,
           backgroundColor: Ms.white,
           barrierColor: Ms.dim,

@@ -90,6 +90,7 @@ class FakeChat {
   List<Map<String, dynamic>> people = [docM, coordM, consM];
   int nextId = 900;
   int nextPhotoId = 501;
+  final Set<String> forwardFail = {}; // 전달 대상별 실패('r:<roomId>' · 'a:<accountId>')
   int nextVideoId = 601;
   // 경로 → 응답(있으면 먼저)
   final Map<String, http.Response Function(http.Request)> override = {};
@@ -134,6 +135,47 @@ class FakeChat {
     }
     if (p == '/api/chat/photos' && req.method == 'POST') return _j({'photoId': nextPhotoId++});
     if (p == '/api/chat/videos' && req.method == 'POST') return _j({'videoId': nextVideoId++});
+    // 전달(r4 #19 · r4 처분 W-5) — 대상 차례 그대로 결과 · 방 = 그 방(비활성 상대 1:1 = 그것만 409) · 사람 = 1:1 열거나 만듦 ·
+    // forwardFail(대상 키 'r:<id>' · 'a:<id>') = 그 대상만 실패 · 같은 clientId 두 번 = 처음 것
+    if (seg.length == 6 && seg[5] == 'forward' && req.method == 'POST') {
+      final src = int.parse(seg[4]);
+      final orig = messages.values.expand((l) => l).firstWhere((m) => m['id'] == src);
+      final results = <Map<String, dynamic>>[];
+      for (final tg in ((jsonDecode(req.body) as Map)['targets'] as List).cast<Map>()) {
+        final key = tg['roomId'] != null ? 'r:${tg['roomId']}' : 'a:${tg['accountId']}';
+        Map<String, dynamic>? r;
+        if (tg['roomId'] != null) {
+          r = rooms.where((x) => x['id'] == tg['roomId']).firstOrNull;
+        } else {
+          final id = tg['accountId'];
+          r = rooms.where((x) => x['kind'] == 'direct' && (x['members'] as List).any((m) => m['id'] == id)).firstOrNull;
+          if (r == null) {
+            r = roomJ(nextId++, members: [meM, people.firstWhere((x) => x['id'] == id)]);
+            rooms.add(r);
+          }
+        }
+        final inactive = r != null && r['kind'] == 'direct' && (r['members'] as List).any((m) => m['me'] != true && m['active'] == false);
+        if (r == null || forwardFail.contains(key) || inactive) {
+          results.add({
+            'ok': false,
+            'roomId': r?['id'],
+            'error': inactive
+                ? {'code': 'chat_peer_inactive', 'message': '비활성 계정이에요'}
+                : {'code': 'chat_room_not_found', 'message': '대화방을 찾을 수 없어요'},
+          });
+          continue;
+        }
+        final rid = r['id'] as int;
+        final list = messages[rid] ??= [];
+        final again = list.where((m) => m['clientId'] == tg['clientId']).firstOrNull;
+        final m = again ??
+            msgJ(nextId++, rid, sender: 1, senderName: '가간호', role: 'nurse', kind: orig['kind'] as String, text: orig['text'] as String?,
+                photo: orig['photo'] as Map<String, dynamic>?, video: orig['video'] as Map<String, dynamic>?, clientId: tg['clientId'] as String?);
+        if (again == null) list.add(m);
+        results.add({'ok': true, 'roomId': rid, 'message': m});
+      }
+      return _j({'results': results});
+    }
     if (seg.length == 5 && p.startsWith('/api/chat/videos/') && req.method == 'GET') {
       return http.Response.bytes(videoBytes, 200, headers: {'content-type': 'video/mp4'});
     }

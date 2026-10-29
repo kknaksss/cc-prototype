@@ -225,6 +225,8 @@ CREATE TABLE IF NOT EXISTS chat_photo (                  -- 첨부(사진 · 동
     duration_ms INTEGER,                                 -- 동영상만 · 앱이 잰 길이
     thumb_file_name TEXT                                 -- 동영상만 · 앱이 만든 썸네일 JPEG(같은 폴더)
 );
+-- 전달본(r4) = 같은 파일을 가리키는 새 행 — 파일은 마지막 안 지운 행과 함께 지운다(D9-66 · 옛 DB 도 부팅 때 생김)
+CREATE INDEX IF NOT EXISTS chat_photo_file ON chat_photo (file_name);
 """
 
 

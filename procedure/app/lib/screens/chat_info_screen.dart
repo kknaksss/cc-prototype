@@ -104,11 +104,15 @@ class ChatInfoScreen extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                 child: Row(children: [
-                  Flexible(child: Text(m.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: Typo.body500)),
-                  const SizedBox(width: 6),
-                  roleBadge(m.role),
-                  if (!m.active) ...[const SizedBox(width: 4), Text(inactiveMark, style: Typo.caption500.copyWith(color: Ms.gray600))],
-                  const Spacer(),
+                  // 이름 + 배지 = 남는 폭(이름만 줄임표) · 「나」 = 늘 오른쪽 끝(F10)
+                  Expanded(
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Flexible(child: Text(m.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: Typo.body500)),
+                      const SizedBox(width: 6),
+                      roleBadge(m.role),
+                      if (!m.active) ...[const SizedBox(width: 4), Text(inactiveMark, style: Typo.caption500.copyWith(color: Ms.gray600))],
+                    ]),
+                  ),
                   if (m.me) const MsBadge('나', BadgeVariant.neutral, dot: false),
                 ]),
               ),

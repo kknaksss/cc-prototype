@@ -412,6 +412,9 @@ void main() {
       expect(find.text('(비활성)'), findsOneWidget);
       expect(t.getTopLeft(find.text('가간호')).dy, lessThan(t.getTopLeft(find.text('나의사')).dy));
       expect(find.text('나'), findsOneWidget);
+      // F10 — 「나」 = 줄 오른쪽 끝(이름 길이와 상관없이 · Flexible + Spacer 아님)
+      final w = t.view.physicalSize.width / t.view.devicePixelRatio;
+      expect(t.getRect(find.text('나')).right, greaterThan(w - 60));
       await t.tap(find.byType(Switch));
       await settle(t);
       expect(jsonDecode(f.where('PUT', '/api/chat/rooms/2/mute').single.body), {'muted': true});
@@ -424,6 +427,7 @@ void main() {
       await t.pumpAndSettle();
       await settle(t);
       expect(find.text('이미 참여 중'), findsOneWidget);
+      expect(t.getRect(find.text('이미 참여 중')).right, greaterThan(w - 60)); // F10 — 오른쪽 끝
       expect(find.text('0명 선택 · 지금 3명 · 최대 20명'), findsOneWidget);
       await t.tap(find.text('나의사')); // 이미 참여 — 못 고름
       await t.tap(find.text('다코디'));

@@ -395,6 +395,8 @@ void main() {
       await t.pumpAndSettle();
       expect(find.byKey(const Key('chat-viewer-close')), findsOneWidget);
       expect(find.text('가간호'), findsOneWidget);
+      // F10 — 머리 좌우 칸 같은 폭 = 보낸 사람이 화면 가운데
+      expect(t.getCenter(find.text('가간호')).dx, closeTo(t.view.physicalSize.width / t.view.devicePixelRatio / 2, 0.5));
       expect(find.textContaining('저장'), findsNothing);
       expect(find.textContaining('공유'), findsNothing);
       expect(app.chat.watching, isNull); // 루트 위 화면 = 보고 있는 방 아님(W2-4)

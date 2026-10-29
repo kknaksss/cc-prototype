@@ -369,6 +369,53 @@ void main() {
     });
   });
 
+  group('정렬(F10)', () {
+    testWidgets('전달 시트 — 이름 길이가 달라도 동그라미 오른쪽 x 같음 · 머리 제목 가운데 = 시트 가운데 · [✕] · [전송] · 검색칸 · 목록 좌우 여백 같음', (t) async {
+      final f = fake()
+        ..people = [
+          {'id': 3, 'name': '다', 'role': 'coordinator'},
+          {'id': 4, 'name': '아주아주아주긴이름의직원입니다아주아주아주긴이름', 'role': 'counselor'},
+        ];
+      final app = await openRoom(t, f, '나의사');
+      await share(t, 'chat-msg-10');
+      final xs = [for (final k in ['p:2', 'r:2', 'p:3', 'p:4']) t.getRect(find.byKey(Key('fwd-pick-$k'))).right];
+      expect(xs.toSet(), hasLength(1)); // 줄마다 같은 자리
+      final sheet = t.getRect(find.byType(ChatForwardSheet));
+      final row = t.getRect(find.byKey(const Key('fwd-row-p:3')));
+      expect(xs.first, closeTo(row.right - 12, 1.5)); // 오른쪽 끝(카드 안 여백 12 + 테두리 1)
+      expect(t.getCenter(find.byKey(const Key('fwd-title'))).dx, closeTo(sheet.center.dx, 0.5));
+      final close = t.getRect(find.byKey(const Key('fwd-close')));
+      final send = t.getRect(find.byKey(const Key('fwd-send')));
+      final search = t.getRect(find.byKey(const Key('fwd-search')));
+      expect(close.left, closeTo(sheet.left + 16, 0.5));
+      expect(send.right, closeTo(sheet.right - 16, 0.5));
+      expect(search.left, closeTo(sheet.left + 16, 0.5));
+      expect(search.right, closeTo(sheet.right - 16, 0.5));
+      expect(row.left, closeTo(sheet.left + 16, 0.5));
+      expect(row.right, closeTo(sheet.right - 16, 0.5));
+      await teardown(t, app);
+    });
+
+    testWidgets('보내는 중 — 머리 오른쪽이 「보내는 중…」으로 바뀌어도 제목은 가운데 그대로', (t) async {
+      final f = fake();
+      final app = await openRoom(t, f, '나의사');
+      await share(t, 'chat-msg-10');
+      final before = t.getCenter(find.byKey(const Key('fwd-title'))).dx;
+      await t.tap(find.byKey(const Key('fwd-row-r:2')));
+      await t.pump();
+      final gate = Completer<void>();
+      f.delay = gate.future;
+      await t.tap(find.byKey(const Key('fwd-send')));
+      await t.pump();
+      expect(find.text('보내는 중…'), findsOneWidget);
+      expect(t.getCenter(find.byKey(const Key('fwd-title'))).dx, closeTo(before, 0.5));
+      gate.complete();
+      await settle(t, 8);
+      await t.pumpAndSettle();
+      await teardown(t, app);
+    });
+  });
+
   test('바텀 시트는 모두 공용 도우미(showAppSheet — 위 안전 영역 아래)로 연다 · 화면 전체 높이 × 로 시트 높이를 잡지 않는다', () {
     final hits = <String>[];
     for (final f in Directory('lib').listSync(recursive: true).whereType<File>()) {

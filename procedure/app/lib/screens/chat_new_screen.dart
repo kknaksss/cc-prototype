@@ -160,10 +160,14 @@ class _ChatPeopleScreenState extends State<ChatPeopleScreen> {
                               child: Row(children: [
                                 MsCheckbox(on || joined, enabled: enabled || on),
                                 const SizedBox(width: 12),
-                                Flexible(child: Text(p.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: Typo.body600)),
-                                const SizedBox(width: 6),
-                                roleBadge(p.role),
-                                const Spacer(),
+                                // 이름 + 배지 = 남는 폭(이름만 줄임표) · 「이미 참여 중」 = 늘 오른쪽 끝(F10)
+                                Expanded(
+                                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                                    Flexible(child: Text(p.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: Typo.body600)),
+                                    const SizedBox(width: 6),
+                                    roleBadge(p.role),
+                                  ]),
+                                ),
                                 if (joined) const MiniChip('이미 참여 중', Ms.gray200, Ms.gray600),
                               ]),
                             ),

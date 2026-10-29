@@ -18,6 +18,7 @@ from app.api import (
     actions,
     auth,
     board,
+    chat,
     devices,
     display,
     interpret,
@@ -115,7 +116,7 @@ def create_app(settings: Settings | None = None, container: Container | None = N
         return _error(exc.status_code, "not_found" if exc.status_code == 404 else "http_error", str(exc.detail))
 
     for r in (auth.router, board.router, actions.router, interpret.router, devices.router, reservations.router,
-              notifications.router, display.router, public_questionnaire.router, photos.router):
+              notifications.router, display.router, public_questionnaire.router, photos.router, chat.router):
         app.include_router(r)
 
     @app.get("/api/health", response_model=HealthResponse)

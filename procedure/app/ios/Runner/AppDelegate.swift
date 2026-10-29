@@ -138,6 +138,8 @@ import UserNotifications
   // 앱이 앞에 있을 때도 배너 + 소리(§5-1.3)
   // 띄우기(kind = display)는 앞에서 받으면 배너 대신 바로 Dart 로 — 앱이 pending 을 읽어 QR · 스캔 화면을 연다
   // (전에는 배너만 떠서, SSE 가 그 순간 안 붙어 있으면 눌러야만 열렸다 — 「띄우기 실기기 안 열림」)
+  // 채팅(kind = chat)은 앞에서 받으면 iOS 배너 · 소리 없이 Dart 로 — 앱 안 배너만(SPEC-007 §8 · D9-39).
+  // Dart 준비 전(막 켠 직후)이면 지금처럼 배너 + 소리(띄우기와 같은 꼴)
   override func userNotificationCenter(
     _ center: UNUserNotificationCenter,
     willPresent notification: UNNotification,
@@ -154,6 +156,19 @@ import UserNotifications
         return completionHandler([])
       }
     }
+    if (info["kind"] as? String) == "chat" {
+      var tap: [String: Any] = [:]
+      for key in ["kind", "roomId", "messageId"] {
+        if let v = info[key] { tap[key] = v }
+      }
+      // 앱 안 배너 글자 = 푸시 제목 · 본문(1:1 = 보낸 사람 · 그룹 = 「보낸 사람 · 방 이름」)
+      tap["title"] = notification.request.content.title
+      tap["body"] = notification.request.content.body
+      if dartReady, let ch = channel {
+        ch.invokeMethod("onForeground", arguments: tap)
+        return completionHandler([])
+      }
+    }
     if #available(iOS 14.0, *) {
       completionHandler([.banner, .list, .sound])
     } else {
@@ -161,7 +176,7 @@ import UserNotifications
     }
   }
 
-  // 알림을 누름 → payload(kind · visitId · callId · reservationId · requestId)를 Dart 로(아직 준비 전이면 ready 때 넘김)
+  // 알림을 누름 → payload(kind · visitId · callId · reservationId · requestId · 채팅 roomId · messageId)를 Dart 로(아직 준비 전이면 ready 때 넘김)
   override func userNotificationCenter(
     _ center: UNUserNotificationCenter,
     didReceive response: UNNotificationResponse,
@@ -173,7 +188,7 @@ import UserNotifications
       return
     }
     var tap: [String: Any] = [:]
-    for key in ["kind", "visitId", "callId", "reservationId", "requestId"] {
+    for key in ["kind", "visitId", "callId", "reservationId", "requestId", "roomId", "messageId"] {
       if let v = info[key] { tap[key] = v }
     }
     if dartReady, let ch = channel {

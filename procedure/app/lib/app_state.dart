@@ -4,6 +4,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api/api.dart';
 import 'api/session_store.dart';
+import 'chat/chat_model.dart' show ChatBanner;
+import 'chat/chat_state.dart';
 import 'config/server.dart';
 import 'interpret/quick_speech.dart';
 import 'model/account.dart';
@@ -16,8 +18,8 @@ import 'widgets/ui.dart';
 
 enum Phase { booting, loggedOut, loggedIn }
 
-// 4탭 차례(SPEC-004 §6.8) — 첫 화면 = 예약 현황(D7-60)
-enum AppTab { reservations, visits, board, settings }
+// 5탭 차례(SPEC-004 §6.8 · SPEC-007 §10.1 — 「채팅」= 설정 앞 5번째 · D9-33) — 첫 화면 = 예약 현황(D7-60)
+enum AppTab { reservations, visits, board, chat, settings }
 
 // 이 기기 배치(§5-1.1 kind · §6.0 짧은 변 600)
 String deviceKind() {
@@ -36,6 +38,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   final Toaster toaster = Toaster();
   final QuickSpeech speech = QuickSpeech();
   final PushChannel push;
+  // 직원 채팅(SPEC-007) — 방 목록 · 탭 배지 · 메시지 · 배너
+  late final ChatState chat;
 
   Phase phase = Phase.booting;
   Session? session;
@@ -86,11 +90,20 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         );
     this.stream.onEvent = _onStreamEvent;
     this.stream.addListener(_onStreamChange);
+    chat = ChatState(
+      api: this.api,
+      toaster: toaster,
+      onChatTab: () => tab.value == AppTab.chat,
+      onUnauthorized: () => logout(message: '로그인이 풀렸어요 — 다시 로그인하세요'),
+    );
+    tab.addListener(chat.reevaluate); // 채팅 탭으로 돌아오면 읽음(D9-40)
   }
 
   // SSE notification {unread} → 종 배지(§7.1 · §5-4) · display → 이 기기 것이면 pending 을 읽어 연다(§5-3 ①)
   void _onStreamEvent(String event, Map<String, dynamic> data) {
-    if (event == 'notification') {
+    if (event.startsWith('chat_')) {
+      chat.onEvent(event, data); // 채팅 이벤트 5개(SPEC-007 §7)
+    } else if (event == 'notification') {
       final n = data['unread'];
       if (n is num) unread.value = n.toInt();
     } else if (event == 'display' && isMyDisplay(data, deviceId)) {
@@ -168,6 +181,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     if (stream.connected && !_wasConnected) {
       refreshUnread();
       refreshDisplays();
+      if (session != null) chat.catchUp(); // 끊긴 동안 놓친 채팅(SPEC-007 §11 · since)
     }
     _wasConnected = stream.connected;
   }
@@ -197,6 +211,11 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       case PushKind.display:
         refreshDisplays(); // 띄우기 푸시 → 그 화면(pending 이 돌려준다)
         return;
+      case PushKind.chat:
+        // 채팅 푸시 → 「채팅」 탭 그 방(SPEC-007 §8) · 알림 목록 밖이라 알림 읽음 호출 없음. 로그인 전이면 로그인 뒤 채팅 탭이 연다
+        tab.value = AppTab.chat;
+        chat.openRoom(t.roomId!);
+        return;
     }
     // 푸시를 눌러 연 발송의 알림 행을 읽음으로(§5-4 · 후속 #3)
     if (markRead && session != null && (t.callId != null || t.reservationId != null)) {
@@ -205,6 +224,13 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     } else {
       refreshUnread();
     }
+  }
+
+  // 앞에서 받은 채팅 푸시 → 앱 안 배너(SSE 와 먼저 온 것 · messageId 로 한 번 — OQ-938)
+  void _onChatForeground(PushTap t) {
+    final rid = t.roomId, mid = t.messageId;
+    if (rid == null || mid == null || session == null) return;
+    chat.offerBanner(ChatBanner(rid, mid, t.title ?? '', t.body ?? ''));
   }
 
   // 알림 목록 항목 누름(§6.13) — 원장 호출 = 시술 현황 탭 그 방 · 상담사 호출 = 그 예약 상세
@@ -230,6 +256,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     deviceName ??= await push.deviceName();
     push.onToken = _onDeviceToken;
     push.onTap = _onTap;
+    push.onChatForeground = _onChatForeground;
     push.onLink = openLink;
     final launched = await push.ready();
     if (launched != null) _onTap(launched);
@@ -259,7 +286,10 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> login(String id, String password) async {
     final s = await api.login(id, password);
     await store.writeLastId(id); // 아이디만 기억 — 비밀번호는 저장하지 않는다
-    if (session?.id != s.id) await _setDeviceId(null); // 계정 바뀜 — 새로 등록해 받는다(r2)
+    if (session?.id != s.id) {
+      await _setDeviceId(null); // 계정 바뀜 — 새로 등록해 받는다(r2)
+      chat.clear(); // 앞 계정 채팅이 남지 않게(SPEC-007 §11)
+    }
     session = s;
     await store.write(s);
     _enter();
@@ -281,6 +311,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       if (link != null && session != null) claimQr(link);
     });
     refreshDisplays(); // 로그인 · 시작 때 놓친 띄우기(§5-3 ③)
+    chat.refreshRooms(); // 채팅 탭 배지(SPEC-007 §10.1) — 실패는 조용히
   }
 
   Future<void> _markNameSent() async {
@@ -398,6 +429,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     stream.reset();
     await _setDeviceId(null);
     unread.value = 0;
+    chat.clear(keepOpen: false); // 방 · 메시지 · 사진 캐시 · 실패 말풍선 · 열기 요청(SPEC-007 §11)
     displays.value = const [];
     _openedDisplays.clear();
     _pendingLink = null;
@@ -433,9 +465,12 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     if (phase != Phase.loggedIn) return;
     if (s == AppLifecycleState.paused || s == AppLifecycleState.hidden) {
       stream.stop();
+      chat.setForeground(false);
       backgrounded.value++;
     } else if (s == AppLifecycleState.resumed) {
       stream.start();
+      chat.setForeground(true);
+      chat.catchUp(); // 방 목록 · 열린 대화 since 메우기 · 보고 있는 방이면 읽음(SPEC-007 §11)
       refreshUnread();
       refreshDisplays();
       _refreshPush(reconnect: true); // 다시 등록 → 확인된 deviceId 로 SSE 다시(시작 때와 같은 이유)
@@ -446,6 +481,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     stream.dispose();
+    chat.dispose();
     toaster.dispose();
     super.dispose();
   }

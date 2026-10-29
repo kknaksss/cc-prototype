@@ -8,34 +8,46 @@ int? _int(Object? v) {
   return null;
 }
 
-// 알림 payload 종류 — 없으면 doctor_call(옛 빌드 · §5-2 「원장 호출 payload」)
-enum PushKind { doctorCall, counselorCall, display }
+// 알림 payload 종류 — 없으면 doctor_call(옛 빌드 · §5-2 「원장 호출 payload」) · 채팅(SPEC-007 §8)
+enum PushKind { doctorCall, counselorCall, display, chat }
 
-// 누른 알림 — 원장 호출 {visitId, callId} · 상담사 호출 {kind, reservationId} · 띄우기 {kind, requestId}
+// 누른 알림 — 원장 호출 {visitId, callId} · 상담사 호출 {kind, reservationId} · 띄우기 {kind, requestId} · 채팅 {kind, roomId, messageId}
+// 채팅을 앞에서 받으면 Runner 가 aps.alert 제목 · 본문을 title · body 로 같이 넘긴다(앱 안 배너 — §10.12)
 class PushTap {
   final PushKind kind;
   final int? visitId;
   final int? callId;
   final int? reservationId;
   final int? requestId;
-  const PushTap(this.kind, {this.visitId, this.callId, this.reservationId, this.requestId});
+  final int? roomId;
+  final int? messageId;
+  final String? title;
+  final String? body;
+  const PushTap(this.kind,
+      {this.visitId, this.callId, this.reservationId, this.requestId, this.roomId, this.messageId, this.title, this.body});
 
   static PushTap? parse(Object? payload) {
     if (payload is! Map) return null;
     final kind = switch (payload['kind']) {
       'counselor_call' => PushKind.counselorCall,
       'display' => PushKind.display,
+      'chat' => PushKind.chat,
       _ => PushKind.doctorCall,
     };
     final t = PushTap(kind,
         visitId: _int(payload['visitId']),
         callId: _int(payload['callId']),
         reservationId: _int(payload['reservationId']),
-        requestId: _int(payload['requestId']));
+        requestId: _int(payload['requestId']),
+        roomId: _int(payload['roomId']),
+        messageId: _int(payload['messageId']),
+        title: payload['title'] is String ? payload['title'] as String : null,
+        body: payload['body'] is String ? payload['body'] as String : null);
     final ok = switch (kind) {
       PushKind.doctorCall => t.visitId != null,
       PushKind.counselorCall => t.reservationId != null,
       PushKind.display => t.requestId != null,
+      PushKind.chat => t.roomId != null,
     };
     return ok ? t : null;
   }
@@ -55,6 +67,8 @@ class PushChannel {
 
   void Function(String token)? onToken;
   void Function(PushTap tap)? onTap;
+  // 앞에서 받은 채팅 푸시(iOS 배너 · 소리 없음) → 앱 안 배너 원천(§10.12 · D9-39)
+  void Function(PushTap tap)? onChatForeground;
   // ccc:// 링크로 앱이 열림(웹 QR 을 iOS 기본 카메라로 · E2E batch 1 #5)
   void Function(String url)? onLink;
 
@@ -68,9 +82,10 @@ class PushChannel {
           final t = PushTap.parse(call.arguments);
           if (t != null) onTap?.call(t);
         case 'onForeground':
-          // 앞에서 받은 띄우기 푸시(배너 없음) — 누른 것과 같은 길(pending 읽어 엶)
+          // 앞에서 받은 띄우기 푸시(배너 없음) — 누른 것과 같은 길(pending 읽어 엶) · 채팅 = 앱 안 배너(눌러 열기 아님)
           final t = PushTap.parse(call.arguments);
-          if (t != null) onTap?.call(t);
+          if (t == null) break;
+          t.kind == PushKind.chat ? onChatForeground?.call(t) : onTap?.call(t);
         case 'onLink':
           if (call.arguments is String) onLink?.call(call.arguments as String);
       }

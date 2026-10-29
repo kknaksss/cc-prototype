@@ -16,6 +16,7 @@ from app.service.accounts import AccountService
 from app.service.actions import ActionService
 from app.service.auth import AuthService
 from app.service.board_service import BoardService
+from app.service.chat import ChatService
 from app.service.devices import DeviceService
 from app.service.display import DisplayService
 from app.service.fake_board import fake_snapshot
@@ -49,6 +50,7 @@ class Container:
     scan: Any = None  # PassportScanService
     resv: Any = None  # ReservationService — 예약 현황(SPEC-005)
     reception: Any = None  # ReceptionService
+    chat: Any = None  # ChatService — 직원 채팅(SPEC-007)
     kos: Any = None  # app.kos.runtime.KosRuntime — KOS env 가 있을 때만
     # 통역 — Soniox 연결 팩토리(시험에서 가짜로 바꾼다 · SPEC-004 §4.1)
     open_stt: Callable[[str, str], Awaitable[SttConn]] = field(default=SonioxStt.open)
@@ -122,6 +124,11 @@ def build_container(settings: Settings, clock: Clock | None = None) -> Container
         logging.getLogger("procedure").warning("PROC_PHOTO_DIR 가 비어 신분증 사진 저장을 끈다(스캔 = 고객 수정만)")
     c.reception.on_counselor_call = lambda rid, sid: c.push.schedule_counselor(rid, sid)  # KOS 200 + 커밋 뒤(§5-2)
     actions.on_call = c.push.schedule  # 호출이 생긴 뒤(커밋 뒤) 원장 호출 푸시
+    # 직원 채팅(SPEC-007 §7 · §8) — 커밋 뒤 방 멤버마다 그 계정 연결에 SSE · 새 메시지 푸시
+    # (c.push 는 시험이 바꿔 끼우므로 부를 때 읽는다)
+    c.chat = ChatService(repo, clock, settings)
+    c.chat.send = lambda account_id, event, data: c.hub.send_to_account(account_id, event, data)
+    c.chat.push = lambda message_id: c.push.schedule_chat(message_id)
     if settings.kos_enabled:
         from app.kos.runtime import KosRuntime
 

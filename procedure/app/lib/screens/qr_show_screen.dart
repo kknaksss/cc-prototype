@@ -10,15 +10,17 @@ import 'package:flutter/material.dart';
 
 import '../api/api.dart';
 import '../app_state.dart';
+import '../chat/chat_state.dart' show whileDisplayScreen;
 import '../scan/scan_channel.dart';
 import '../theme/tokens.dart';
 
+// 떠 있는 동안 띄우기 화면 수를 올린다 — 대기열 · 예약 상세 어느 길로 열었든 채팅 배너를 만들지 않는다(SPEC-007 §10.12 · D9-44)
 Future<void> showQrScreen(BuildContext context,
         {required int requestId, required int reservationId, required String qrUrl, String? expiresAt, ScanChannel channel = const ScanChannel()}) =>
-    Navigator.of(context, rootNavigator: true).push(MaterialPageRoute(
-      fullscreenDialog: true,
-      builder: (_) => QrShowScreen(requestId: requestId, reservationId: reservationId, qrUrl: qrUrl, expiresAt: expiresAt, channel: channel),
-    ));
+    whileDisplayScreen(() => Navigator.of(context, rootNavigator: true).push(MaterialPageRoute(
+          fullscreenDialog: true,
+          builder: (_) => QrShowScreen(requestId: requestId, reservationId: reservationId, qrUrl: qrUrl, expiresAt: expiresAt, channel: channel),
+        )));
 
 // pending 이 아닐 때 닫히며 보일 한 줄
 String qrClosedLine(String status) => switch (status) {

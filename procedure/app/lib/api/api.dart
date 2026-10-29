@@ -1,11 +1,13 @@
 // back REST — 이 모듈에서만 부른다(SPEC-003 §7 · SPEC-004 §3.3). 오류 본문 = {error:{code,message}}
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' show min;
 
 import 'package:flutter/foundation.dart' show Uint8List;
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart' show MediaType;
 
+import '../chat/chat_model.dart';
 import '../model/account.dart';
 import '../model/board.dart' show Json;
 import '../model/display.dart';
@@ -191,6 +193,128 @@ class Api {
   // [사진 다시 올리기](KOS 사진 실패 · D7-56)
   Future<String> photoKosRetry(int photoId) async =>
       '${((await _post('/api/id-photos/$photoId/kos-retry')) as Map)['kos'] ?? 'failed'}';
+
+  // ─── 채팅(SPEC-007 §6.2) — 14 경로 · JSON = 12초 · 사진 올리기 = 40초(§9)
+  Future<List<Person>> chatPeople() async {
+    final d = await _req('GET', '/api/chat/people');
+    final l = d is Map ? d['items'] : null;
+    return [for (final e in (l is List ? l : const [])) if (e is Map) Person.fromJson(e.cast<String, dynamic>())];
+  }
+
+  Future<({List<Room> items, int unreadRooms})> chatRooms() async {
+    final d = await _req('GET', '/api/chat/rooms');
+    final l = d is Map ? d['items'] : null;
+    final items = [for (final e in (l is List ? l : const [])) if (e is Map) Room.fromJson(e.cast<String, dynamic>())];
+    final n = d is Map ? d['unreadRooms'] : null;
+    return (items: items, unreadRooms: n is num ? n.toInt() : items.where((r) => r.unread > 0).length);
+  }
+
+  Future<Room> _room(Future<dynamic> f) async => Room.fromJson(((await f) as Map).cast<String, dynamic>());
+  Future<Room> chatOpenDirect(int accountId) => _room(_post('/api/chat/rooms/direct', {'accountId': accountId}));
+  Future<Room> chatCreateGroup(List<int> accountIds, {String? title}) =>
+      _room(_post('/api/chat/rooms', {'accountIds': accountIds, if (title != null && title.trim().isNotEmpty) 'title': title.trim()}));
+  Future<Room> chatAddMembers(int roomId, List<int> accountIds) => _room(_post('/api/chat/rooms/$roomId/members', {'accountIds': accountIds}));
+  Future<void> chatLeave(int roomId) => _post('/api/chat/rooms/$roomId/leave');
+  Future<void> chatHide(int roomId) => _post('/api/chat/rooms/$roomId/hide');
+  Future<void> chatMute(int roomId, bool muted) => _req('PUT', '/api/chat/rooms/$roomId/mute', body: {'muted': muted});
+
+  // before = id < before · since = updatedAt >= since(KST · 밀리초 — `+` 가 공백으로 읽히지 않게 queryParameters 로 %2B)
+  Future<({List<ChatMessage> items, bool hasMore})> chatMessages(int roomId, {int? before, String? since, int? limit}) async {
+    final q = Uri(queryParameters: {'before': ?before?.toString(), 'since': ?since, 'limit': ?limit?.toString()}).query;
+    final d = await _req('GET', '/api/chat/rooms/$roomId/messages${q.isEmpty ? '' : '?$q'}');
+    final l = d is Map ? d['items'] : null;
+    return (
+      items: [for (final e in (l is List ? l : const [])) if (e is Map) ChatMessage.fromJson(e.cast<String, dynamic>())],
+      hasMore: d is Map && d['hasMore'] == true,
+    );
+  }
+
+  Future<ChatMessage> chatSend(int roomId, String clientId, {String? text, int? photoId}) async => ChatMessage.fromJson(
+      ((await _post('/api/chat/rooms/$roomId/messages', {'clientId': clientId, 'text': ?text, 'photoId': ?photoId})) as Map).cast<String, dynamic>());
+  Future<void> chatDelete(int messageId) => _req('DELETE', '/api/chat/messages/$messageId');
+  Future<Json> chatRead(int roomId, int messageId) async =>
+      ((await _post('/api/chat/rooms/$roomId/read', {'messageId': messageId})) as Map).cast<String, dynamic>();
+
+  static const photoTimeout = Duration(seconds: 40);
+
+  // 사진 올리기(multipart) — 진행률을 알려고 본문 바이트를 직접 흘린다(MultipartRequest 는 보낸 바이트를 알려 주지 않음 · A27)
+  Future<int> chatUploadPhoto(int roomId, Uint8List jpeg, {required int width, required int height, void Function(double)? onProgress}) async {
+    final boundary = 'ccc-${DateTime.now().microsecondsSinceEpoch}';
+    List<int> field(String k, String v) => utf8.encode('--$boundary\r\nContent-Disposition: form-data; name="$k"\r\n\r\n$v\r\n');
+    final head = <int>[
+      ...field('roomId', '$roomId'),
+      ...field('width', '$width'),
+      ...field('height', '$height'),
+      ...utf8.encode('--$boundary\r\nContent-Disposition: form-data; name="photo"; filename="photo.jpg"\r\nContent-Type: image/jpeg\r\n\r\n'),
+    ];
+    final tail = utf8.encode('\r\n--$boundary--\r\n');
+    final req = http.StreamedRequest('POST', Uri.parse('${base()}/api/chat/photos'));
+    final t = token();
+    req.headers['Accept'] = 'application/json';
+    req.headers['Content-Type'] = 'multipart/form-data; boundary=$boundary';
+    if (t != null) req.headers['Authorization'] = 'Bearer $t';
+    final total = head.length + jpeg.length + tail.length;
+    req.contentLength = total;
+    http.Response res;
+    try {
+      final sending = client.send(req).timeout(photoTimeout);
+      var sent = 0;
+      void add(List<int> b) {
+        req.sink.add(b);
+        sent += b.length;
+        onProgress?.call(sent / total);
+      }
+
+      add(head);
+      const chunk = 64 * 1024;
+      for (var i = 0; i < jpeg.length; i += chunk) {
+        add(Uint8List.sublistView(jpeg, i, min(i + chunk, jpeg.length)));
+        await Future<void>.delayed(Duration.zero); // 진행률이 화면에 그려질 틈
+      }
+      add(tail);
+      unawaited(req.sink.close());
+      res = await http.Response.fromStream(await sending);
+    } on TimeoutException {
+      throw const ApiError(0, 'network', '서버 응답이 없어요');
+    } catch (_) {
+      throw const ApiError(0, 'network', '서버에 연결할 수 없어요');
+    }
+    final data = _decode(res);
+    final id = data is Map ? data['photoId'] : null;
+    if (id is! num) throw const ApiError(0, 'error', '사진을 올리지 못했어요');
+    return id.toInt();
+  }
+
+  // 사진 바이트(Bearer 헤더만 · 쿠키 · ?token= 없음 — D9-23). 앱은 메모리에만 둔다(D9-24)
+  Future<Uint8List> chatPhoto(int photoId) async {
+    final headers = <String, String>{'Accept': 'image/jpeg'};
+    final t = token();
+    if (t != null) headers['Authorization'] = 'Bearer $t';
+    http.Response res;
+    try {
+      final req = http.Request('GET', Uri.parse('${base()}/api/chat/photos/$photoId'))..headers.addAll(headers);
+      res = await http.Response.fromStream(await client.send(req).timeout(photoTimeout));
+    } on TimeoutException {
+      throw const ApiError(0, 'network', '서버 응답이 없어요');
+    } catch (_) {
+      throw const ApiError(0, 'network', '서버에 연결할 수 없어요');
+    }
+    if (res.statusCode < 200 || res.statusCode >= 300) _decode(res);
+    return res.bodyBytes;
+  }
+
+  // 오류 본문 → ApiError(2xx 면 JSON 그대로)
+  dynamic _decode(http.Response res) {
+    dynamic data;
+    try {
+      data = res.body.isEmpty ? null : jsonDecode(utf8.decode(res.bodyBytes));
+    } catch (_) {}
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      final err = data is Map && data['error'] is Map ? data['error'] as Map : const {};
+      throw ApiError(res.statusCode, '${err['code'] ?? 'error'}', '${err['message'] ?? '요청을 처리하지 못했어요'}');
+    }
+    return data;
+  }
 
   // §7.1 SSE 주소 — ?token= (+ deviceId · 0.4.0)
   Uri streamUri(String tokenValue, {int? deviceId}) => Uri.parse('${base()}/api/board/stream')

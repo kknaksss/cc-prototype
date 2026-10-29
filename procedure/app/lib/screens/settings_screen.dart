@@ -113,7 +113,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     _Row('받는 알림이 없어요', '', muted: true)
                   else
                     for (final x in settings)
-                      _SwitchRow(notifKindName[x.kind]!, x.enabled, (v) => _toggle(x, v)),
+                      SwitchRow(notifKindName[x.kind]!, x.enabled, (v) => _toggle(x, v)),
                 ]),
                 // 이름은 이 기기에 먼저 두고 등록 때 보낸다(E2E batch 1 #2) — 기기 행이 없으면(알림 꺼짐) 웹 목록엔 아직 안 보임
                 _Section('이 기기', [
@@ -185,21 +185,5 @@ class _Row extends StatelessWidget {
               ),
           ]),
         ),
-      );
-}
-
-class _SwitchRow extends StatelessWidget {
-  final String k;
-  final bool v;
-  final ValueChanged<bool> onChanged;
-  const _SwitchRow(this.k, this.v, this.onChanged);
-
-  @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 6, 8, 6),
-        child: Row(children: [
-          Expanded(child: Text(k, style: Typo.body500)),
-          Switch.adaptive(value: v, activeTrackColor: Ms.primary, onChanged: onChanged),
-        ]),
       );
 }

@@ -244,8 +244,19 @@ APP_ROUTES = {("GET", "/api/notifications"), ("POST", "/api/notifications/read")
               ("POST", "/api/customers/{customer_id}/passport-scan"), ("GET", "/api/id-photos/{photo_id}"),
               ("POST", "/api/id-photos/{photo_id}/kos-retry")}
 
-def test_route_count_51(client):
-    """back 경로 51 = HTTP 50 + 통역 WS 1 — 앞 판 35(SPEC-005 §7.6 · 시술 현황 19 + 예약 현황 HTTP 16)
+# 직원 채팅 HTTP 14(SPEC-007 §6.2 · §6.4)
+CHAT_ROUTES = {("GET", "/api/chat/people"), ("GET", "/api/chat/rooms"), ("POST", "/api/chat/rooms/direct"),
+               ("POST", "/api/chat/rooms"), ("POST", "/api/chat/rooms/{room_id}/members"),
+               ("POST", "/api/chat/rooms/{room_id}/leave"), ("POST", "/api/chat/rooms/{room_id}/hide"),
+               ("PUT", "/api/chat/rooms/{room_id}/mute"), ("GET", "/api/chat/rooms/{room_id}/messages"),
+               ("POST", "/api/chat/rooms/{room_id}/messages"), ("DELETE", "/api/chat/messages/{message_id}"),
+               ("POST", "/api/chat/rooms/{room_id}/read"), ("POST", "/api/chat/photos"), ("GET", "/api/chat/photos/{photo_id}")}
+
+
+def test_route_count_65(client):
+    """back 경로 65 = HTTP 64 + 통역 WS 1 — 51(아래) + 직원 채팅 HTTP 14(SPEC-007 §6.4).
+
+    51 = HTTP 50 + 통역 WS 1 — 앞 판 35(SPEC-005 §7.6 · 시술 현황 19 + 예약 현황 HTTP 16)
     + 앱 다음 판 새 HTTP 16(띄우기 5 · 스캔 · 사진 3 · 알림 4 · 고객 문진 웹 공개 2 — SPEC-006 §6.7:
     직원 문진 2 · unlock 1 없앰 · 공개 GET · POST 더함 · E2E batch 3: 사진 삭제 · 유입 채널 2)."""
     from app.api import interpret
@@ -260,4 +271,7 @@ def test_route_count_51(client):
     gone = {("GET", "/api/questionnaires/{reservation_id}"), ("POST", "/api/questionnaires/{reservation_id}"),
             ("POST", "/api/auth/unlock")}
     assert not gone & http
-    assert len(http) + len(ws) == 51, sorted(http)
+    assert len(CHAT_ROUTES) == 14 and CHAT_ROUTES <= http
+    assert len([x for x in http if x[1].startswith("/api/chat")]) == 14
+    assert len(http - CHAT_ROUTES) + len(ws) == 51, sorted(http)
+    assert len(http) + len(ws) == 65, sorted(http)

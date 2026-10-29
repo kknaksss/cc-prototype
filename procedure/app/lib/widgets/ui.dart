@@ -2,6 +2,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show TextInputFormatter;
 
 import '../theme/tokens.dart';
 import '../view/view.dart';
@@ -19,6 +20,7 @@ class MsButton extends StatelessWidget {
   final BtnColor color;
   final BtnSize size;
   final bool expand;
+  final IconData? icon; // 왼쪽 아이콘(채팅 [사진] — medikit leftIcon)
   const MsButton(
     this.label, {
     super.key,
@@ -27,6 +29,7 @@ class MsButton extends StatelessWidget {
     this.color = BtnColor.blue,
     this.size = BtnSize.md,
     this.expand = false,
+    this.icon,
   });
 
   @override
@@ -72,7 +75,13 @@ class MsButton extends StatelessWidget {
         border: Border.all(color: border),
       ),
       alignment: Alignment.center,
-      child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: text.copyWith(color: fg)),
+      child: icon == null
+          ? Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: text.copyWith(color: fg))
+          : Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(icon, size: 18, color: fg),
+              const SizedBox(width: 4),
+              Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: text.copyWith(color: fg)),
+            ]),
     );
     return Semantics(
       button: true,
@@ -303,5 +312,155 @@ class Boxed extends StatelessWidget {
           border: border == null ? null : Border.all(color: border!, width: borderWidth),
         ),
         child: child,
+      );
+}
+
+// ─── 채팅 시안 medikit 컴포넌트(SPEC-007 §10.0 — 앱에 같은 위젯이 없던 것) · 토큰 색만
+
+// Input(size m · 40) — 왼쪽 아이콘(검색) · 여러 줄(메시지 입력) · 입력 제한
+class MsInput extends StatelessWidget {
+  final TextEditingController? controller;
+  final String? hint;
+  final IconData? icon;
+  final int minLines, maxLines;
+  final ValueChanged<String>? onChanged;
+  final List<TextInputFormatter>? formatters;
+  final FocusNode? focusNode;
+  final Key? fieldKey;
+  const MsInput({super.key, this.controller, this.hint, this.icon, this.minLines = 1, this.maxLines = 1, this.onChanged, this.formatters, this.focusNode, this.fieldKey});
+
+  @override
+  Widget build(BuildContext context) => TextField(
+        key: fieldKey,
+        controller: controller,
+        focusNode: focusNode,
+        minLines: minLines,
+        maxLines: maxLines,
+        onChanged: onChanged,
+        inputFormatters: formatters,
+        textInputAction: maxLines == 1 ? TextInputAction.search : TextInputAction.newline,
+        keyboardType: maxLines == 1 ? TextInputType.text : TextInputType.multiline,
+        style: Typo.body400,
+        decoration: InputDecoration(
+          hintText: hint,
+          prefixIcon: icon == null ? null : Icon(icon, size: 18, color: Ms.gray600),
+          prefixIconConstraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+        ),
+      );
+}
+
+// Label — 입력 칸 위 글자
+class MsLabel extends StatelessWidget {
+  final String text;
+  const MsLabel(this.text, {super.key});
+  @override
+  Widget build(BuildContext context) => Text(text, style: Typo.caption600.copyWith(color: Ms.gray700));
+}
+
+// Checkbox(20 · 둥근 4) — 켬 = primary 채움 + ✓ · 꺼짐(못 고름) = gray-200
+class MsCheckbox extends StatelessWidget {
+  final bool value;
+  final bool enabled;
+  const MsCheckbox(this.value, {super.key, this.enabled = true});
+  @override
+  Widget build(BuildContext context) => Container(
+        width: 20,
+        height: 20,
+        decoration: BoxDecoration(
+          color: value ? (enabled ? Ms.primary : Ms.gray400) : (enabled ? Ms.white : Ms.gray200),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: value ? (enabled ? Ms.primary : Ms.gray400) : Ms.gray300, width: 1.5),
+        ),
+        child: value ? const Icon(Icons.check_rounded, size: 15, color: Ms.white) : null,
+      );
+}
+
+// Card — 흰 바탕 · gray-200 테두리 · 둥근 12 · 고름(selected) = primary-100 바탕 · 누르기(interactive)
+class MsCard extends StatelessWidget {
+  final Widget child;
+  final bool selected;
+  final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
+  final EdgeInsets padding;
+  final bool shadow;
+  const MsCard({super.key, required this.child, this.selected = false, this.onTap, this.onLongPress, this.padding = const EdgeInsets.all(12), this.shadow = false});
+  @override
+  Widget build(BuildContext context) {
+    final box = Container(
+      padding: padding,
+      decoration: BoxDecoration(
+        color: selected ? Ms.primary100 : Ms.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: selected ? Ms.primary : Ms.gray200),
+        boxShadow: shadow ? const [BoxShadow(color: Color(0x29000000), blurRadius: 16, offset: Offset(0, 6))] : null,
+      ),
+      child: child,
+    );
+    if (onTap == null && onLongPress == null) return box;
+    return GestureDetector(behavior: HitTestBehavior.opaque, onTap: onTap, onLongPress: onLongPress, child: box);
+  }
+}
+
+// Progress(sm · primary) — 얇은 막대
+class MsProgress extends StatelessWidget {
+  final double value;
+  const MsProgress(this.value, {super.key});
+  @override
+  Widget build(BuildContext context) => ClipRRect(
+        borderRadius: BorderRadius.circular(2),
+        child: SizedBox(
+          height: 4,
+          child: LinearProgressIndicator(value: value.clamp(0, 1), backgroundColor: Ms.gray300, color: Ms.primary, minHeight: 4),
+        ),
+      );
+}
+
+// Banner(primary · 그림자 · 오른쪽 동작) — 앱 안 채팅 배너(DS:S11 · S13d)
+class MsBanner extends StatelessWidget {
+  final String text;
+  final String? action;
+  final VoidCallback? onAction;
+  const MsBanner(this.text, {super.key, this.action, this.onAction});
+  @override
+  Widget build(BuildContext context) => Material(
+        type: MaterialType.transparency,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
+          decoration: BoxDecoration(
+            color: Ms.primary100,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Ms.primary500),
+            boxShadow: const [BoxShadow(color: Color(0x29000000), blurRadius: 16, offset: Offset(0, 6))],
+          ),
+          child: Row(children: [
+            const Icon(Icons.chat_bubble_rounded, size: 18, color: Ms.primary),
+            const SizedBox(width: 8),
+            Expanded(child: Text(text, maxLines: 2, overflow: TextOverflow.ellipsis, style: Typo.body500)),
+            if (action != null) ...[const SizedBox(width: 8), MsButton(action!, size: BtnSize.sm, onPressed: onAction)],
+          ]),
+        ),
+      );
+}
+
+// 켬/끔 한 줄 — 설정 알림 칸과 방 정보 「알림」이 같은 꼴(Switch.adaptive · SPEC-007 §10.0 · R1:W-7)
+class SwitchRow extends StatelessWidget {
+  final String k;
+  final bool v;
+  final ValueChanged<bool>? onChanged;
+  final String? sub;
+  const SwitchRow(this.k, this.v, this.onChanged, {super.key, this.sub});
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 6, 8, 6),
+        child: Row(children: [
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(k, style: Typo.body500),
+              if (sub != null) Text(sub!, style: Typo.caption400.copyWith(color: Ms.gray600)),
+            ]),
+          ),
+          Switch.adaptive(value: v, activeTrackColor: Ms.primary, onChanged: onChanged),
+        ]),
       );
 }

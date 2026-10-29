@@ -45,10 +45,11 @@ class ApnsClient:
             self._jwt = (token, now)
         return self._jwt[0]
 
-    async def send(self, device_token: str, payload: dict[str, Any]) -> ApnsResult:
+    async def send(self, device_token: str, payload: dict[str, Any], expiration: int = 0) -> ApnsResult:
+        """expiration = apns-expiration(유닉스 초) — 0 = 바로 못 주면 버림(호출 · 띄우기). 채팅만 보낼 때 + 1일(SPEC-007 §8)."""
         url = f"{HOSTS[self.s.apns_env]}/3/device/{device_token}"
         headers = {"authorization": f"bearer {self._token()}", "apns-topic": self.s.apns_bundle_id,
-                   "apns-push-type": "alert", "apns-priority": "10", "apns-expiration": "0"}
+                   "apns-push-type": "alert", "apns-priority": "10", "apns-expiration": str(expiration)}
         try:
             resp = await self.http.post(url, json=payload, headers=headers)
         except httpx.HTTPError as e:

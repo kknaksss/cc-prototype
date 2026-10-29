@@ -20,6 +20,7 @@ from app.domain.clock import Clock
 from app.domain.models import Account
 from app.push.apns import ApnsClient, ApnsResult
 from app.repository.repo import Repository, Tx
+from app.service.chat import PREVIEW, room_name
 from app.service.notifications import NotificationService
 
 log = logging.getLogger("procedure.push")
@@ -28,6 +29,16 @@ RETRY = (429,)  # + 5xx · 네트워크 오류 → 1회 재시도
 # 이 기기 토큰은 다시 쓸 수 없다 → device 행 삭제 · push_log token_removed. 410 은 늘, 400 은 이 reason 일 때만
 # (DeviceTokenNotForTopic = 번들 id 바꾸기 전에 등록된 옛 토큰 — 2026-10-21 실 APNs). 그 밖 400 은 failed
 DEAD_400 = ("BadDeviceToken", "DeviceTokenNotForTopic", "Unregistered")
+CHAT_TTL_SEC = 86400  # 채팅 apns-expiration = 보낼 때 + 1일(D9-31) — 호출 · 띄우기는 0 그대로
+
+
+def chat_body(kind: str, text: str | None) -> str:
+    """채팅 푸시 본문(SPEC-007 §8) — 텍스트 앞 100자(넘으면 「…」 · 줄바꿈 = 공백) · 사진 = 「사진」(잠금 화면에 보인다)."""
+    # 법적 검토 필요: 직원 채팅 — 고객 정보가 메시지 · 사진으로 오갈 수 있음(보존 기간 없음 · 열람 로그 없음 · 잠금 화면에 본문 앞부분)  # noqa: E501
+    if kind == "photo":
+        return "사진"
+    flat = " ".join((text or "").splitlines())
+    return flat[:PREVIEW] + ("…" if len(flat) > PREVIEW else "")
 
 
 @dataclass(frozen=True)
@@ -42,10 +53,12 @@ class Delivery:
     token: str
     category: str | None
     payload: dict[str, Any]
-    kind: str = "doctor_call"  # doctor_call | counselor_call | display
+    kind: str = "doctor_call"  # doctor_call | counselor_call | display | chat
     reservation_id: int | None = None
     notification_id: int | None = None
     display_request_id: int | None = None
+    chat_message_id: int | None = None
+    expiration: int = 0  # apns-expiration — 채팅만 보낼 때 + 1일(SPEC-007 §8 · D9-31)
 
 
 def _tail(token: str) -> str:
@@ -148,6 +161,37 @@ class PushService:
         return [Delivery(None, None, owner.id, owner.role, dev.id, dev.token, None, payload, kind="display",
                          reservation_id=d.reservation_id, display_request_id=d.id)]
 
+    def chat_message(self, message_id: int) -> list[Delivery]:
+        """채팅 새 메시지(SPEC-007 §8) — 받는 사람 = 지금 멤버 − 보낸 사람 − 알림 끈 사람 − 비활성 → 기기 전부.
+
+        숨긴 1:1 멤버도 받는다. 시스템 줄 · 지운 것 = 없음. notification 행을 쓰지 않는다(알림 목록 · 종 배지 밖 · D9-30).
+        제목 = 1:1 은 보낸 사람 · 그룹은 「보낸 사람 · 방 이름」(이름 없는 그룹 = 받는 사람 기준 나열).
+        """
+        with self.repo.tx() as tx:
+            m = tx.chat_message(message_id)
+            room = tx.chat_room(m["room_id"]) if m else None
+            if m is None or room is None or m["kind"] == "system" or m["deleted_at"] is not None:
+                return []
+            accounts = {a.id: a for a in tx.accounts()}
+            members = tx.chat_members(room["id"])
+            ids = [r["account_id"] for r in members]
+            to = [r["account_id"] for r in members if r["account_id"] != m["account_id"] and not r["muted"]
+                  and r["account_id"] in accounts and accounts[r["account_id"]].active]
+            devices = tx.devices_of(to)
+        sender = accounts.get(m["account_id"])
+        sender_name = sender.name if sender else ""
+        body = chat_body(m["kind"], m["body"])
+        expiration = int(self.clock.now().timestamp()) + CHAT_TTL_SEC
+        out = []
+        for device_id, account_id, token in devices:
+            to_acc = accounts[account_id]
+            title = sender_name if room["kind"] == "direct" else f"{sender_name} · {room_name(room, ids, accounts, account_id)}"
+            payload = {"aps": {"alert": {"title": title, "body": body}, "sound": "default", "thread-id": f"chat-{room['id']}"},
+                       "kind": "chat", "roomId": room["id"], "messageId": m["id"]}
+            out.append(Delivery(None, None, account_id, to_acc.role, device_id, token, None, payload, kind="chat",
+                                chat_message_id=m["id"], expiration=expiration))
+        return out
+
     def _log(self, d: "Delivery", status: str, created_at, res: ApnsResult | None = None, attempts: int = 0) -> None:
         with self.repo.tx() as tx:
             tx.add_push_log(call_id=d.call_id, visit_id=d.visit_id, account_id=d.account_id, role=d.role,
@@ -156,7 +200,7 @@ class PushService:
                             apns_id=res.apns_id if res else None, attempts=attempts, created_at=created_at,
                             sent_at=self.clock.now() if res is not None and res.status == 200 else None,
                             kind=d.kind, reservation_id=d.reservation_id, notification_id=d.notification_id,
-                            display_request_id=d.display_request_id)
+                            display_request_id=d.display_request_id, chat_message_id=d.chat_message_id)
 
     # ------------------------------------------------------------------ 발송
     def schedule(self, call_id: int, actor_login: str) -> None:
@@ -171,6 +215,13 @@ class PushService:
     def schedule_display(self, request_id: int) -> None:
         """띄우기 — 그 기기 SSE 가 닫혀 있을 때(§5-3 ②)."""
         self._dispatch(lambda: self.display_message(request_id), f"띄우기 request={request_id}")
+
+    def schedule_chat(self, message_id: int) -> None:
+        """채팅 새 메시지 — 보내기 커밋 뒤(같은 clientId 다시 · 시스템 줄은 부르지 않는다). what 에 id 만(§6.1)."""
+        self._dispatch(lambda: self.chat_message(message_id), f"채팅 message={message_id}")
+
+    async def notify_chat(self, message_id: int) -> dict[str, int]:
+        return await self._notify(lambda: self.chat_message(message_id), f"채팅 message={message_id}")
 
     def _dispatch(self, prepare, what: str) -> None:
         """돌고 있는 이벤트 루프에 태스크로 띄운다. 키가 없으면 받는 기기마다 skipped_no_key 로 쌓기만(알림 행은 쓴다)."""
@@ -227,7 +278,7 @@ class PushService:
             return out
         created = self.clock.now()
         for d in msg:
-            res, attempts = await self._send_with_retry(d.token, d.payload)
+            res, attempts = await self._send_with_retry(d.token, d.payload, d.expiration)
             if res.status == 200:
                 out["sent"] += 1
                 self._log(d, "sent", created, res, attempts)
@@ -244,16 +295,16 @@ class PushService:
         log.info("%s 푸시 보냄 %d · 실패 %d", what, out["sent"], out["failed"])
         return out
 
-    async def _send_with_retry(self, token: str, payload: dict[str, Any]) -> tuple[ApnsResult, int]:
+    async def _send_with_retry(self, token: str, payload: dict[str, Any], expiration: int = 0) -> tuple[ApnsResult, int]:
         assert self.client is not None
-        res = await self._send(token, payload)
+        res = await self._send(token, payload, expiration)
         if res.status is None or res.status >= 500 or res.status in RETRY:  # 네트워크 · 5xx · 429 → 1회만 다시
-            return await self._send(token, payload), 2
+            return await self._send(token, payload, expiration), 2
         return res, 1
 
-    async def _send(self, token: str, payload: dict[str, Any]) -> ApnsResult:
+    async def _send(self, token: str, payload: dict[str, Any], expiration: int = 0) -> ApnsResult:
         assert self.client is not None
         try:
-            return await self.client.send(token, payload)
+            return await self.client.send(token, payload, expiration)
         except Exception as e:  # 키 파일 · 서명 오류 등 — 메시지에 키가 섞일 수 있어 클래스 이름만
             return ApnsResult(None, type(e).__name__)

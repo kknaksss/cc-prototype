@@ -1,4 +1,4 @@
-// Céramique — 의료진 앱(Flutter · iOS · SPEC-004) · 4탭(예약 · 내원 · 시술 현황 · 설정)
+// Céramique — 의료진 앱(Flutter · iOS · SPEC-004 · SPEC-007) · 5탭(예약 · 내원 · 시술 현황 · 채팅 · 설정)
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -29,6 +29,8 @@ class ProcedureApp extends StatelessWidget {
         debugShowCheckedModeBanner: false,
         theme: ceramiqueTheme(),
         locale: const Locale('ko'),
+        // 루트 위 화면 수(대화상자 · 시트 · 크게 보기 · 알림 목록 …) — 있으면 채팅 「보고 있는 방」 아님(SPEC-007 §5 · W2-4). 배너는 여기 두지 않는다(셸 안 층)
+        navigatorObservers: [state.chat.rootRoutes],
         // 태블릿 글자 배율(T4) — 기기 글자 크기 설정에 곱한다
         builder: (context, child) {
           final mq = MediaQuery.of(context);

@@ -149,10 +149,10 @@ void main() {
       await teardown(t, app);
     });
 
-    testWidgets('새 대화 · 참여자 추가 검색도 같은 초성 함수(OQ-961)', (t) async {
+    testWidgets('새 대화 · 초대 검색도 같은 초성 함수(OQ-961)', (t) async {
       final f = fake();
       final app = await openRoom(t, f, '나의사');
-      // 새 대화 화면은 방 목록에서 — 같은 ChatPeopleScreen 이 참여자 추가에도 쓰인다
+      // 새 대화 화면은 방 목록에서 — 같은 ChatPeopleScreen 이 초대에도 쓰인다
       Navigator.of(t.element(find.byKey(const Key('chat-input')))).popUntil((r) => r.isFirst);
       await t.pumpAndSettle();
       await t.tap(find.text('새 대화').first);

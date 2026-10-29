@@ -123,6 +123,31 @@ class ChatThread {
   }
 }
 
+// 방 메시지 바뀜 한 건(모아보기가 듣는다 — §10.16 「바로 고침」)
+class ChatChange {
+  final String kind; // message · deleted · resync · clear
+  final ChatMessage? message;
+  final int? roomId;
+  final int? messageId;
+  const ChatChange.message(ChatMessage this.message)
+      : kind = 'message',
+        roomId = null,
+        messageId = null;
+  const ChatChange.deleted(int this.roomId, int this.messageId)
+      : kind = 'deleted',
+        message = null;
+  const ChatChange.resync()
+      : kind = 'resync',
+        message = null,
+        roomId = null,
+        messageId = null;
+  const ChatChange.clear()
+      : kind = 'clear',
+        message = null,
+        roomId = null,
+        messageId = null;
+}
+
 class ChatState extends ChangeNotifier {
   final Api api;
   final Toaster toaster;
@@ -145,6 +170,8 @@ class ChatState extends ChangeNotifier {
   final Map<int, ChatThread> threads = {};
   final PhotoCache photos = PhotoCache();
   final Map<Object, Future<Uint8List?>> _photoLoads = {};
+  // 방 메시지 바뀜 알림(r5 · 모아보기 바로 고침 — §10.16): 새 메시지 · 지움 · 다시 읽기(다시 연결 · 앞으로 옴) · 비움(로그아웃)
+  final StreamController<ChatChange> changes = StreamController<ChatChange>.broadcast();
   // 여러 개 보내기(r3 · §10.5) — 방마다 이번 묶음 (끝난 수, 전체) · 입력창 위 「N개 보내는 중 · k/N」(다 끝나면 없음)
   final Map<int, ({int done, int total})> batches = {};
 
@@ -183,6 +210,8 @@ class ChatState extends ChangeNotifier {
     _sort();
     _recount();
   }
+
+  String _memberKey(Room r) => ([for (final m in r.members) m.id]..sort()).join(',');
 
   void _remove(int roomId) {
     rooms.removeWhere((r) => r.id == roomId);
@@ -260,7 +289,15 @@ class ChatState extends ChangeNotifier {
 
   // 놓친 것 메우기(앞으로 옴 · SSE 다시 연결 — §11) — since=<가장 늦은 updatedAt>(>=) · id 로 겹침 지움 · hasMore 면 최근 50 다시
   Future<void> catchUp() async {
+    final before = {for (final r in rooms) r.id: _memberKey(r)};
     await refreshRooms();
+    changes.add(const ChatChange.resync());
+    // 멤버가 바뀐 방(내가 다시 초대됨 등 — 내 보이는 경계가 바뀌었을 수 있음) = since 메우기 대신 처음부터 다시(r5 처분 W-4) —
+    // 열린 대화도 아래 루프가 처음 50 을 다시 읽어 경계 전 옛 메시지가 화면에 남지 않는다
+    for (final r in rooms) {
+      final k = before[r.id];
+      if (k != null && k != _memberKey(r)) threads[r.id]?.reset();
+    }
     for (final e in threads.entries.toList()) {
       final id = e.key, t = e.value;
       if (!_views.containsKey(id)) {
@@ -378,7 +415,11 @@ class ChatState extends ChangeNotifier {
       case 'chat_room':
         final r = data['room'];
         if (r is Map) {
-          _upsert(Room.fromJson(r.cast<String, dynamic>()));
+          final room = Room.fromJson(r.cast<String, dynamic>());
+          // 내 chat_room = 내 보이는 경계가 바뀌었을 수 있다(다시 초대 · 처분 W-4) — 열려 있지 않은 방은 다음에 열 때 처음부터
+          final old = this.room(room.id);
+          if (old != null && _memberKey(old) != _memberKey(room) && !_views.containsKey(room.id)) threads[room.id]?.reset();
+          _upsert(room);
           notifyListeners();
           reevaluate();
         }
@@ -398,6 +439,7 @@ class ChatState extends ChangeNotifier {
   }
 
   void _onMessage(ChatMessage m) {
+    changes.add(ChatChange.message(m));
     final t = threads[m.roomId];
     var mine = isMine(m);
     if (t != null) {
@@ -434,6 +476,7 @@ class ChatState extends ChangeNotifier {
   // at = 서버가 준 updatedAt(SSE) — 없으면(DELETE 응답 = {ok}) 그 메시지의 updatedAt 을 그대로 둔다.
   // since 원천에 앱이 만든 시각을 섞지 않는다(오프셋 없는 로컬 시각 → since 가 미래 — review-code r1 FAIL-1)
   void _onDeleted(int roomId, int messageId, String? at) {
+    changes.add(ChatChange.deleted(roomId, messageId));
     final t = threads[roomId];
     final m = t?.byId[messageId];
     if (m != null && (at != null && at.isNotEmpty || !m.deleted)) {
@@ -726,6 +769,7 @@ class ChatState extends ChangeNotifier {
       }
     }
     batches.clear();
+    changes.add(const ChatChange.clear());
     rooms = [];
     roomsLoaded = false;
     meId = null;
@@ -745,6 +789,7 @@ class ChatState extends ChangeNotifier {
 
   @override
   void dispose() {
+    changes.close();
     _readTimer?.cancel();
     _bannerTimer?.cancel();
     rootRoutes.count.removeListener(reevaluate);

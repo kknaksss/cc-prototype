@@ -98,7 +98,7 @@ def test_chat_forward_auth_shape(env):
         r = fwd(chat, "c-amy", mid, [room_t(d, "fwd-unfit-01")])
         assert (r.status_code, code(r)) == (400, "chat_not_forwardable")
         assert r.json()["error"]["message"] == "전달할 수 없는 메시지예요"
-    assert count_messages(chat) == 4  # 나래 글 · 전달본 · 나감 줄 · 지운 글 — 실패들은 아무것도 만들지 않음
+    assert count_messages(chat) == 5  # 만듦 줄(r5) · 나래 글 · 전달본 · 나감 줄 · 지운 글 — 실패들은 아무것도 만들지 않음
 
 
 # ------------------------------------------------------------------ 전달 — 대상별

@@ -1,4 +1,4 @@
-"""직원 채팅 API 19(SPEC-007 §6.2 · 1판 14 + r3 4 + r4 전달 1) — Bearer · 다섯 역할 모두 · 가짜 판에서도 됨.
+"""직원 채팅 API 20(SPEC-007 §6.2 · 1판 14 + r3 4 + r4 전달 1 + r5 모아보기 1) — Bearer · 다섯 역할 모두 · 가짜 판에서도 됨.
 
 경로는 모두 `async def` — SSE(`send_to_account` 의 `asyncio.Queue`) · 푸시(`PushService._dispatch` 의 이벤트 루프)가
 루프 스레드에서 돌아야 한다. 동기 `def` 면 스레드풀에서 돌아 푸시가 「이벤트 루프 없음」으로 0 이 된다(§6.1).
@@ -32,7 +32,7 @@ from app.schemas.chat import (
     SendRequest,
     VideoUploadResponse,
 )
-from app.service.chat import PAGE, VIDEO_MAX_BYTES
+from app.service.chat import GRID, PAGE, VIDEO_MAX_BYTES
 from app.service.id_photo import MAX_BYTES
 from app.service.passport_scan import PhotoTooLarge
 
@@ -93,6 +93,13 @@ async def messages(room_id: int, c: Ctr, actor: Actor, before: int | None = None
                    limit: int = Query(PAGE, ge=1, le=PAGE)) -> MessageList:
     """오래된 것 위. `since` 는 clock.parse 로 읽어 UTC 밀리초로 바꿔 `updated_at >= since`(경계 포함 · 앱이 id 로 겹침 지움)."""
     return MessageList.model_validate(c.chat.messages(actor, room_id, before, since, limit))
+
+
+@router.get("/rooms/{room_id}/attachments", response_model=MessageList)
+async def attachments(room_id: int, c: Ctr, actor: Actor, before: int | None = None,
+                      limit: int = Query(GRID, ge=1, le=GRID)) -> MessageList:
+    """모아보기(r5 · §6.2 #20) — 사진 · 동영상 메시지만 · 최근 것 위 · 내 경계 밖만 · 파일은 #14 · #17 · #18 로 연다."""
+    return MessageList.model_validate(c.chat.attachments(actor, room_id, before, limit))
 
 
 @router.post("/rooms/{room_id}/messages", response_model=Message)

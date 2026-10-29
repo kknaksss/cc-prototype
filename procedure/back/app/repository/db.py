@@ -202,8 +202,9 @@ CREATE TABLE IF NOT EXISTS chat_room (
 CREATE TABLE IF NOT EXISTS chat_member (                 -- 행은 지우지 않는다(나가기 = left_at)
     room_id INTEGER NOT NULL REFERENCES chat_room(id), account_id INTEGER NOT NULL REFERENCES account(id),
     joined_at TEXT NOT NULL, left_at TEXT, hidden_at TEXT, last_viewed_at TEXT,
-    last_read_message_id INTEGER NOT NULL DEFAULT 0,     -- 안 읽음 = id > 이 값(늘기만)
+    last_read_message_id INTEGER NOT NULL DEFAULT 0,     -- 안 읽음 = id > 이 값(늘기만 · 늘 from_message_id 이상)
     muted INTEGER NOT NULL DEFAULT 0,
+    from_message_id INTEGER NOT NULL DEFAULT 0,          -- 보이는 경계(r5 · D9-69) — id > 이 값만 본다 · 들어올 때 마지막 id
     PRIMARY KEY (room_id, account_id)
 );
 CREATE INDEX IF NOT EXISTS chat_member_account ON chat_member (account_id);
@@ -243,7 +244,9 @@ MIGRATIONS = (("procedure", "room_kos_id", "TEXT"), ("visit", "open_task_seqs", 
               ("push_log", "chat_message_id", "INTEGER"),  # 직원 채팅(SPEC-007 §3.5)
               # 직원 채팅 r3(SPEC-007 §3 — 수정 · 동영상) — 1판 채팅 DB(compose 볼륨)에 열만 더한다
               ("chat_message", "edited_at", "TEXT"), ("chat_photo", "kind", "TEXT NOT NULL DEFAULT 'photo'"),
-              ("chat_photo", "duration_ms", "INTEGER"), ("chat_photo", "thumb_file_name", "TEXT"))
+              ("chat_photo", "duration_ms", "INTEGER"), ("chat_photo", "thumb_file_name", "TEXT"),
+              # 직원 채팅 r5(SPEC-007 §3 r5 — 들어온 뒤 대화만) — 열이 처음 생기는 부팅에 _backfill_chat_from 한 번
+              ("chat_member", "from_message_id", "INTEGER NOT NULL DEFAULT 0"))
 
 
 class Database:
@@ -256,11 +259,15 @@ class Database:
             con.executescript(PUSH_LOG.format(name="push_log"))
             con.executescript(APP_SCHEMA)
             con.executescript(CHAT_SCHEMA)
+            added = set()
             for table, column, kind in MIGRATIONS:  # 이미 있는 DB 파일(compose 볼륨)에 새 열을 더한다
                 cols = {r["name"] for r in con.execute(f"PRAGMA table_info({table})")}
                 if column not in cols:
                     con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
+                    added.add((table, column))
             _rebuild_push_log(con)
+            if ("chat_member", "from_message_id") in added:
+                _backfill_chat_from(con)
 
 
     @contextmanager
@@ -277,6 +284,16 @@ class Database:
             raise
         finally:
             con.close()
+
+
+def _backfill_chat_from(con: sqlite3.Connection) -> None:
+    """옛 채팅 DB 의 경계(r5 · SPEC-007 §3 r5 · OQ-962) — 열이 처음 생긴 부팅에 한 번만(부르는 쪽이 정한다).
+
+    그 판에는 경계 열이 없었으므로 시각으로만 가른다: joined_at 보다 먼저 만든 그 방 마지막 메시지 id(없으면 0 · 같은
+    밀리초 = 보임). 나간 멤버 행도 채운다. last_read_message_id 는 그대로(들어올 때 그 순간 마지막 id 라 이미 이 값 이상).
+    """
+    con.execute("UPDATE chat_member SET from_message_id = COALESCE((SELECT MAX(m.id) FROM chat_message m "
+                "WHERE m.room_id = chat_member.room_id AND m.created_at < chat_member.joined_at), 0)")
 
 
 def _rebuild_push_log(con: sqlite3.Connection) -> None:

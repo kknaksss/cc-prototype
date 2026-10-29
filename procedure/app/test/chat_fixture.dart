@@ -223,6 +223,19 @@ class FakeChat {
       messages[rid] = list;
       return _j(m);
     }
+    // 모아보기(r5 #20) — 사진 · 동영상만 · 지운 것 빼고 · 최근 것 위 · before · limit(기본 60)
+    if (seg.length == 6 && seg[5] == 'attachments' && req.method == 'GET') {
+      final rid = int.parse(seg[4]);
+      final before = int.tryParse(req.url.queryParameters['before'] ?? '');
+      final limit = int.tryParse(req.url.queryParameters['limit'] ?? '') ?? 60;
+      var items = [
+        for (final m in messages[rid] ?? const <Map<String, dynamic>>[])
+          if ((m['kind'] == 'photo' || m['kind'] == 'video') && m['deletedAt'] == null && (before == null || (m['id'] as int) < before)) m
+      ]..sort((a, b) => (b['id'] as int).compareTo(a['id'] as int));
+      final more = items.length > limit;
+      if (more) items = items.sublist(0, limit);
+      return _j({'items': items, 'hasMore': more});
+    }
     if (seg.length == 6 && seg[5] == 'read') {
       final rid = int.parse(seg[4]);
       for (final r in rooms) {

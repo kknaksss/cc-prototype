@@ -1,6 +1,8 @@
-// 새 대화 · 참여자 추가(SPEC-007 §10.3 · §10.9 · DS:S3a ~ S3c · S10d) — 사람 고르기 한 화면.
+// 새 대화 · 초대(SPEC-007 §10.3 · §10.9 · §10.17 · DS:S3a ~ S3c · S10d) — 사람 고르기 한 화면.
 // 새 대화: 1명 = [대화 시작](1:1 · 같은 상대면 기존 방) · 2명 이상 = [만들기] + 그룹 이름(선택) · 나 포함 최대 20명.
-// 참여자 추가: 이미 참여 중 = 흐리게 + 「이미 참여 중」 · 못 고름 · 지금 멤버 + 고른 사람 ≤ 20. 성공하면 그 방(Room)을 돌려준다
+// 초대(r5 · D9-68): 이미 참여 중 = 흐리게 + 「이미 참여 중」 · 못 고름 · 지금 멤버 + 고른 사람 ≤ 20.
+//   그룹 = POST members(그 방) · 1:1 = POST rooms {accountIds:[상대, …고른 차례]} 제목 없음 → 새 그룹(1:1 은 그대로 · §4.7).
+//   성공하면 그 방(Room — 1:1 초대는 새 그룹)을 돌려준다
 import 'package:flutter/material.dart';
 
 import '../api/api.dart';
@@ -33,8 +35,9 @@ class _ChatPeopleScreenState extends State<ChatPeopleScreen> {
   String? _error;
 
   bool get _add => widget.addTo != null;
+  bool get _fromDirect => _add && !widget.addTo!.group; // 1:1 [초대] = 새 그룹(§10.17)
   Set<int> get _members => {for (final m in widget.addTo?.members ?? const <Member>[]) m.id};
-  // 더 고를 수 있는 수 — 새 대화 = 나 빼고 19 · 추가 = 20 − 지금 멤버
+  // 더 고를 수 있는 수 — 새 대화 = 나 빼고 19 · 초대 = 20 − 지금 멤버(1:1 = 18)
   int get _cap => _add ? maxRoomMembers - widget.addTo!.memberCount : maxRoomMembers - 1;
 
   @override
@@ -68,10 +71,11 @@ class _ChatPeopleScreenState extends State<ChatPeopleScreen> {
         }
       });
 
-  String get _action => _add ? '추가' : (_picked.length <= 1 ? '대화 시작' : '만들기');
+  String get _action => _add ? '초대' : (_picked.length <= 1 ? '대화 시작' : '만들기');
 
   String get _guide {
     final n = _picked.length;
+    if (_fromDirect) return '$n명 선택 · 나 포함 ${n + 2}명 · 최대 $maxRoomMembers명';
     if (_add) return '$n명 선택 · 지금 ${widget.addTo!.memberCount}명 · 최대 $maxRoomMembers명';
     if (n == 1) return '1명 선택 · 1:1 대화';
     return '$n명 선택 · 나 포함 ${n + 1}명 · 최대 $maxRoomMembers명';
@@ -83,7 +87,9 @@ class _ChatPeopleScreenState extends State<ChatPeopleScreen> {
     Room? r;
     final ids = [for (final p in _picked) p.id];
     await _app.run(() async {
-      r = _add
+      r = _fromDirect
+          ? await _app.chat.createGroup([widget.addTo!.peer!.id, ...ids]) // 제목 없음 = 참여자 나열(D9-09)
+          : _add
           ? await _app.chat.addMembers(widget.addTo!.id, ids)
           : ids.length == 1
               ? await _app.chat.openDirect(ids.first)
@@ -107,7 +113,7 @@ class _ChatPeopleScreenState extends State<ChatPeopleScreen> {
         child: Column(children: [
           DetailHeader(
             back: '취소',
-            title: _add ? '참여자 추가' : '새 대화',
+            title: _add ? '초대' : '새 대화',
             trailing: MsButton(_action, size: BtnSize.sm, onPressed: _picked.isEmpty || _busy ? null : _submit),
           ),
           Container(

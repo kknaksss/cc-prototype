@@ -165,7 +165,7 @@ class PushService:
                          reservation_id=d.reservation_id, display_request_id=d.id)]
 
     def chat_message(self, message_id: int) -> list[Delivery]:
-        """채팅 새 메시지(SPEC-007 §8) — 받는 사람 = 지금 멤버 − 보낸 사람 − 알림 끈 사람 − 비활성 → 기기 전부.
+        """채팅 새 메시지(SPEC-007 §8) — 받는 사람 = 지금 멤버 − 보낸 사람 − 알림 끈 사람 − 비활성 − 경계 안(r5) → 기기 전부.
 
         숨긴 1:1 멤버도 받는다. 시스템 줄 · 지운 것 = 없음. notification 행을 쓰지 않는다(알림 목록 · 종 배지 밖 · D9-30).
         제목 = 1:1 은 보낸 사람 · 그룹은 「보낸 사람 · 방 이름」(이름 없는 그룹 = 받는 사람 기준 나열).
@@ -178,8 +178,10 @@ class PushService:
             accounts = {a.id: a for a in tx.accounts()}
             members = tx.chat_members(room["id"])
             ids = [r["account_id"] for r in members]
+            # 그 메시지를 볼 수 있는 멤버만(r5 · 처분 FAIL-1) — 이 태스크는 커밋 뒤에 다시 읽으므로 그 사이 초대된 사람은
+            # 경계(from_message_id)가 이 메시지 id 이상이라 빠진다
             to = [r["account_id"] for r in members if r["account_id"] != m["account_id"] and not r["muted"]
-                  and r["account_id"] in accounts and accounts[r["account_id"]].active]
+                  and r["from_message_id"] < m["id"] and r["account_id"] in accounts and accounts[r["account_id"]].active]
             devices = tx.devices_of(to)
         sender = accounts.get(m["account_id"])
         sender_name = sender.name if sender else ""

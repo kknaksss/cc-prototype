@@ -30,7 +30,7 @@ import '../widgets/sheet.dart';
 
 const chatRoomRouteName = 'chat-room';
 
-// 폰 — 채팅 탭 스택에 쌓는 대화(이름 = 참여자 추가 뒤 돌아올 자리)
+// 폰 — 채팅 탭 스택에 쌓는 대화(이름 = 초대 뒤 돌아올 자리)
 Route<void> chatRoomRoute(int roomId) =>
     MaterialPageRoute(settings: RouteSettings(name: chatRoomRouteName, arguments: roomId), builder: (_) => ChatRoomView(roomId: roomId));
 
@@ -184,7 +184,8 @@ class _ChatRoomViewState extends State<ChatRoomView> with RouteAware {
   }
 
   Future<void> _info(Room r) async {
-    if (widget.pane) return showRightSheet(context, ChatInfoScreen(roomId: r.id, sheet: true));
+    // 아이패드 = 오른쪽 시트 안 작은 Navigator — 방 정보 → 사진 · 동영상이 같은 시트 안에서 넘어감(r5 처분 W-3)
+    if (widget.pane) return showRightSheet(context, ChatInfoSheet(roomId: r.id));
     await Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatInfoScreen(roomId: r.id)));
   }
 
@@ -759,20 +760,21 @@ class _ChatPhotoState extends State<ChatPhoto> {
 // 동영상 표시(D9-53 · OQ-953) — 가운데 ▶(흰 원 · 반투명 검정 바탕) + 오른쪽 아래 길이 「m:ss」(검정 알약 · 흰 글자)
 class VideoMarks extends StatelessWidget {
   final int durationMs;
-  const VideoMarks({super.key, required this.durationMs});
+  final bool compact; // 모아보기 칸(작은 ▶ — §10.16)
+  const VideoMarks({super.key, required this.durationMs, this.compact = false});
   @override
   Widget build(BuildContext context) => Stack(fit: StackFit.expand, children: [
         Center(
           child: Container(
-            width: 44,
-            height: 44,
+            width: compact ? 28 : 44,
+            height: compact ? 28 : 44,
             decoration: BoxDecoration(shape: BoxShape.circle, color: const Color(0x66000000), border: Border.all(color: Ms.white, width: 2)),
-            child: const Icon(Icons.play_arrow_rounded, color: Ms.white, size: 28),
+            child: Icon(Icons.play_arrow_rounded, color: Ms.white, size: compact ? 18 : 28),
           ),
         ),
         Positioned(
-          right: 8,
-          bottom: 8,
+          right: compact ? 4 : 8,
+          bottom: compact ? 4 : 8,
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
             decoration: BoxDecoration(color: const Color(0xB3000000), borderRadius: BorderRadius.circular(10)),

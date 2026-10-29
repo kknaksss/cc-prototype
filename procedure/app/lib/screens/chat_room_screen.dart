@@ -34,6 +34,7 @@ Route<void> chatRoomRoute(int roomId) =>
     MaterialPageRoute(settings: RouteSettings(name: chatRoomRouteName, arguments: roomId), builder: (_) => ChatRoomView(roomId: roomId));
 
 const _bubbleMax = 300.0;
+const maxInputLines = 5; // 알약 입력 상한(D9-60) — 넘으면 칸 안 스크롤
 const photoMaxWidth = 240.0; // OQ-927
 
 class ChatRoomView extends StatefulWidget {
@@ -222,7 +223,15 @@ class _ChatRoomViewState extends State<ChatRoomView> with RouteAware {
         final t = _chat.thread(_id);
         return Column(children: [
           _header(r),
-          Expanded(child: _messages(r, t)),
+          // 바깥(대화 목록)을 누르면 키보드 닫힘(D9-61) — 말풍선 누름 · 길게 누르기는 안쪽이 먼저 받는다
+          Expanded(
+            child: GestureDetector(
+              key: const Key('chat-list-area'),
+              behavior: HitTestBehavior.translucent,
+              onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+              child: _messages(r, t),
+            ),
+          ),
           if (r != null) peerInactive(r) ? _inactiveLine() : _inputBar(),
         ]);
       },
@@ -236,9 +245,12 @@ class _ChatRoomViewState extends State<ChatRoomView> with RouteAware {
     final items = buildChatItems(t.messages, t.pending, group: r?.group ?? false, mine: _chat.isMine);
     if (items.isEmpty) return const SizedBox.expand();
     final rev = items.reversed.toList();
+    // reverse 목록 = 0 이 맨 아래 — 키보드가 열려 칸이 줄어도 맨 아래를 보고 있었으면 마지막 메시지가 그대로 보인다(D9-61) ·
+    // 끌면 키보드 닫힘
     return ListView.builder(
       controller: _scroll,
       reverse: true,
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
       itemCount: rev.length + (t.hasOlder ? 1 : 0),
       itemBuilder: (context, i) {
@@ -617,12 +629,11 @@ class _ChatRoomViewState extends State<ChatRoomView> with RouteAware {
     );
   }
 
-  // 입력창(D9-47 · 카톡 PC 꼴 · r3) — 위 = 넓은 입력칸(처음 2줄 · 6줄까지 늘고 그 뒤 칸 안 스크롤 · 코드 포인트 2000 · 줄바꿈 키 = 줄바꿈) /
-  // 아래 줄 = 왼쪽 [+] · 오른쪽 [전송](비면 꺼짐). 이모지 · 파일 아이콘 없음
+  // 입력줄(D9-60 — D9-47 고침 · 카톡 모바일 꼴 알약 한 줄) — 코드 포인트 2000 · 줄바꿈 키 = 줄바꿈(보내기는 [↑]만) · 수정 모드 줄은 알약 위
   Widget _inputBar() => Column(mainAxisSize: MainAxisSize.min, children: [
         _batchLine(),
         Container(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
+          padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
           decoration: const BoxDecoration(color: Ms.white, border: Border(top: BorderSide(color: Ms.gray200))),
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             if (_editing != null)
@@ -642,33 +653,87 @@ class _ChatRoomViewState extends State<ChatRoomView> with RouteAware {
                   ),
                 ]),
               ),
-            MsInput(
-              fieldKey: const Key('chat-input'),
-              controller: _text,
-              focusNode: _focus,
-              hint: '메시지 입력',
-              minLines: 2,
-              maxLines: 6,
-              formatters: const [RuneLimitFormatter()],
-              onChanged: (_) => setState(() {}),
+            // 알약 한 줄(D9-60 · 카톡 모바일 꼴) — 둥근 [+] · 입력(테두리 없음 · 1줄 → 5줄까지 늘고 그 뒤 칸 안 스크롤) · 둥근 [↑] 보내기
+            // (수정 모드 = 같은 자리 [✓] 저장). 이모지 버튼 없음 · 색 = 기존 토큰
+            Container(
+              key: const Key('chat-pill'),
+              padding: const EdgeInsets.all(4),
+              decoration: BoxDecoration(color: Ms.gray100, borderRadius: BorderRadius.circular(22), border: Border.all(color: Ms.gray200)),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                _round(
+                  key: const Key('chat-plus'),
+                  tooltip: '첨부',
+                  icon: Icons.add_rounded,
+                  bg: Ms.white,
+                  fg: Ms.gray700,
+                  onPressed: _editing != null ? null : _plus,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: TextField(
+                    key: const Key('chat-input'),
+                    controller: _text,
+                    focusNode: _focus,
+                    minLines: 1,
+                    maxLines: maxInputLines,
+                    inputFormatters: const [RuneLimitFormatter()],
+                    keyboardType: TextInputType.multiline,
+                    textInputAction: TextInputAction.newline,
+                    style: Typo.body400,
+                    onChanged: (_) => setState(() {}),
+                    decoration: InputDecoration(
+                      hintText: '메시지 입력',
+                      hintStyle: Typo.body400.copyWith(color: Ms.gray500),
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      disabledBorder: InputBorder.none,
+                      filled: false,
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                if (_editing != null)
+                  _round(key: const Key('chat-save'), tooltip: '저장', icon: Icons.check_rounded, bg: Ms.primary, fg: Ms.white, onPressed: _canSave ? _saveEdit : null)
+                else
+                  _round(
+                    key: const Key('chat-send'),
+                    tooltip: '보내기',
+                    icon: Icons.arrow_upward_rounded,
+                    bg: Ms.primary,
+                    fg: Ms.white,
+                    onPressed: _text.text.trim().isEmpty ? null : _send,
+                  ),
+              ]),
             ),
-            const SizedBox(height: 6),
-            Row(children: [
-              IconButton(
-                key: const Key('chat-plus'),
-                tooltip: '첨부',
-                onPressed: _editing != null ? null : _plus,
-                icon: Icon(Icons.add_rounded, size: 26, color: _editing != null ? Ms.gray400 : Ms.gray700),
-              ),
-              const Spacer(),
-              if (_editing != null)
-                MsButton('저장', key: const Key('chat-save'), onPressed: _canSave ? _saveEdit : null)
-              else
-                MsButton('전송', key: const Key('chat-send'), onPressed: _text.text.trim().isEmpty ? null : _send),
-            ]),
           ]),
         ),
       ]);
+
+  // 둥근 버튼(36) — 꺼지면 같은 색 그대로 흐림
+  Widget _round({required Key key, required String tooltip, required IconData icon, required Color bg, required Color fg, VoidCallback? onPressed}) =>
+      Opacity(
+        opacity: onPressed == null ? 0.4 : 1,
+        child: SizedBox.square(
+          dimension: 36,
+          child: IconButton(
+            key: key,
+            tooltip: tooltip,
+            onPressed: onPressed,
+            padding: EdgeInsets.zero,
+            style: IconButton.styleFrom(
+              backgroundColor: bg,
+              disabledBackgroundColor: bg,
+              foregroundColor: fg,
+              disabledForegroundColor: fg,
+              shape: const CircleBorder(),
+            ),
+            icon: Icon(icon, size: 22),
+          ),
+        ),
+      );
 
   // 비활성 상대 1:1(D9-42) — 입력줄 대신 안내 한 줄
   Widget _inactiveLine() => Container(

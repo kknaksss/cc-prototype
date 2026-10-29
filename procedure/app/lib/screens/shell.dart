@@ -113,25 +113,38 @@ class _ShellState extends State<Shell> {
           child: stack,
         );
         if (tablet) {
+          // 키보드(D9-61) — 레일은 전체 높이 그대로(키보드가 아래를 덮음 · 줄이면 가로 아이패드에서 레일이 넘친다) ·
+          // 오른쪽 본문만 키보드만큼 줄여 입력줄이 키보드 위에 붙는다
+          final mq = MediaQuery.of(context);
           return Scaffold(
             backgroundColor: Ms.gray100,
+            resizeToAvoidBottomInset: false,
             body: Stack(children: [
               Row(children: [
                 _Rail(cur: cur, onPick: (t) => _pick(app, t)),
-                Expanded(child: body),
+                Expanded(
+                  child: Padding(
+                    padding: EdgeInsets.only(bottom: mq.viewInsets.bottom),
+                    child: MediaQuery(data: mq.removeViewInsets(removeBottom: true), child: body),
+                  ),
+                ),
               ]),
               const ChatBannerLayer(),
             ]),
           );
         }
         final mq = MediaQuery.of(context);
+        // 화면 키보드가 열리면 탭바를 숨긴다(D9-61 — D9-36 「대화 중 탭바 유지」는 키보드가 닫혀 있을 때만) ·
+        // Scaffold 가 키보드만큼 본문을 줄이므로 입력줄은 키보드 바로 위에 붙는다
+        final keyboard = mq.viewInsets.bottom > 0;
         return Scaffold(
           backgroundColor: Ms.gray100,
           body: Stack(children: [
             Column(children: [
-              // 탭 안 화면은 탭바 위까지 — 아래 안전 영역은 탭바가 먹는다
-              Expanded(child: MediaQuery(data: mq.removePadding(removeBottom: true), child: body)),
-              _TabBar(cur: cur, onPick: (t) => _pick(app, t), bottom: mq.padding.bottom),
+              // 탭 안 화면은 탭바 위까지 — 아래 안전 영역은 탭바가 먹는다(키보드가 열리면 키보드가 덮음).
+              // 키보드 높이는 이 Scaffold 가 이미 뺐으므로 안쪽에 다시 넘기지 않는다(넘기면 대화 화면 Scaffold 가 한 번 더 빼 입력줄이 키보드보다 한참 위로 뜬다)
+              Expanded(child: MediaQuery(data: mq.removePadding(removeBottom: true).removeViewInsets(removeBottom: true), child: body)),
+              if (!keyboard) _TabBar(cur: cur, onPick: (t) => _pick(app, t), bottom: mq.padding.bottom),
             ]),
             const ChatBannerLayer(),
           ]),

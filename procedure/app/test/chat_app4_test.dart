@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:procedure_app/api/api.dart';
+import 'package:procedure_app/app_state.dart';
 import 'package:procedure_app/chat/chat_model.dart';
 import 'package:procedure_app/chat/chat_state.dart';
 import 'package:procedure_app/chat/chat_view.dart';
@@ -16,6 +17,8 @@ import 'package:procedure_app/chat/photo_pick.dart';
 import 'package:procedure_app/chat/video_pick.dart';
 import 'package:procedure_app/screens/chat_attach_sheet.dart';
 import 'package:procedure_app/screens/chat_video_screen.dart';
+import 'package:procedure_app/screens/shell.dart';
+import 'package:procedure_app/theme/tokens.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'chat_app2_test.dart' show openRoom;
@@ -94,33 +97,131 @@ void main() {
     return c.evaluate().isEmpty ? '' : (c.evaluate().single.widget as Text).data!;
   }
 
-  group('입력창(D9-47)', () {
-    testWidgets('넓은 입력칸(2 ~ 6줄 · 줄바꿈 키) + 아래 줄 [+] · [전송](비면 꺼짐) · 이모지 · 파일 · [사진] 없음', (t) async {
+  group('입력줄 알약 · 키보드(D9-60 · D9-61)', () {
+    testWidgets('알약 한 줄 — 왼쪽 둥근 [+] · 가운데 입력(테두리 없음 · 「메시지 입력」 · 1줄) · 오른쪽 둥근 [↑](primary · 비면 흐림 · 꺼짐) · 이모지 · [전송] 글자 없음', (t) async {
       final f = FakeChat()..rooms = [roomJ(1)];
       final app = await openRoom(t, f, '나의사');
       final field = t.widget<TextField>(find.byKey(const Key('chat-input')));
-      expect(field.minLines, 2);
-      expect(field.maxLines, 6);
+      expect(field.minLines, 1);
+      expect(field.maxLines, 5);
       expect(field.textInputAction, TextInputAction.newline);
-      expect(find.byKey(const Key('chat-plus')), findsOneWidget);
-      expect(find.text('전송'), findsOneWidget);
+      expect(field.decoration!.border, InputBorder.none);
+      expect(field.decoration!.hintText, '메시지 입력');
+      expect(find.text('전송'), findsNothing);
       expect(find.byKey(const Key('chat-photo')), findsNothing);
       expect(find.byIcon(Icons.emoji_emotions_outlined), findsNothing);
       expect(find.byIcon(Icons.attach_file), findsNothing);
-      // [+] 는 입력칸 아래 줄 왼쪽 · [전송] 은 오른쪽
+      expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
+      // 한 줄 — [+] · 입력 · [↑] 가 같은 알약 안 · 왼쪽부터
+      final pill = t.getRect(find.byKey(const Key('chat-pill')));
       final input = t.getRect(find.byKey(const Key('chat-input')));
       final plus = t.getRect(find.byKey(const Key('chat-plus')));
       final send = t.getRect(find.byKey(const Key('chat-send')));
-      expect(plus.top, greaterThanOrEqualTo(input.bottom));
-      expect(send.top, greaterThanOrEqualTo(input.bottom));
-      expect(plus.left, lessThan(send.left));
+      for (final r in [input, plus, send]) {
+        expect(pill.contains(r.center), isTrue);
+      }
+      expect(plus.right, lessThanOrEqualTo(input.left));
+      expect(input.right, lessThanOrEqualTo(send.left));
+      expect(plus.width, plus.height); // 둥근 버튼(정사각 · 원)
+      expect(send.width, send.height);
+      final btn = t.widget<IconButton>(find.byKey(const Key('chat-send')));
+      expect(btn.onPressed, isNull); // 비면 꺼짐
+      expect(btn.style!.backgroundColor!.resolve({WidgetState.disabled}), Ms.primary); // 꺼져도 primary 그대로 · 흐림만
+      expect(t.widget<Opacity>(find.ancestor(of: find.byKey(const Key('chat-send')), matching: find.byType(Opacity)).first).opacity, lessThan(1));
       await t.tap(find.byKey(const Key('chat-send')));
-      expect(f.where('POST', '/api/chat/rooms/1/messages'), isEmpty); // 비면 꺼짐
+      expect(f.where('POST', '/api/chat/rooms/1/messages'), isEmpty);
       await t.enterText(find.byKey(const Key('chat-input')), '첫 줄\n둘째 줄');
       await t.pump();
+      expect(t.widget<Opacity>(find.ancestor(of: find.byKey(const Key('chat-send')), matching: find.byType(Opacity)).first).opacity, 1);
       await t.tap(find.byKey(const Key('chat-send')));
       await settle(t, 6);
       expect((jsonDecode(f.where('POST', '/api/chat/rooms/1/messages').single.body) as Map)['text'], '첫 줄\n둘째 줄');
+      await teardown(t, app);
+    });
+
+    testWidgets('여러 줄 늘어남 상한 — 1줄 → 쓰면 늘어남 → 5줄에서 멈춤(그 뒤 칸 안 스크롤)', (t) async {
+      final f = FakeChat()..rooms = [roomJ(1)];
+      final app = await openRoom(t, f, '나의사');
+      Future<double> heightOf(int lines) async {
+        await t.enterText(find.byKey(const Key('chat-input')), List.generate(lines, (i) => '줄 $i').join('\n'));
+        await t.pump();
+        return t.getSize(find.byKey(const Key('chat-input'))).height;
+      }
+
+      final one = await heightOf(1);
+      final three = await heightOf(3);
+      final five = await heightOf(5);
+      final ten = await heightOf(10);
+      expect(three, greaterThan(one));
+      expect(five, greaterThan(three));
+      expect(ten, five); // 상한 5줄
+      await teardown(t, app);
+    });
+
+    // 셸에는 계속 도는 표시(연결 줄 등)가 있어 pumpAndSettle 대신 정해진 만큼
+    Future<void> frames(WidgetTester t) async {
+      for (var i = 0; i < 8; i++) {
+        await t.pump(const Duration(milliseconds: 100));
+      }
+    }
+
+    // 셸(폰) 안 채팅 탭에서 대화를 연다
+    Future<AppState> shellRoom(WidgetTester t, FakeChat f, {bool tablet = false}) async {
+      tablet ? ipad(t) : phone(t);
+      final app = chatApp(f)..tab.value = AppTab.chat;
+      await t.pumpWidget(AppScope(state: app, child: MaterialApp(navigatorObservers: [app.chat.rootRoutes], home: const Shell())));
+      await settle(t);
+      await t.tap(find.text('나의사').first);
+      await frames(t);
+      await settle(t);
+      return app;
+    }
+
+    void keyboard(WidgetTester t, double px) => t.view.viewInsets = FakeViewPadding(bottom: px * t.view.devicePixelRatio);
+
+    testWidgets('폰 — 키보드 열림 = 탭바 숨김 · 입력줄이 키보드 바로 위 · 마지막 메시지 보임 / 닫힘 = 탭바 돌아옴', (t) async {
+      final f = FakeChat()
+        ..rooms = [roomJ(1, last: preview(30))]
+        ..messages[1] = [for (var i = 1; i <= 30; i++) msgJ(i, 1, text: '메시지 $i')];
+      final app = await shellRoom(t, f);
+      addTearDown(t.view.resetViewInsets);
+      expect(find.text('설정'), findsOneWidget); // 탭바(대화 중 유지 — D9-36)
+      expect(find.text('메시지 30'), findsOneWidget);
+      keyboard(t, 300);
+      await frames(t);
+      expect(find.text('설정'), findsNothing); // 탭바 숨김
+      final screenH = t.view.physicalSize.height / t.view.devicePixelRatio;
+      final pill = t.getRect(find.byKey(const Key('chat-pill')));
+      expect(pill.bottom, lessThanOrEqualTo(screenH - 300));
+      expect(pill.bottom, greaterThan(screenH - 300 - 20)); // 키보드 바로 위
+      final last = t.getRect(find.text('메시지 30'));
+      expect(last.bottom, lessThanOrEqualTo(pill.top)); // 마지막 메시지가 입력줄 · 키보드에 안 가림
+      keyboard(t, 0);
+      await frames(t);
+      expect(find.text('설정'), findsOneWidget);
+      await teardown(t, app);
+    });
+
+    testWidgets('목록을 끌면 · 바깥을 누르면 키보드 닫힘(onDrag) · 아이패드도 입력줄이 키보드 위', (t) async {
+      final f = FakeChat()
+        ..rooms = [roomJ(1, last: preview(30))]
+        ..messages[1] = [for (var i = 1; i <= 30; i++) msgJ(i, 1, text: '메시지 $i')];
+      final app = await shellRoom(t, f, tablet: true);
+      addTearDown(t.view.resetViewInsets);
+      final list = t.widget<ListView>(find.descendant(of: find.byKey(const Key('chat-list-area')), matching: find.byType(ListView)));
+      expect(list.keyboardDismissBehavior, ScrollViewKeyboardDismissBehavior.onDrag);
+      await t.tap(find.byKey(const Key('chat-input')));
+      await t.pump();
+      FocusNode node() => t.widget<EditableText>(find.descendant(of: find.byKey(const Key('chat-input')), matching: find.byType(EditableText))).focusNode;
+      expect(node().hasFocus, isTrue);
+      keyboard(t, 400);
+      await frames(t);
+      final screenH = t.view.physicalSize.height / t.view.devicePixelRatio;
+      expect(t.getRect(find.byKey(const Key('chat-pill'))).bottom, lessThanOrEqualTo(screenH - 400));
+      expect(find.text('메시지 30'), findsOneWidget);
+      await t.tapAt(t.getRect(find.byKey(const Key('chat-list-area'))).topCenter + const Offset(0, 20)); // 바깥 누름
+      await t.pump();
+      expect(node().hasFocus, isFalse);
       await teardown(t, app);
     });
   });

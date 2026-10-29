@@ -21,6 +21,8 @@ import '../widgets/ui.dart';
 import '../widgets/sheet.dart';
 
 const forwardLimit = 10;
+const _gutter = 16.0; // 시트 좌우 바깥 여백 하나(머리 · 검색 · 칩 · 고른 것 줄 · 목록)
+const _side = 104.0; // 머리 좌우 칸(같은 폭 = 제목이 가운데) — 오른쪽 「보내는 중…」이 들어가는 폭
 const forwardLimitText = '한 번에 10곳까지 보낼 수 있어요';
 
 Future<void> openForwardSheet(BuildContext context, ChatMessage m) {
@@ -198,19 +200,28 @@ class _ChatForwardSheetState extends State<ChatForwardSheet> {
 
   Widget _body(List<_Pick> rooms, List<_Pick> people, bool empty, int n) {
     return Column(children: [
-      // 머리 [✕] 「공유」 [전송 N]
+      // 머리 [✕] 「공유」 [전송 N] — 좌우 칸 폭이 같아 제목이 시트 가운데 · 바깥 여백 = _gutter(검색칸 · 칩 · 목록과 같은 선 · F10)
       Padding(
-        padding: const EdgeInsets.fromLTRB(4, 0, 12, 4),
+        padding: const EdgeInsets.fromLTRB(_gutter, 0, _gutter, 4),
         child: Row(children: [
-          IconButton(
-            key: const Key('fwd-close'),
-            tooltip: '닫기',
-            onPressed: _sending ? null : () => Navigator.of(context).pop(), // 보내는 중 = 꺼짐(W3-3)
-            icon: Icon(Icons.close_rounded, color: _sending ? Ms.gray400 : Ms.gray700),
-          ),
-          Expanded(child: Text('공유', textAlign: TextAlign.center, style: Typo.headingMd600)),
           SizedBox(
-            width: 104,
+            width: _side,
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: IconButton(
+                key: const Key('fwd-close'),
+                tooltip: '닫기',
+                padding: EdgeInsets.zero,
+                alignment: Alignment.centerLeft,
+                constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                onPressed: _sending ? null : () => Navigator.of(context).pop(), // 보내는 중 = 꺼짐(W3-3)
+                icon: Icon(Icons.close_rounded, color: _sending ? Ms.gray400 : Ms.gray700),
+              ),
+            ),
+          ),
+          Expanded(child: Text('공유', key: const Key('fwd-title'), textAlign: TextAlign.center, style: Typo.headingMd600)),
+          SizedBox(
+            width: _side,
             child: Align(
               alignment: Alignment.centerRight,
               child: _sending
@@ -225,7 +236,7 @@ class _ChatForwardSheetState extends State<ChatForwardSheet> {
         ]),
       ),
       Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
+        padding: const EdgeInsets.symmetric(horizontal: _gutter),
         child: MsInput(
           fieldKey: const Key('fwd-search'),
           controller: _search,
@@ -235,7 +246,7 @@ class _ChatForwardSheetState extends State<ChatForwardSheet> {
         ),
       ),
       Padding(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+        padding: const EdgeInsets.fromLTRB(_gutter, 10, _gutter, 0),
         child: Row(children: [
           StatusChip('전체', key: const Key('fwd-chip-all'), selected: !_peopleOnly, bg: !_peopleOnly ? Ms.primary100 : Ms.gray100,
               fg: !_peopleOnly ? Ms.primary : Ms.gray700, outline: !_peopleOnly ? Ms.primary : null, onTap: () => setState(() => _peopleOnly = false)),
@@ -246,7 +257,7 @@ class _ChatForwardSheetState extends State<ChatForwardSheet> {
       ),
       if (_picked.isNotEmpty)
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+          padding: const EdgeInsets.fromLTRB(_gutter, 10, _gutter, 0),
           child: SizedBox(
             height: 34,
             child: ListView(scrollDirection: Axis.horizontal, children: [
@@ -261,7 +272,7 @@ class _ChatForwardSheetState extends State<ChatForwardSheet> {
         ),
       const SizedBox(height: 8),
       Expanded(
-        child: ListView(padding: const EdgeInsets.fromLTRB(16, 0, 16, 16), children: [
+        child: ListView(padding: const EdgeInsets.fromLTRB(_gutter, 0, _gutter, 16), children: [
           if (rooms.isNotEmpty) ...[_section('대화방'), for (final p in rooms) _row(p)],
           if (_people == null && !_peopleFailed) ...[
             _section('직원'),
@@ -301,10 +312,15 @@ class _ChatForwardSheetState extends State<ChatForwardSheet> {
         selected: on,
         onTap: () => _toggle(p),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        // 이름 + 배지 = 남는 폭 전부(이름만 줄임표) · 동그라미 = 늘 오른쪽 끝 같은 자리(F10 — Flexible + Spacer 는 남는 폭을 반씩 나눠 줄마다 비켰다)
         child: Row(children: [
-          Flexible(child: Text(p.label, maxLines: 1, overflow: TextOverflow.ellipsis, style: Typo.body600)),
-          if (p.badge != null) ...[const SizedBox(width: 6), p.badge!],
-          const Spacer(),
+          Expanded(
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Flexible(child: Text(p.label, maxLines: 1, overflow: TextOverflow.ellipsis, style: Typo.body600)),
+              if (p.badge != null) ...[const SizedBox(width: 6), p.badge!],
+            ]),
+          ),
+          const SizedBox(width: 8),
           Opacity(
             opacity: dim ? 0.35 : 1,
             child: Container(

@@ -82,7 +82,7 @@ void main() {
           msgJ(20, 2, sender: 5, senderName: '마관리', role: 'admin', active: false, text: '소모품 채웠어요', at: '2026-10-29T10:00:00.000+09:00'),
           msgJ(21, 2, sender: 3, senderName: '다코디', role: 'coordinator', text: '첫째', at: '2026-10-29T10:01:00.000+09:00'),
           msgJ(22, 2, sender: 3, senderName: '다코디', role: 'coordinator', text: '둘째', at: '2026-10-29T10:02:00.000+09:00'),
-          msgJ(23, 2, kind: 'system', text: '다코디 님이 라상담 님을 초대했어요', at: '2026-10-29T10:03:00.000+09:00'),
+          msgJ(23, 2, kind: 'system', text: '다코디님이 라상담님을 초대했습니다', at: '2026-10-29T10:03:00.000+09:00'),
           msgJ(24, 2, sender: 3, senderName: '다코디', role: 'coordinator', text: '셋째', at: '2026-10-29T10:04:00.000+09:00'),
           msgJ(25, 2, sender: 1, senderName: '가간호', role: 'nurse', text: '내 것', at: '2026-10-29T10:05:00.000+09:00'),
         ];
@@ -90,7 +90,7 @@ void main() {
       expect(find.text('4명'), findsOneWidget);
       expect(find.text('마관리 (비활성)'), findsOneWidget);
       expect(find.text('다코디'), findsNWidgets(2)); // 첫째 위 · 시스템 줄 뒤 셋째 위(둘째 위는 없음)
-      expect(find.text('다코디 님이 라상담 님을 초대했어요'), findsOneWidget);
+      expect(find.text('다코디님이 라상담님을 초대했습니다'), findsOneWidget);
       expect(find.text('가간호'), findsNothing); // 내 것엔 이름 없음
       await teardown(t, app);
     });
@@ -395,6 +395,8 @@ void main() {
       await t.pumpAndSettle();
       expect(find.byKey(const Key('chat-viewer-close')), findsOneWidget);
       expect(find.text('가간호'), findsOneWidget);
+      // F10 — 머리 좌우 칸 같은 폭 = 보낸 사람이 화면 가운데
+      expect(t.getCenter(find.text('가간호')).dx, closeTo(t.view.physicalSize.width / t.view.devicePixelRatio / 2, 0.5));
       expect(find.textContaining('저장'), findsNothing);
       expect(find.textContaining('공유'), findsNothing);
       expect(app.chat.watching, isNull); // 루트 위 화면 = 보고 있는 방 아님(W2-4)

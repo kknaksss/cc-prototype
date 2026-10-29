@@ -132,7 +132,7 @@ Future<bool> confirmChat(BuildContext context, {required String title, required 
   return r == true;
 }
 
-// 아이패드 — 새 대화 · 참여자 추가를 가운데 창으로(DS:S13a 설명 「폰과 같은 내용 · 가운데」)
+// 아이패드 — 새 대화 · 초대를 가운데 창으로(DS:S13a 설명 「폰과 같은 내용 · 가운데」)
 Future<T?> showCenterPanel<T>(BuildContext context, Widget child) => showDialog<T>(
       context: context,
       barrierColor: Ms.dim,

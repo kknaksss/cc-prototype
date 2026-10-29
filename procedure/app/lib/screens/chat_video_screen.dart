@@ -67,10 +67,14 @@ class _ChatVideoViewerState extends State<ChatVideoViewer> {
           SizedBox(
             height: 52,
             child: Row(children: [
-              TextButton(
-                key: const Key('chat-video-close'),
-                onPressed: () => Navigator.of(context).pop(),
-                child: Text('닫기', style: Typo.headingMd500.copyWith(color: Ms.white)),
+              // 좌우 칸 = 같은 폭(72) — 보낸 사람 · 시각이 화면 가운데(F10)
+              SizedBox(
+                width: 72,
+                child: TextButton(
+                  key: const Key('chat-video-close'),
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: Text('닫기', style: Typo.headingMd500.copyWith(color: Ms.white)),
+                ),
               ),
               Expanded(
                 child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
@@ -78,7 +82,7 @@ class _ChatVideoViewerState extends State<ChatVideoViewer> {
                   Text(viewerTime(message.createdAt), style: Typo.caption400.copyWith(color: Ms.gray500)),
                 ]),
               ),
-              const SizedBox(width: 64),
+              const SizedBox(width: 72),
             ]),
           ),
           Expanded(

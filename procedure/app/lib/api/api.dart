@@ -195,7 +195,7 @@ class Api {
   Future<String> photoKosRetry(int photoId) async =>
       '${((await _post('/api/id-photos/$photoId/kos-retry')) as Map)['kos'] ?? 'failed'}';
 
-  // ─── 채팅(SPEC-007 §6.2) — 18 경로(r3) · JSON = 12초 · 사진 올리기 = 40초 · 동영상 올리기 = 300초(§9)
+  // ─── 채팅(SPEC-007 §6.2) — 20 경로(r5) · JSON = 12초 · 사진 올리기 = 40초 · 동영상 올리기 = 300초(§9)
   Future<List<Person>> chatPeople() async {
     final d = await _req('GET', '/api/chat/people');
     final l = d is Map ? d['items'] : null;
@@ -223,6 +223,17 @@ class Api {
   Future<({List<ChatMessage> items, bool hasMore})> chatMessages(int roomId, {int? before, String? since, int? limit}) async {
     final q = Uri(queryParameters: {'before': ?before?.toString(), 'since': ?since, 'limit': ?limit?.toString()}).query;
     final d = await _req('GET', '/api/chat/rooms/$roomId/messages${q.isEmpty ? '' : '?$q'}');
+    final l = d is Map ? d['items'] : null;
+    return (
+      items: [for (final e in (l is List ? l : const [])) if (e is Map) ChatMessage.fromJson(e.cast<String, dynamic>())],
+      hasMore: d is Map && d['hasMore'] == true,
+    );
+  }
+
+  // 모아보기(r5 · #20) — 그 방 사진 · 동영상 메시지만 · 최근 것 위(id 내림차순) · before = id < before · 내가 들어온 뒤 것만(서버가 거름)
+  Future<({List<ChatMessage> items, bool hasMore})> chatAttachments(int roomId, {int? before, int? limit}) async {
+    final q = Uri(queryParameters: {'before': ?before?.toString(), 'limit': ?limit?.toString()}).query;
+    final d = await _req('GET', '/api/chat/rooms/$roomId/attachments${q.isEmpty ? '' : '?$q'}');
     final l = d is Map ? d['items'] : null;
     return (
       items: [for (final e in (l is List ? l : const [])) if (e is Map) ChatMessage.fromJson(e.cast<String, dynamic>())],

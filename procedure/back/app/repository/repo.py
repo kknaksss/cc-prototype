@@ -743,13 +743,14 @@ class Tx:
         r = self.con.execute("SELECT * FROM chat_message WHERE room_id = ? ORDER BY id DESC LIMIT 1", (room_id,)).fetchone()
         return dict(r) if r else None
 
-    def chat_messages(self, room_id: int, *, before: int | None = None, since: str | None = None,
+    def chat_messages(self, room_id: int, *, after_id: int = 0, before: int | None = None, since: str | None = None,
                       limit: int = 50) -> tuple[list[dict[str, Any]], bool]:
         """최근 limit 개(오래된 것 위) + 더 있나.
 
-        before = id < before · since = updated_at >= since(같은 폭 UTC ms 문자열).
+        after_id = 보는 사람의 경계(id > after_id 만 · r5 D9-69 — 세 꼴 모두) · before = id < before ·
+        since = updated_at >= since(같은 폭 UTC ms 문자열).
         """
-        where, args = ["room_id = ?"], [room_id]
+        where, args = ["room_id = ?", "id > ?"], [room_id, after_id]
         if before is not None:
             where.append("id < ?")
             args.append(before)
@@ -759,6 +760,21 @@ class Tx:
         rows = self.con.execute(f"SELECT * FROM chat_message WHERE {' AND '.join(where)} ORDER BY id DESC LIMIT ?",
                                 [*args, limit + 1]).fetchall()
         return [dict(r) for r in reversed(rows[:limit])], len(rows) > limit
+
+    def chat_attachments(self, room_id: int, *, after_id: int, before: int | None = None,
+                         limit: int = 60) -> tuple[list[dict[str, Any]], bool]:
+        """모아보기(r5 · §6.2 #20) — 사진 · 동영상 메시지만 · 최근 것 위(id 내림차순) + 더 있나.
+
+        지운 메시지 · 지운 첨부 행 빼고 · id > after_id(보는 사람의 경계) · before = id < before.
+        """
+        where = ["m.room_id = ?", "m.kind IN ('photo', 'video')", "m.deleted_at IS NULL", "p.deleted_at IS NULL", "m.id > ?"]
+        args: list[Any] = [room_id, after_id]
+        if before is not None:
+            where.append("m.id < ?")
+            args.append(before)
+        rows = self.con.execute(f"SELECT m.* FROM chat_message m JOIN chat_photo p ON p.id = m.photo_id "
+                                f"WHERE {' AND '.join(where)} ORDER BY m.id DESC LIMIT ?", [*args, limit + 1]).fetchall()
+        return [dict(r) for r in rows[:limit]], len(rows) > limit
 
     def chat_unread(self, room_id: int, account_id: int, last_read: int) -> int:
         """남이 보낸 · 시스템 줄 아닌 · 안 지운 메시지 중 id > last_read."""

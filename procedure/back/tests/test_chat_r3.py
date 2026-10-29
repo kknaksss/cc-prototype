@@ -127,7 +127,7 @@ def test_chat_edit_not_yours_not_editable(env):
     g = chat.group("c-amy", ["c-ben", "c-cat"]).json()["id"]
     chat.client.post(f"/api/chat/rooms/{g}/members", json={"accountIds": [chat.id("c-dan")]}, headers=chat.h("c-amy"))
     chat.client.post(f"/api/chat/rooms/{g}/leave", headers=chat.h("c-cat"))
-    sys_mine, sys_other = [x["id"] for x in chat.msgs("c-amy", g).json()["items"] if x["kind"] == "system"]
+    sys_mine, _, sys_other = [x["id"] for x in chat.msgs("c-amy", g).json()["items"] if x["kind"] == "system"]  # 만듦·초대·나감
 
     def msg(login, kind):
         if kind == "text":
@@ -495,4 +495,4 @@ def test_chat_route_handlers_async(path):
     """라우트 핸들러 def = 0(W2-6 grep 과 같은 규칙 — @router. 바로 다음 줄)."""
     lines = (Path(__file__).resolve().parents[1] / path).read_text().splitlines()
     nxt = [lines[i + 1] for i, x in enumerate(lines) if x.startswith("@router.")]
-    assert len(nxt) == 19 and all(x.startswith("async def ") for x in nxt)  # r4 전달 +1
+    assert len(nxt) == 20 and all(x.startswith("async def ") for x in nxt)  # r4 전달 +1 · r5 모아보기 +1

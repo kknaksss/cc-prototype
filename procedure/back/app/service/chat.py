@@ -7,6 +7,9 @@
   커밋까지 await 가 없다(핸들러 async def · 이 서비스는 동기) → 시각 순서 = 커밋 순서 = id 순서(§3).
 - 안 읽음 = id > last_read_message_id(시각이 아니라 id · §5). 방에 들어올 때(만들기 · 처음 추가 · 다시 초대) = 그 순간
   방의 마지막 메시지 id(D9-43 · D9-45).
+- 들어온 뒤 대화만(r5 · D9-69 · §4.6): 멤버는 id > from_message_id(들어올 때 마지막 id) 인 메시지 · 첨부만 본다. 경계 안은
+  없는 것처럼(목록에 없음 · 그 id 로 부르면 404). 읽기 길 V1 ~ V12 — 목록 · since · 미리보기 · 첨부 열기 · 전달 원본 ·
+  모아보기 · 고치기 · 지우기 · SSE · 푸시 받는 사람(_seers). 안 읽음은 last_read ≥ from 이라 그대로.
 - SSE · 푸시는 커밋 뒤(`send` · `push` 는 container 가 꽂는다 — 띄우기와 같은 꼴). 로그엔 id 만(본문 · 이름 없음 · §6.1).
 """
 
@@ -32,6 +35,7 @@ MAX_TITLE = 40
 GROUP_MIN, GROUP_MAX = 2, 19  # 만들 때 고르는 다른 사람 수(나 포함 3 ~ 20)
 ROOM_MAX = 20  # 지금 멤버 상한(추가 뒤)
 PAGE = 50
+GRID = 60  # 모아보기 한 쪽(r5 · §6.2 #20 · OQ-965 — 격자 3칸 × 20줄)
 PREVIEW = 100  # 미리보기 · 푸시 본문 앞부분(OQ-915)
 INACTIVE = " (비활성)"
 JPEG = b"\xff\xd8\xff"
@@ -83,6 +87,16 @@ class ChatService:
         return room
 
     @staticmethod
+    def _sees(me: dict[str, Any] | None, message_id: int) -> bool:
+        """이 멤버 행이 그 메시지를 보나(r5 · §4.6) — 지금 멤버 + 경계 밖(id > from_message_id)."""
+        return me is not None and me["left_at"] is None and message_id > me["from_message_id"]
+
+    @staticmethod
+    def _seers(members: list[dict[str, Any]], message_id: int) -> list[int]:
+        """SSE · 푸시 받는 사람(r5 · §4.6 V9 · V10 · 처분 FAIL-1) — 지금 멤버 중 그 메시지를 볼 수 있는 사람."""
+        return [m["account_id"] for m in members if m["from_message_id"] < message_id]
+
+    @staticmethod
     def _sender(a: Account | None, account_id: int) -> dict[str, Any]:
         if a is None:
             return {"id": account_id, "name": "", "role": "admin", "active": False}
@@ -121,7 +135,7 @@ class ChatService:
         members.sort(key=lambda x: (not x["me"], x["name"]))
         last = tx.last_chat_message(room["id"])
         preview = None
-        if last is not None:
+        if last is not None and last["id"] > (me["from_message_id"] if me else 0):  # 경계 안 = null(r5 · §4.5)
             sender = accounts.get(last["account_id"])
             deleted = last["deleted_at"] is not None
             text = None if deleted or last["kind"] in ("photo", "video") or last["body"] is None else last["body"][:PREVIEW]
@@ -158,15 +172,22 @@ class ChatService:
             self.send(account_id, event, data)
 
     def _join(self, tx: Tx, room_id: int, account_id: int, at: str) -> None:
-        """방에 들어옴(만들기 · 처음 추가 · 다시 초대) — 읽은 데까지 = 그 순간 방의 마지막 메시지(D9-43 · D9-45)."""
+        """방에 들어옴(만들기 · 처음 추가 · 다시 초대) — 읽은 데까지 = 보이는 경계 = 그 순간 방의 마지막 메시지(D9-43 · D9-45 ·
+        D9-69). 다시 초대도 경계를 덮는다(옛 대화 안 보임)."""
         last = tx.last_chat_message(room_id)
         last_id = last["id"] if last else 0
         if tx.chat_member(room_id, account_id) is None:
             tx.add_chat_member(room_id=room_id, account_id=account_id, joined_at=at, last_viewed_at=at,
-                               last_read_message_id=last_id)
+                               last_read_message_id=last_id, from_message_id=last_id)
         else:
             tx.update_chat_member(room_id, account_id, joined_at=at, left_at=None, hidden_at=None, last_viewed_at=at,
-                                  last_read_message_id=last_id)
+                                  last_read_message_id=last_id, from_message_id=last_id)
+
+    @staticmethod
+    def _invited(actor: Account, account_ids: list[int], accounts: dict[int, Account]) -> str:
+        """초대 시스템 줄(r5 · §4.4 · D9-68) — 「A님이 B님, C님을 초대했습니다」(고른 차례 · 이름과 「님」 사이 빈칸 없음)."""
+        names = ", ".join(f"{accounts[i].name}님" for i in account_ids)
+        return f"{actor.name}님이 {names}을 초대했습니다"
 
     def _system(self, tx: Tx, room_id: int, actor: Account, body: str, at: str) -> int:
         """시스템 줄(§4.4) — 그때 이름으로 body 에 써 둔다 · 푸시 · 안 읽음 없음."""
@@ -222,7 +243,11 @@ class ChatService:
         return out
 
     def create_group(self, actor: Account, account_ids: list[int], title: str | None) -> dict[str, Any]:
-        """그룹(§4.2) — 다른 사람 2 ~ 19 · 같은 사람들이어도 매번 새 방 · 이름 비면 null."""
+        """그룹(§4.2) — 다른 사람 2 ~ 19 · 같은 사람들이어도 매번 새 방 · 이름 비면 null.
+
+        만들면 초대 시스템 줄 한 줄(r5 · §4.4 · D9-68 · OQ-963 — [새 대화] · 1:1 [초대] 같은 길) · SSE chat_message 멤버 전원 ·
+        푸시 없음(시스템 줄).
+        """
         title = (title or "").strip() or None
         if title is not None and len(title) > MAX_TITLE:
             raise BadRequest("invalid_request", f"title: 그룹 이름은 {MAX_TITLE}자까지예요")
@@ -238,17 +263,22 @@ class ChatService:
             room_id = tx.add_chat_room(kind="group", title=title, created_by=actor.id, created_at=at)
             for i in (actor.id, *account_ids):
                 self._join(tx, room_id, i, at)
+            mid = self._system(tx, room_id, actor, self._invited(actor, account_ids, accounts), at)
             room = tx.chat_room(room_id)
             assert room is not None
             out = self._room(tx, room, actor.id, accounts)
-            events = self._room_events(tx, room, [actor.id, *account_ids], accounts)
+            msg = self._message(tx.chat_message(mid) or {}, accounts)
+            events = [*self._room_events(tx, room, [actor.id, *account_ids], accounts),
+                      *((i, "chat_message", {"roomId": room_id, "message": msg})
+                        for i in self._seers(tx.chat_members(room_id), mid))]
         log.info("채팅 그룹 만듦 room=%d account=%d members=%d", room_id, actor.id, len(account_ids) + 1)
         self._emit(events)
         return out
 
     # ------------------------------------------------------------------ #5 ~ #8 방 바꾸기
     def add_members(self, actor: Account, room_id: int, account_ids: list[int]) -> dict[str, Any]:
-        """참여자 추가(§4.2) — 누구나 · 지금 멤버 아님 · 추가 뒤 ≤ 20 · 시스템 줄 한 줄 · 나간 사람 = 같은 행 다시."""
+        """초대(= 참여자 추가 · §4.2 · §4.7) — 누구나 · 지금 멤버 아님 · 추가 뒤 ≤ 20 · 시스템 줄 한 줄 · 나간 사람 = 같은 행 다시
+        (경계도 다시 — 들어온 뒤 대화만 · D9-69)."""
         now = self.clock.now()
         at = to_db_ms(now)
         with self.repo.tx() as tx:
@@ -264,16 +294,16 @@ class ChatService:
                 raise Conflict("chat_room_full", f"{ROOM_MAX}명까지 함께할 수 있어요")
             for i in account_ids:
                 self._join(tx, room_id, i, at)
-            names = ", ".join(f"{accounts[i].name} 님" for i in account_ids)
-            mid = self._system(tx, room_id, actor, f"{actor.name} 님이 {names}을 초대했어요", at)
+            mid = self._system(tx, room_id, actor, self._invited(actor, account_ids, accounts), at)
             room = tx.chat_room(room_id)
             assert room is not None
             members = [*current, *account_ids]
             out = self._room(tx, room, actor.id, accounts)
             msg = self._message(tx.chat_message(mid) or {}, accounts)
             events = [*self._room_events(tx, room, members, accounts),
-                      *((i, "chat_message", {"roomId": room_id, "message": msg}) for i in members)]
-        log.info("채팅 참여자 추가 room=%d account=%d added=%d", room_id, actor.id, len(account_ids))
+                      *((i, "chat_message", {"roomId": room_id, "message": msg})
+                        for i in self._seers(tx.chat_members(room_id), mid))]
+        log.info("채팅 초대 room=%d account=%d added=%d", room_id, actor.id, len(account_ids))
         self._emit(events)
         return out
 
@@ -289,11 +319,12 @@ class ChatService:
             room = tx.chat_room(room_id)
             assert room is not None
             accounts = self._accounts(tx)
-            rest = [r["account_id"] for r in tx.chat_members(room_id)]
+            members = tx.chat_members(room_id)
+            rest = [r["account_id"] for r in members]
             msg = self._message(tx.chat_message(mid) or {}, accounts)
             events = [(actor.id, "chat_room_removed", {"roomId": room_id}),
                       *self._room_events(tx, room, rest, accounts),
-                      *((i, "chat_message", {"roomId": room_id, "message": msg}) for i in rest)]
+                      *((i, "chat_message", {"roomId": room_id, "message": msg}) for i in self._seers(members, mid))]
         log.info("채팅 나감 room=%d account=%d", room_id, actor.id)
         self._emit(events)
 
@@ -318,7 +349,10 @@ class ChatService:
 
     # ------------------------------------------------------------------ #9 ~ #12 메시지
     def messages(self, actor: Account, room_id: int, before: int | None, since: str | None, limit: int) -> dict[str, Any]:
-        """§5 페이지 — 처음 = 최근 limit · before = id < before · since = updated_at >= since(parse 뒤 UTC ms 로 비교)."""
+        """§5 페이지 — 처음 = 최근 limit · before = id < before · since = updated_at >= since(parse 뒤 UTC ms 로 비교).
+
+        세 꼴 모두 내 경계 밖(id > from_message_id)만(r5 · §4.6 V1 · V2) — 경계에 닿으면 hasMore false.
+        """
         if before is not None and since is not None:
             raise BadRequest("invalid_request", "before · since 는 하나만 보내요")
         since_db = None
@@ -329,7 +363,23 @@ class ChatService:
             since_db = to_db_ms(at)
         with self.repo.tx() as tx:
             self._member(tx, room_id, actor)
-            rows, more = tx.chat_messages(room_id, before=before, since=since_db, limit=limit)
+            me = tx.chat_member(room_id, actor.id)
+            assert me is not None
+            rows, more = tx.chat_messages(room_id, after_id=me["from_message_id"], before=before, since=since_db,
+                                          limit=limit)
+            items = self._messages(tx, rows, self._accounts(tx))
+        return {"items": items, "hasMore": more}
+
+    def attachments(self, actor: Account, room_id: int, before: int | None, limit: int) -> dict[str, Any]:
+        """모아보기(r5 · §6.2 #20 · D9-67) — 사진 · 동영상 메시지만 · 최근 것 위 · 내 경계 밖만 · Message 모양 그대로.
+
+        지운 메시지 · 지운 첨부 빠짐 · 파일은 보지 않는다(열 때 #14 · #17 · #18 이 404). 열람 로그 없음.
+        """
+        with self.repo.tx() as tx:
+            self._member(tx, room_id, actor)
+            me = tx.chat_member(room_id, actor.id)
+            assert me is not None
+            rows, more = tx.chat_attachments(room_id, after_id=me["from_message_id"], before=before, limit=limit)
             items = self._messages(tx, rows, self._accounts(tx))
         return {"items": items, "hasMore": more}
 
@@ -365,7 +415,7 @@ class ChatService:
         assert fresh is not None
         msg = self._messages(tx, [tx.chat_message(mid) or {}], accounts)[0]
         events = [*self._room_events(tx, fresh, to, accounts),
-                  *((m["account_id"], "chat_message", {"roomId": room_id, "message": msg}) for m in members)]
+                  *((i, "chat_message", {"roomId": room_id, "message": msg}) for i in self._seers(members, mid))]
         return mid, msg, events
 
     def post(self, actor: Account, room_id: int, client_id: str, text: str | None, photo_id: int | None,
@@ -430,7 +480,7 @@ class ChatService:
             tx.lock_write()
             m = tx.chat_message(message_id)
             me = tx.chat_member(m["room_id"], actor.id) if m else None
-            if m is None or me is None or me["left_at"] is not None:
+            if m is None or not self._sees(me, m["id"]):  # 멤버 아님 · 나감 · 내 경계 안(r5 · OQ-969) = 없는 것
                 raise NotFound("메시지를 찾을 수 없어요", "chat_message_not_found")
             unfit = BadRequest("chat_not_forwardable", "전달할 수 없는 메시지예요")
             if m["kind"] == "system" or m["deleted_at"] is not None:
@@ -504,7 +554,7 @@ class ChatService:
         with self.repo.tx() as tx:
             m = tx.chat_message(message_id)
             me = tx.chat_member(m["room_id"], actor.id) if m else None
-            if m is None or me is None or me["left_at"] is not None:
+            if m is None or not self._sees(me, m["id"]):  # 멤버 아님 · 나감 · 내 경계 안(r5 · OQ-969) = 없는 것
                 raise NotFound("메시지를 찾을 수 없어요", "chat_message_not_found")
             if m["account_id"] != actor.id or m["kind"] == "system":
                 raise Forbidden("chat_not_yours", "내 메시지만 지울 수 있어요")
@@ -515,7 +565,7 @@ class ChatService:
             if photo is not None and photo["deleted_at"] is None:
                 tx.update_chat_photo(photo["id"], deleted_at=at)
             last_ref = photo is not None and tx.chat_photo_live_refs(photo["file_name"]) == 0
-            members = [r["account_id"] for r in tx.chat_members(m["room_id"])]
+            members = self._seers(tx.chat_members(m["room_id"]), message_id)  # 볼 수 있는 사람만(r5 · V9)
         if last_ref:
             path = self._folder()
             if path is not None:
@@ -530,7 +580,8 @@ class ChatService:
         """수정(r3 · §5 · D9-55) — 내 텍스트만 · 시한 없음 · body = 새 글 · edited_at = updated_at = 지금(since 로 메워짐).
 
         새 메시지 · 안 읽음 · 방 last_message_at · 순서 · 푸시는 그대로(self.push 를 부르지 않는다) · 커밋 뒤
-        chat_message_edited 를 지금 멤버 전원에게. 같은 글 = 그대로 200(SSE 없음). 오류 차례(코디 처분 W-5): 멤버 아님 404 →
+        chat_message_edited 를 그 메시지를 볼 수 있는 지금 멤버에게(r5). 같은 글 = 그대로 200(SSE 없음).
+        오류 차례(코디 처분 W-5): 멤버 아님 · 내 경계 안(r5) 404 →
         남의 사진 · 동영상 · 지운 것 · 글 403 chat_not_yours → 내 사진 · 동영상 · 지운 것 · 시스템 줄 400 chat_not_editable.
         """
         if not text.strip():
@@ -541,7 +592,7 @@ class ChatService:
         with self.repo.tx() as tx:
             m = tx.chat_message(message_id)
             me = tx.chat_member(m["room_id"], actor.id) if m else None
-            if m is None or me is None or me["left_at"] is not None:
+            if m is None or not self._sees(me, m["id"]):  # 멤버 아님 · 나감 · 내 경계 안(r5 · OQ-969) = 없는 것
                 raise NotFound("메시지를 찾을 수 없어요", "chat_message_not_found")
             if m["kind"] != "system" and m["account_id"] != actor.id:
                 raise Forbidden("chat_not_yours", "내 메시지만 고칠 수 있어요")
@@ -552,7 +603,7 @@ class ChatService:
                 return self._messages(tx, [m], accounts)[0]
             tx.update_chat_message(message_id, body=text, edited_at=at, updated_at=at)
             msg = self._messages(tx, [tx.chat_message(message_id) or {}], accounts)[0]
-            members = [r["account_id"] for r in tx.chat_members(m["room_id"])]
+            members = self._seers(tx.chat_members(m["room_id"]), message_id)  # 볼 수 있는 사람만(r5 · V9)
         log.info("채팅 고침 room=%d message=%d account=%d", m["room_id"], message_id, actor.id)
         self._emit([(i, "chat_message_edited", {"roomId": m["room_id"], "message": msg}) for i in members])
         return msg
@@ -608,7 +659,8 @@ class ChatService:
         return photo_id
 
     def _attachment(self, actor: Account, attach_id: int, kind: str, missing: NotFound) -> tuple[dict[str, Any], Path]:
-        """첨부 열기 권한(§6.2 #14 · #17 · #18) — 붙기 전 = 올린 사람만 · 붙은 뒤 = 그 방 지금 멤버만 · 지움 · 종류 다름 = 404.
+        """첨부 열기 권한(§6.2 #14 · #17 · #18) — 붙기 전 = 올린 사람만 · 붙은 뒤 = 그 방 지금 멤버이고 붙은 메시지가 내 경계
+        밖(r5 · V5) · 지움 · 종류 다름 = 404.
 
         (행, 폴더) — 파일이 있는지는 부르는 쪽이 본다(행 있고 파일 없음 = 404). 열람 로그 없음(D9-23).
         """
@@ -620,8 +672,7 @@ class ChatService:
                 if p["account_id"] != actor.id:
                     raise missing
             else:
-                me = tx.chat_member(p["room_id"], actor.id)
-                if me is None or me["left_at"] is not None:
+                if not self._sees(tx.chat_member(p["room_id"], actor.id), p["message_id"]):
                     raise missing
         folder = self._folder()
         if folder is None:

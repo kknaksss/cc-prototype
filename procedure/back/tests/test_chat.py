@@ -133,15 +133,17 @@ def test_chat_members_add_leave(chat):
                          headers=chat.h("c-ben"))
     assert r.status_code == 200 and r.json()["memberCount"] == 5
     items = chat.msgs("c-dan", g).json()["items"]
-    assert items[-1]["kind"] == "system" and items[-1]["text"] == "나래 님이 라온 님, 마루 님을 초대했어요"
-    assert [m["text"] for m in items] == ["첫 메시지", "나래 님이 라온 님, 마루 님을 초대했어요"]  # 옛 메시지 보임
+    assert items[-1]["kind"] == "system" and items[-1]["text"] == "나래님이 라온님, 마루님을 초대했습니다"  # r5 · D9-68
+    assert [m["text"] for m in items] == ["나래님이 라온님, 마루님을 초대했습니다"]  # 옛 메시지 안 보임(r5 · D9-69)
+    assert [m["text"] for m in chat.msgs("c-amy", g).json()["items"]] == [
+        "가람님이 나래님, 다솜님을 초대했습니다", "첫 메시지", "나래님이 라온님, 마루님을 초대했습니다"]  # 처음 멤버 = 전부
     assert chat.room("c-dan", g)["unread"] == 0  # D-45 — 처음 들어온 그룹의 옛 메시지 안 셈
     # 나가기 = 시스템 줄 · 내 목록에서 빠짐
     chat.tick()
     assert chat.client.post(f"/api/chat/rooms/{g}/leave", headers=chat.h("c-cat")).json() == {"ok": True}
     assert chat.room("c-cat", g) is None
     assert chat.msgs("c-amy", g).json()["items"][-1]["text"] == "다솜 님이 나갔어요"
-    # 빠진 동안 메시지 → 다시 초대 = 같은 행 · 옛 메시지 보임 · 빠진 동안 메시지 안 읽음 0
+    # 빠진 동안 메시지 → 다시 초대 = 같은 행 · 옛 메시지 안 보임(r5) · 빠진 동안 메시지 안 읽음 0
     chat.tick()
     chat.send("c-amy", g, "빠진 동안")
     chat.tick()
@@ -152,7 +154,7 @@ def test_chat_members_add_leave(chat):
                               (g, chat.id("c-cat"))).fetchone()[0]
     assert rows == 1
     assert chat.room("c-cat", g)["unread"] == 0
-    assert "빠진 동안" in [m["text"] for m in chat.msgs("c-cat", g).json()["items"]]
+    assert [m["text"] for m in chat.msgs("c-cat", g).json()["items"]] == ["가람님이 다솜님을 초대했습니다"]
     # 지금 멤버 20 넘음 = 409
     with chat.c.repo.tx() as tx:
         for i in range(16):

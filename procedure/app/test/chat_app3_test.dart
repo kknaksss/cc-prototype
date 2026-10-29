@@ -11,6 +11,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:procedure_app/api/api.dart';
 import 'package:procedure_app/app_state.dart';
+import 'package:procedure_app/widgets/ui.dart' show MsButton;
 import 'package:procedure_app/chat/chat_model.dart';
 import 'package:procedure_app/chat/chat_state.dart';
 import 'package:procedure_app/model/display.dart';
@@ -402,7 +403,7 @@ void main() {
       return app;
     }
 
-    testWidgets('그룹(S10a) — 그룹 이름 · 알림 Toggle(PUT mute) · 참여자(「나」 맨 위) · [+ 참여자 추가](이미 참여 중 · POST members) · [나가기] 확인', (t) async {
+    testWidgets('그룹(S10a) — 그룹 이름 · 알림 Toggle(PUT mute) · 참여자(「나」 맨 위) · [+ 초대](머리 「초대」 · 이미 참여 중 · POST members) · [나가기] 확인(r5 새 문구)', (t) async {
       final f = FakeChat()..rooms = [roomJ(2, group: true, title: '4층 시술실', members: [meM, docM, offM])];
       final app = await openInfo(t, f, '4층 시술실');
       expect(find.text('대화'), findsOneWidget); // ‹ 대화
@@ -412,23 +413,28 @@ void main() {
       expect(find.text('(비활성)'), findsOneWidget);
       expect(t.getTopLeft(find.text('가간호')).dy, lessThan(t.getTopLeft(find.text('나의사')).dy));
       expect(find.text('나'), findsOneWidget);
+      // F10 — 「나」 = 줄 오른쪽 끝(이름 길이와 상관없이 · Flexible + Spacer 아님)
+      final w = t.view.physicalSize.width / t.view.devicePixelRatio;
+      expect(t.getRect(find.text('나')).right, greaterThan(w - 60));
       await t.tap(find.byType(Switch));
       await settle(t);
       expect(jsonDecode(f.where('PUT', '/api/chat/rooms/2/mute').single.body), {'muted': true});
       expect(app.chat.room(2)!.muted, isTrue);
-      // 참여자 추가
+      // 초대(r5 · §10.9)
       f.people = [docM, coordM, consM];
       f.override['POST /api/chat/rooms/2/members'] =
           (_) => http.Response(jsonEncode(roomJ(2, group: true, title: '4층 시술실', members: [meM, docM, offM, coordM])), 200, headers: jsonHeaders);
-      await t.tap(find.byKey(const Key('chat-add-members')));
+      await t.tap(find.byKey(const Key('chat-invite')));
       await t.pumpAndSettle();
       await settle(t);
+      expect(find.text('초대'), findsWidgets); // 머리 「초대」 · 버튼 [초대]
       expect(find.text('이미 참여 중'), findsOneWidget);
+      expect(t.getRect(find.text('이미 참여 중')).right, greaterThan(w - 60)); // F10 — 오른쪽 끝
       expect(find.text('0명 선택 · 지금 3명 · 최대 20명'), findsOneWidget);
       await t.tap(find.text('나의사')); // 이미 참여 — 못 고름
       await t.tap(find.text('다코디'));
       await t.pump();
-      await t.tap(find.text('추가'));
+      await t.tap(find.widgetWithText(MsButton, '초대'));
       await settle(t);
       await t.pumpAndSettle();
       expect(jsonDecode(f.where('POST', '/api/chat/rooms/2/members').single.body), {'accountIds': [3]});
@@ -439,7 +445,7 @@ void main() {
       await t.tap(find.byKey(const Key('chat-leave')));
       await t.pumpAndSettle();
       expect(find.text('4층 시술실에서 나갈까요?'), findsOneWidget);
-      expect(find.text('내 목록에서 이 방이 사라져요. 다시 초대받으면 다시 볼 수 있어요.'), findsOneWidget);
+      expect(find.text('내 목록에서 이 방이 사라져요. 다시 초대받아도 지금까지의 대화는 볼 수 없어요.'), findsOneWidget);
       await t.tap(find.text('나가기').last);
       await settle(t);
       await t.pumpAndSettle();
@@ -449,14 +455,14 @@ void main() {
       await teardown(t, app);
     });
 
-    testWidgets('1:1(S10b) — 그룹 이름 · 추가 · 나가기 없음 · 안내 한 줄 · [목록에서 숨기기](확인 없음) → 목록', (t) async {
+    testWidgets('1:1(S10b) — 그룹 이름 · 나가기 없음 · [+ 초대] 있음 · 안내 줄 없음(r5) · [목록에서 숨기기](확인 없음) → 목록', (t) async {
       final f = FakeChat()..rooms = [roomJ(1)];
       final app = await openInfo(t, f, '나의사');
       expect(find.text('그룹 이름'), findsNothing);
-      expect(find.byKey(const Key('chat-add-members')), findsNothing);
+      expect(find.byKey(const Key('chat-invite')), findsOneWidget);
       expect(find.byKey(const Key('chat-leave')), findsNothing);
       expect(find.text('참여자 2명'), findsOneWidget);
-      expect(find.text('1:1 에는 참여자를 더할 수 없어요. 여럿이 이야기하려면 [새 대화] 에서 그룹을 만들어요.'), findsOneWidget);
+      expect(find.textContaining('그룹을 만들어요'), findsNothing);
       expect(find.text('새 메시지가 오면 목록에 다시 보여요'), findsOneWidget);
       await t.tap(find.byKey(const Key('chat-hide')));
       await settle(t);

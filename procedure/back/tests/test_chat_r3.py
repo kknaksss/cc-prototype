@@ -495,4 +495,4 @@ def test_chat_route_handlers_async(path):
     """라우트 핸들러 def = 0(W2-6 grep 과 같은 규칙 — @router. 바로 다음 줄)."""
     lines = (Path(__file__).resolve().parents[1] / path).read_text().splitlines()
     nxt = [lines[i + 1] for i, x in enumerate(lines) if x.startswith("@router.")]
-    assert len(nxt) == 18 and all(x.startswith("async def ") for x in nxt)
+    assert len(nxt) == 19 and all(x.startswith("async def ") for x in nxt)  # r4 전달 +1

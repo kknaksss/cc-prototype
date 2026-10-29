@@ -7,6 +7,7 @@ import '../model/board.dart';
 import '../screens/board_screen.dart' show isTablet;
 import '../theme/tokens.dart';
 import 'ui.dart';
+import 'sheet.dart';
 
 enum UndoKind { start, finish }
 
@@ -54,7 +55,7 @@ Future<void> confirmUndo(BuildContext context, BoardCard c, Procedure p, UndoKin
       ),
     );
   } else {
-    ok = await showModalBottomSheet<bool>(
+    ok = await showAppSheet<bool>(
       context: context,
       backgroundColor: Ms.white,
       barrierColor: Ms.dim,

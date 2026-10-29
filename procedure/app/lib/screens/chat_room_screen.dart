@@ -1,8 +1,7 @@
 // 대화(SPEC-007 §10.4 ~ §10.7 · DS:S4 ~ S9b) — 폰 = 채팅 탭 스택의 상세 화면(DetailHeader 「‹ 채팅」 · 탭바 유지) ·
 // 아이패드 = 오른쪽 칸(뒤로 없음 · D9-38). 말풍선 · 날짜 구분선 · 시스템 줄 · 그룹 보낸 사람 이름 · 보내는 중 · 실패 · 사진 · 길게 눌러 삭제.
-// r3: 넓은 입력창(D9-47) · [+] 시트(D9-48) · 여러 개(D9-50) · 동영상 말풍선 · 재생(D9-53) · 링크(D9-46) · 5메뉴 · 수정 · 공유(D9-54 ~ D9-56)
+// r3: 넓은 입력창(D9-47) · [+] 시트(D9-48) · 여러 개(D9-50) · 동영상 말풍선 · 재생(D9-53) · 링크(D9-46) · 5메뉴 · 수정(D9-54 · D9-55) · [공유] = 앱 안 전달(r4 D9-62)
 import 'dart:async';
-import 'dart:io' show File;
 import 'dart:typed_data';
 
 import 'package:flutter/gestures.dart' show TapGestureRecognizer;
@@ -13,7 +12,7 @@ import '../api/api.dart' show ApiError;
 
 import '../app_state.dart';
 import '../chat/chat_model.dart';
-import '../chat/chat_share.dart';
+import '../chat/chat_link.dart';
 import '../chat/chat_state.dart';
 import '../chat/chat_ui.dart';
 import '../chat/chat_view.dart';
@@ -23,9 +22,11 @@ import '../view/view.dart' show BadgeVariant;
 import '../widgets/header.dart';
 import '../widgets/ui.dart';
 import 'chat_attach_sheet.dart';
+import 'chat_forward_sheet.dart';
 import 'chat_info_screen.dart';
 import 'chat_photo_screen.dart';
 import 'chat_video_screen.dart';
+import '../widgets/sheet.dart';
 
 const chatRoomRouteName = 'chat-room';
 
@@ -499,82 +500,12 @@ class _ChatRoomViewState extends State<ChatRoomView> with RouteAware {
       case ChatMenu.select:
         await showSelectCopy(context, m.text ?? '');
       case ChatMenu.share:
-        await _share(m, rect);
+        await openForwardSheet(context, m); // r4 D9-62 — 앱 안 전달(시스템 공유 시트 없음)
       case ChatMenu.edit:
         _startEdit(m);
       case ChatMenu.delete:
         final ok = await confirmChat(context, title: '메시지를 삭제할까요?', body: '대화방의 모두에게 「삭제된 메시지예요」로 보여요. 되돌릴 수 없어요.', ok: '삭제');
         if (ok) await _app.run(() => _chat.delete(m));
-    }
-  }
-
-  // 공유(D9-56) — 텍스트 = 본문 · 사진 = 메모리의 JPEG → 임시 파일 · 동영상 = #17 을 Bearer 로 임시 파일에 흘려 받기(진행률 · [취소]) → 시트
-  Future<void> _share(ChatMessage m, Rect origin) async {
-    try {
-      if (m.video != null) return await _shareVideo(m.video!.id, origin);
-      if (m.photo != null) {
-        final b = await _chat.photo(m.photo!.id);
-        if (b == null) throw const ApiError(0, 'error', shareFailed);
-        return await sharePhoto(b, origin: origin);
-      }
-      await shareText(m.text ?? '', origin: origin);
-    } catch (_) {
-      _app.toaster.show(shareFailed);
-    }
-  }
-
-  Future<void> _shareVideo(int videoId, Rect origin) async {
-    final dir = await shareDir();
-    if (!mounted) return dir.delete(recursive: true).then((_) {});
-    final file = File('${dir.path}/video.mp4');
-    final progress = ValueNotifier<double>(0);
-    var cancelled = false;
-    var open = true;
-    final nav = Navigator.of(context, rootNavigator: true);
-    unawaited(showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      barrierColor: Ms.dim,
-      builder: (ctx) => Dialog(
-        backgroundColor: Ms.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 320),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 18, 20, 12),
-            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              Text('준비하는 중…', key: const Key('chat-share-preparing'), style: Typo.body600),
-              const SizedBox(height: 12),
-              ValueListenableBuilder<double>(valueListenable: progress, builder: (_, v, _) => MsProgress(v)),
-              const SizedBox(height: 10),
-              Align(
-                alignment: Alignment.centerRight,
-                child: MsButton('취소', key: const Key('chat-share-cancel'), variant: BtnVariant.outlined, color: BtnColor.gray, size: BtnSize.sm, onPressed: () {
-                  cancelled = true;
-                  open = false;
-                  Navigator.of(ctx).pop();
-                }),
-              ),
-            ]),
-          ),
-        ),
-      ),
-    ).whenComplete(() => open = false));
-    try {
-      await _app.api.chatVideoDownload(videoId, file, onProgress: (v) => progress.value = v, cancelled: () => cancelled);
-      if (open) nav.pop();
-      open = false;
-      if (cancelled) return;
-      await shareFileIn(dir, file.path, 'video/mp4', origin: origin);
-    } catch (_) {
-      if (open) nav.pop();
-      open = false;
-      if (!cancelled) _app.toaster.show(shareFailed);
-    } finally {
-      progress.dispose();
-      try {
-        if (await dir.exists()) await dir.delete(recursive: true);
-      } catch (_) {}
     }
   }
 
@@ -885,7 +816,7 @@ Future<void> showSelectCopy(BuildContext context, String text) {
       ),
     );
   }
-  return showModalBottomSheet<void>(
+  return showAppSheet<void>(
     context: context,
     isScrollControlled: true,
     backgroundColor: Ms.white,

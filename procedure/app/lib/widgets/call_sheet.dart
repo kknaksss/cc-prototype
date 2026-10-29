@@ -8,6 +8,7 @@ import '../screens/board_screen.dart' show isTablet;
 import '../theme/tokens.dart';
 import '../view/view.dart';
 import 'ui.dart';
+import 'sheet.dart';
 
 Future<void> openCallSheet(BuildContext context, {required int visitId, required Set<int> preselect}) {
   final app = AppScope.read(context);
@@ -24,7 +25,7 @@ Future<void> openCallSheet(BuildContext context, {required int visitId, required
       ),
     );
   }
-  return showModalBottomSheet(
+  return showAppSheet(
     context: context,
     isScrollControlled: true,
     backgroundColor: Ms.white,

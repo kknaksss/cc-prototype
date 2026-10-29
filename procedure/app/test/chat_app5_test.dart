@@ -1,18 +1,15 @@
-// WP-APP5(r3) — 길게 누르기 5메뉴 · 복사 · 선택 복사 · 공유 · 수정 · 링크 · SSE chat_message_edited(SPEC-007 §5 · §7 · §10.4 · §10.7 · §13.2 r3).
-// 공유 시트 · 링크 열기는 가짜로 바꿔 끼운다(인자 확인)
-import 'dart:async';
+// WP-APP5(r3) — 길게 누르기 5메뉴 · 복사 · 선택 복사 · 수정 · 링크 · SSE chat_message_edited(SPEC-007 §5 · §7 · §10.4 · §10.7 · §13.2 r3).
+// r4: [공유] = 앱 안 전달 — 시스템 공유 시험은 chat_app6_test.dart(전달 시트)로 옮김. 링크 열기는 가짜로 바꿔 끼운다
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:procedure_app/chat/chat_model.dart';
-import 'package:procedure_app/chat/chat_share.dart';
+import 'package:procedure_app/chat/chat_link.dart';
 import 'package:procedure_app/chat/chat_view.dart';
 import 'package:procedure_app/screens/chat_room_screen.dart';
-import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'chat_app2_test.dart' show openRoom;
@@ -25,42 +22,19 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  late ShareFn savedShare;
   late LinkOpener savedLink;
-  final shared = <ShareParams>[];
-  final sharedFileExisted = <bool>[];
   final opened = <Uri>[];
   setUp(() {
-    savedShare = shareChat;
     savedLink = openChatLink;
-    shared.clear();
-    sharedFileExisted.clear();
     opened.clear();
-    shareChat = (p) async {
-      shared.add(p);
-      for (final f in p.files ?? const <XFile>[]) {
-        sharedFileExisted.add(File(f.path).existsSync());
-      }
-    };
     openChatLink = (u) async => opened.add(u);
   });
-  tearDown(() {
-    shareChat = savedShare;
-    openChatLink = savedLink;
-  });
+  tearDown(() => openChatLink = savedLink);
 
   List<String> menuShown() => [
         for (final m in ChatMenu.values)
           if (find.byKey(Key(m == ChatMenu.delete ? 'chat-delete-menu' : 'chat-menu-${m.name}')).evaluate().isNotEmpty) m.label
       ];
-
-  // 임시 파일 IO 가 흐르게(가짜 시계 + 실제 비동기)
-  Future<void> drain(WidgetTester t, [int n = 12]) async {
-    for (var i = 0; i < n; i++) {
-      await t.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 10)));
-      await t.pump(const Duration(milliseconds: 10));
-    }
-  }
 
   Future<void> closeMenu(WidgetTester t) async {
     await t.tapAt(const Offset(5, 5));
@@ -182,119 +156,6 @@ void main() {
       await t.tap(find.byKey(const Key('chat-select-close')));
       await t.pumpAndSettle();
       expect(find.byKey(const Key('chat-select-text')), findsNothing);
-      await teardown(t, app);
-    });
-  });
-
-  group('공유(D9-56)', () {
-    testWidgets('텍스트 = 본문 · 「이미지 저장」(saveToCameraRoll) 뺌 · 팝오버 자리 = 그 말풍선', (t) async {
-      final f = FakeChat()
-        ..rooms = [roomJ(1)]
-        ..messages[1] = [msgJ(1, 1, text: '공유할 글')];
-      final app = await openRoom(t, f, '나의사');
-      await t.longPress(find.text('공유할 글'));
-      await t.pumpAndSettle();
-      await t.tap(find.byKey(const Key('chat-menu-share')));
-      await t.pumpAndSettle();
-      final p = shared.single;
-      expect(p.text, '공유할 글');
-      expect(p.excludedCupertinoActivities, contains(CupertinoActivityType.saveToCameraRoll));
-      expect(p.sharePositionOrigin, isNotNull);
-      expect(p.sharePositionOrigin!.width, greaterThan(0));
-      await teardown(t, app);
-    });
-
-    testWidgets('사진 = 메모리 JPEG → 임시 파일(시트 동안 있음) → 시트 닫히면 지움 · 저장 뺌', (t) async {
-      final f = FakeChat()
-        ..photoBytes = png
-        ..rooms = [roomJ(1)]
-        ..messages[1] = [msgJ(1, 1, kind: 'photo', text: null, photo: {'id': 50, 'width': 400, 'height': 300})];
-      final app = await openRoom(t, f, '나의사');
-      await t.longPress(find.byKey(const Key('chat-msg-1')));
-      await t.pumpAndSettle();
-      await t.tap(find.byKey(const Key('chat-menu-share')));
-      await drain(t);
-      final p = shared.single;
-      expect(p.files!.single.mimeType, 'image/jpeg');
-      expect(sharedFileExisted, [true]);
-      expect(File(p.files!.single.path).existsSync(), isFalse); // 닫히면 지움
-      expect(p.excludedCupertinoActivities, [CupertinoActivityType.saveToCameraRoll]);
-      await teardown(t, app);
-    });
-
-    testWidgets('동영상 = #17 을 Bearer 로 임시 파일에 흘려 받기(「준비하는 중…」) → 공유 → 지움 · 실패 = 토스트 「공유하지 못했어요」', (t) async {
-      final f = FakeChat()
-        ..photoBytes = png
-        ..rooms = [roomJ(1)]
-        ..messages[1] = [
-          msgJ(1, 1, kind: 'video', text: null, video: {'id': 7, 'width': 720, 'height': 1280, 'durationMs': 5000}),
-          msgJ(2, 1, kind: 'video', text: null, video: {'id': 8, 'width': 720, 'height': 1280, 'durationMs': 5000}),
-        ];
-      final app = await openRoom(t, f, '나의사');
-      final gate = Completer<void>();
-      f.slow['/api/chat/videos/7'] = gate.future; // 받기를 붙잡아 「준비하는 중…」을 본다
-      await t.longPress(find.byKey(const Key('chat-msg-1')));
-      await t.pumpAndSettle();
-      await t.tap(find.byKey(const Key('chat-menu-share')));
-      await drain(t, 4);
-      expect(find.byKey(const Key('chat-share-preparing')), findsOneWidget); // 받는 동안 「준비하는 중…」 + [취소]
-      expect(find.byKey(const Key('chat-share-cancel')), findsOneWidget);
-      gate.complete();
-      await drain(t);
-      await t.pumpAndSettle();
-      final get = f.where('GET', '/api/chat/videos/7').single;
-      expect(get.headers['Authorization'], 'Bearer t');
-      expect(get.url.queryParameters, isEmpty);
-      final p = shared.single;
-      expect(p.files!.single.mimeType, 'video/mp4');
-      expect(sharedFileExisted, [true]);
-      expect(File(p.files!.single.path).existsSync(), isFalse);
-      expect(p.excludedCupertinoActivities, [CupertinoActivityType.saveToCameraRoll]);
-      expect(find.byKey(const Key('chat-share-preparing')), findsNothing);
-      // 실패 — 404
-      f.override['GET /api/chat/videos/8'] = (_) => http.Response(jsonEncode({'error': {'code': 'chat_video_not_found', 'message': '동영상을 찾을 수 없어요'}}), 404, headers: jsonHeaders);
-      await t.longPress(find.byKey(const Key('chat-msg-2')));
-      await t.pumpAndSettle();
-      await t.tap(find.byKey(const Key('chat-menu-share')));
-      await drain(t);
-      await t.pumpAndSettle();
-      expect(app.toaster.text, '공유하지 못했어요');
-      expect(shared, hasLength(1));
-      expect(find.byKey(const Key('chat-share-preparing')), findsNothing);
-      await teardown(t, app);
-    });
-  });
-
-  group('공유 [취소](U-4 · review-code r2 W-7)', () {
-    testWidgets('받는 중 [취소] → 창 바로 닫힘 · 받기 멈춤 · 임시 파일 · 폴더 지움 · 공유 시트 안 뜸 · 토스트 없음', (t) async {
-      List<String> shareDirs() => [
-            for (final e in Directory.systemTemp.listSync())
-              if (e is Directory && e.path.split('/').last.startsWith('chat-share-')) e.path
-          ];
-      final before = shareDirs().toSet();
-      final f = FakeChat()
-        ..photoBytes = png
-        ..rooms = [roomJ(1)]
-        ..messages[1] = [msgJ(1, 1, kind: 'video', text: null, video: {'id': 7, 'width': 720, 'height': 1280, 'durationMs': 5000})];
-      final gate = Completer<void>();
-      f.slow['/api/chat/videos/7'] = gate.future;
-      final app = await openRoom(t, f, '나의사');
-      await t.longPress(find.byKey(const Key('chat-msg-1')));
-      await t.pumpAndSettle();
-      await t.tap(find.byKey(const Key('chat-menu-share')));
-      await drain(t, 4);
-      final mine = shareDirs().where((d) => !before.contains(d)).toList();
-      expect(mine, hasLength(1)); // 받는 중 = 임시 폴더 하나
-      await t.tap(find.byKey(const Key('chat-share-cancel')));
-      await t.pumpAndSettle(); // 받기가 아직 멈춰 있어도(gate) 창은 닫힘
-      expect(find.byKey(const Key('chat-share-preparing')), findsNothing);
-      expect(Directory(mine.single).existsSync(), isTrue); // 받기는 다음 조각에서 멈춤
-      gate.complete(); // 다음 조각이 오면 멈추고 지움
-      await drain(t);
-      await t.pumpAndSettle();
-      expect(shared, isEmpty);
-      expect(app.toaster.text, isNot('공유하지 못했어요'));
-      expect(Directory(mine.single).existsSync(), isFalse);
       await teardown(t, app);
     });
   });

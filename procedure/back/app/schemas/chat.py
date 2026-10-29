@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, model_validator
 
 from app.schemas.actions import Role
 
@@ -159,3 +159,45 @@ class PhotoUploadResponse(BaseModel):
 
 class VideoUploadResponse(BaseModel):
     videoId: int
+
+
+# ------------------------------------------------------------------ 전달(r4 · §6.2 #19)
+class ForwardTarget(_Req):
+    """방(roomId) 또는 사람(accountId) 중 하나 + 대상마다 clientId(보내기와 같은 규칙 · D9-16)."""
+
+    roomId: StrictInt | None = None
+    accountId: StrictInt | None = None
+    clientId: str = Field(min_length=8, max_length=64)
+
+    @model_validator(mode="after")
+    def _one(self) -> "ForwardTarget":
+        if (self.roomId is None) == (self.accountId is None):
+            raise ValueError("roomId · accountId 중 하나만 보내요")
+        return self
+
+
+class ForwardRequest(_Req):
+    """대상 1 ~ 10 · 중복은 서비스가 본다(invalid_request)."""
+
+    targets: list[ForwardTarget]
+
+
+class ErrorBody(BaseModel):
+    code: str
+    message: str
+
+
+class ForwardOk(BaseModel):
+    ok: Literal[True] = True
+    roomId: int
+    message: Message
+
+
+class ForwardFail(BaseModel):
+    ok: Literal[False] = False
+    roomId: int | None
+    error: ErrorBody
+
+
+class ForwardResponse(BaseModel):
+    results: list[ForwardOk | ForwardFail]  # 요청 대상 차례 그대로

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../api/api.dart';
 import '../app_state.dart';
 import '../chat/chat_model.dart';
+import '../chat/chat_search.dart';
 import '../chat/chat_ui.dart';
 import '../theme/tokens.dart';
 import '../widgets/header.dart';
@@ -97,7 +98,7 @@ class _ChatPeopleScreenState extends State<ChatPeopleScreen> {
   Widget build(BuildContext context) {
     final q = _search.text.trim();
     final people = _people;
-    final shown = people == null ? const <Person>[] : people.where((p) => q.isEmpty || p.name.contains(q)).toList();
+    final shown = people == null ? const <Person>[] : people.where((p) => nameMatches(p.name, q)).toList(); // 초성 가능(OQ-961 — 전달 시트와 같은 함수)
     final members = _members;
     return Material(
       color: Ms.gray100,

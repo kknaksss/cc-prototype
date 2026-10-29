@@ -634,6 +634,25 @@ class ChatState extends ChangeNotifier {
     _onEdited(r);
   }
 
+  // 전달(r4 · §10.14) — 응답 Message 를 그 방 메모리에 넣는다(SSE chat_message 와 둘 중 먼저 · id 로 겹침 지움). 모르는 방(새로 만든 1:1)은
+  // chat_room SSE 가 오지만 늦을 수 있어 목록을 다시 읽는다. 오류(요청 자체)는 ApiError 그대로 — 시트가 토스트
+  Future<List<ForwardResult>> forward(ChatMessage m, List<ForwardTarget> targets) async {
+    final results = await api.chatForward(m.id, targets);
+    var unknown = false;
+    for (final r in results) {
+      final msg = r.message;
+      if (!r.ok || msg == null) continue;
+      meId ??= msg.sender.id;
+      if (room(msg.roomId) == null) unknown = true;
+      _onMessage(msg);
+    }
+    if (unknown) unawaited(refreshRooms());
+    return results;
+  }
+
+  // 전달 대상 「대화방」 묶음 = 내 방 목록(최근 순) − 비활성 상대 1:1(D9-64 · D9-42)
+  List<Room> get forwardRooms => [for (final r in rooms) if (!peerInactive(r)) r];
+
   // ─── 방 바꾸기(§6.2 #3 ~ #8) — 오류는 화면이 app.run 으로 토스트
   Future<Room> openDirect(int accountId) async {
     final r = await api.chatOpenDirect(accountId);

@@ -15,6 +15,7 @@ import '../chat/video_pick.dart' show videoTooLong;
 import '../theme/tokens.dart';
 import '../widgets/header.dart' show isTabletWidth;
 import '../widgets/ui.dart';
+import '../widgets/sheet.dart';
 
 sealed class AttachResult {
   const AttachResult();
@@ -47,7 +48,7 @@ Future<AttachResult?> openAttachSheet(BuildContext context, {required RecentMedi
       ),
     );
   }
-  return showModalBottomSheet<AttachResult>(
+  return showAppSheet<AttachResult>(
     context: context,
     backgroundColor: Ms.white,
     barrierColor: Ms.dim,

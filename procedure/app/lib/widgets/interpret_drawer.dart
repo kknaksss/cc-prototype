@@ -1,4 +1,4 @@
-// 통역 드로어(SPEC-004 §6.5) — 높이 92%. 열면 마이크 · WS 를 열고, 닫으면 대화를 기기에서 지운다(요약 한 줄만 남김)
+// 통역 드로어(SPEC-004 §6.5) — 높이 = 놓인 칸의 92%(상태 표시줄 아래 · D9-65) · 손잡이 누름 · 끌어 내림 = 닫힘. 열면 마이크 · WS 를 열고, 닫으면 대화를 기기에서 지운다(요약 한 줄만 남김)
 import 'package:flutter/material.dart';
 
 import '../app_state.dart';
@@ -169,14 +169,41 @@ class _InterpretDrawerState extends State<InterpretDrawer> {
     final n = _lines.values.where((l) => l.isFinal).length;
     final summary = n > 0 ? '마지막 통역 ${hmMs(DateTime.now().millisecondsSinceEpoch)} · $n문장' : null;
     setState(() => _shown = false);
-    await _teardown();
+    try {
+      await _teardown();
+    } catch (_) {} // 마이크 · 재생기 정리가 실패해도 드로어는 닫는다
     await Future<void>.delayed(const Duration(milliseconds: 220));
     widget.onClose(summary);
   }
 
+  // 손잡이를 끌어 내린 거리(D9-65) — 놓으면 많이 내렸거나 빨리 내렸으면 닫고, 아니면 제자리
+  double _drag = 0;
+  bool _dragging = false;
+
+  void _onDrag(DragUpdateDetails d) => setState(() {
+        _dragging = true;
+        _drag = (_drag + d.delta.dy).clamp(0.0, double.infinity);
+      });
+
+  void _onDragEnd(DragEndDetails d, double h) {
+    final close = _drag > h * 0.25 || (d.primaryVelocity ?? 0) > 700;
+    setState(() {
+      _dragging = false;
+      if (!close) _drag = 0;
+    });
+    if (close) _close();
+  }
+
+  // 높이 = 드로어가 실제 놓인 칸(탭바 위 본문 Stack) × 0.92 · 위는 상태 표시줄 아래(SPEC-004 §6.5 · SPEC-007 §10.15 · D9-65).
+  // 예전 = 화면 전체 높이 × 0.92 → 탭바 위 칸보다 커서 머리가 상태 표시줄 밑으로 밀리고 손잡이가 잘렸다(F9)
   @override
-  Widget build(BuildContext context) {
-    final h = MediaQuery.sizeOf(context).height;
+  Widget build(BuildContext context) => LayoutBuilder(builder: (context, c) {
+        final top = MediaQuery.paddingOf(context).top;
+        final h = (c.maxHeight * 0.92).clamp(0.0, c.maxHeight - top).toDouble();
+        return _drawer(h);
+      });
+
+  Widget _drawer(double h) {
     return Stack(children: [
       Positioned.fill(
         child: GestureDetector(
@@ -185,19 +212,28 @@ class _InterpretDrawerState extends State<InterpretDrawer> {
         ),
       ),
       AnimatedPositioned(
-        duration: const Duration(milliseconds: 300),
+        key: const Key('interpret-drawer'),
+        duration: _dragging ? Duration.zero : const Duration(milliseconds: 300),
         curve: const Cubic(0.2, 0.8, 0.2, 1),
         left: 0,
         right: 0,
-        bottom: _shown ? 0 : -h * 0.92,
-        height: h * 0.92,
+        bottom: _shown ? -_drag : -h,
+        height: h,
         child: Material(
           color: Ms.white,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
           clipBehavior: Clip.antiAlias,
           elevation: 12,
           child: Column(children: [
-            GestureDetector(onTap: _close, child: const SheetHandle()),
+            // 손잡이 — 누르면 닫힘(그대로) · 끌어 내리면 닫힘(D9-65) · 누를 자리를 넓게
+            GestureDetector(
+              key: const Key('interpret-handle'),
+              behavior: HitTestBehavior.opaque,
+              onTap: _close,
+              onVerticalDragUpdate: _onDrag,
+              onVerticalDragEnd: (d) => _onDragEnd(d, h),
+              child: const SizedBox(width: double.infinity, child: SheetHandle()),
+            ),
             _head(),
             if (_langOpen) _langChips(),
             Expanded(child: widget.tablet ? Row(children: [Expanded(child: _talk()), _sidePhrases()]) : _talk()),

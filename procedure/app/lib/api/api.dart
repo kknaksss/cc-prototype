@@ -371,39 +371,11 @@ class Api {
     return res.bodyBytes;
   }
 
-  // 동영상 공유용 받기(r3 U-4) — #17 을 Bearer 로 받아 파일로 흘려 쓴다(메모리에 다 올리지 않음) · 진행률 · cancelled 면 멈추고 파일 지움
-  Future<void> chatVideoDownload(int videoId, File out, {void Function(double)? onProgress, bool Function()? cancelled}) async {
-    final sink = out.openWrite();
-    var ok = false;
-    try {
-      final req = http.Request('GET', chatVideoUri(videoId))..headers.addAll({'Accept': 'video/mp4', ...authHeaders});
-      final res = await client.send(req).timeout(videoTimeout);
-      if (res.statusCode < 200 || res.statusCode >= 300) {
-        _decode(await http.Response.fromStream(res));
-      }
-      final total = res.contentLength ?? 0;
-      var got = 0;
-      await for (final b in res.stream.timeout(videoTimeout)) {
-        if (cancelled?.call() ?? false) throw const ApiError(0, 'cancelled', '');
-        sink.add(b);
-        got += b.length;
-        if (total > 0) onProgress?.call(got / total);
-      }
-      ok = true;
-    } on ApiError {
-      rethrow;
-    } on TimeoutException {
-      throw const ApiError(0, 'network', '서버 응답이 없어요');
-    } catch (_) {
-      throw const ApiError(0, 'network', '서버에 연결할 수 없어요');
-    } finally {
-      await sink.close();
-      if (!ok) {
-        try {
-          await out.delete();
-        } catch (_) {}
-      }
-    }
+  // 전달(r4 · #19) — 고른 곳마다 같은 내용의 새 메시지 · 결과 = 대상 차례 그대로(일부 실패도 200 · 대상별 결과)
+  Future<List<ForwardResult>> chatForward(int messageId, List<ForwardTarget> targets) async {
+    final d = await _post('/api/chat/messages/$messageId/forward', {'targets': [for (final t in targets) t.toJson()]});
+    final l = d is Map ? d['results'] : null;
+    return [for (final e in (l is List ? l : const [])) if (e is Map) ForwardResult.fromJson(e.cast<String, dynamic>())];
   }
 
   // 본문을 요청에 흘린다 — sink.addStream 은 받는 쪽(소켓)이 멈추면 원천(파일 읽기)도 멈춘다(되밀기) → 메모리에 다 쌓이지 않고,

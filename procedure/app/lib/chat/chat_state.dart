@@ -11,6 +11,7 @@ import '../api/api.dart';
 import '../widgets/ui.dart' show Toaster;
 import 'chat_model.dart';
 import 'chat_view.dart';
+import 'video_pick.dart' show deleteTemp, maxVideoBytes, videoTooLarge;
 
 // 띄우기 화면(문진 QR · 여권 스캔)이 떠 있는 수 — showQrScreen · showPassportScan 이 어느 길로 열렸든 올리고 내린다(D9-44 · A24).
 // 0 이 아니면 앱 안 배너를 만들지 않고, 그동안 온 것은 쌓아 두지 않는다(닫힌 뒤 한꺼번에 뜨지 않음 · OQ-933)
@@ -55,18 +56,21 @@ class RootRoutes extends NavigatorObserver {
   }
 }
 
-// 사진 메모리 캐시(사진 id → 바이트 · 최근 100장 · 디스크 없음 — D9-24 · OQ-925)
+// 사진 메모리 캐시(사진 id → 바이트 · 최근 100장 · 디스크 없음 — D9-24 · OQ-925). 동영상 썸네일도 같은 캐시 —
+// 키 = thumbKey(videoId)(사진 id 와 섞지 않게 · R-A8)
+Object thumbKey(int videoId) => (#videoThumb, videoId);
+
 class PhotoCache {
   final int capacity;
-  final LinkedHashMap<int, Uint8List> _m = LinkedHashMap();
+  final LinkedHashMap<Object, Uint8List> _m = LinkedHashMap();
   PhotoCache([this.capacity = 100]);
-  Uint8List? get(int id) {
+  Uint8List? get(Object id) {
     final v = _m.remove(id);
     if (v != null) _m[id] = v;
     return v;
   }
 
-  void put(int id, Uint8List bytes) {
+  void put(Object id, Uint8List bytes) {
     _m.remove(id);
     _m[id] = bytes;
     while (_m.length > capacity) {
@@ -74,7 +78,7 @@ class PhotoCache {
     }
   }
 
-  void remove(int id) => _m.remove(id);
+  void remove(Object id) => _m.remove(id);
   void clear() => _m.clear();
   int get length => _m.length;
 }
@@ -140,7 +144,9 @@ class ChatState extends ChangeNotifier {
   int? meId; // 내 계정 id(Room.members[].me · 내가 보낸 Message.sender)
   final Map<int, ChatThread> threads = {};
   final PhotoCache photos = PhotoCache();
-  final Map<int, Future<Uint8List?>> _photoLoads = {};
+  final Map<Object, Future<Uint8List?>> _photoLoads = {};
+  // 여러 개 보내기(r3 · §10.5) — 방마다 이번 묶음 (끝난 수, 전체) · 입력창 위 「N개 보내는 중 · k/N」(다 끝나면 없음)
+  final Map<int, ({int done, int total})> batches = {};
 
   // 푸시 누름 · 배너 [보기] → 채팅 탭이 그 방을 연다
   final ValueNotifier<int?> openRequest = ValueNotifier(null);
@@ -180,7 +186,11 @@ class ChatState extends ChangeNotifier {
 
   void _remove(int roomId) {
     rooms.removeWhere((r) => r.id == roomId);
+    for (final p in threads[roomId]?.pending ?? const <PendingMessage>[]) {
+      unawaited(deleteTemp(p.videoPath));
+    }
     threads.remove(roomId);
+    batches.remove(roomId);
     _readSent.remove(roomId);
     _recount();
     removed.value = null; // 같은 방이 두 번 빠져도(나감 → 다시 초대 → 나감) 알리게
@@ -359,6 +369,9 @@ class ChatState extends ChangeNotifier {
       case 'chat_message':
         final m = data['message'];
         if (m is Map) _onMessage(ChatMessage.fromJson(m.cast<String, dynamic>()));
+      case 'chat_message_edited':
+        final m = data['message'];
+        if (m is Map) _onEdited(ChatMessage.fromJson(m.cast<String, dynamic>()));
       case 'chat_message_deleted':
         final rid = data['roomId'], mid = data['messageId'];
         if (rid is num && mid is num) _onDeleted(rid.toInt(), mid.toInt(), data['updatedAt'] is String ? data['updatedAt'] as String : null);
@@ -426,11 +439,27 @@ class ChatState extends ChangeNotifier {
     if (m != null && (at != null && at.isNotEmpty || !m.deleted)) {
       t!.byId[messageId] = m.asDeleted(at != null && at.isNotEmpty ? at : m.updatedAt);
       if (m.photo != null) photos.remove(m.photo!.id);
+      if (m.video != null) photos.remove(thumbKey(m.video!.id));
     }
     final r = room(roomId);
     if (r != null && r.lastMessage?.id == messageId) r.lastMessage = r.lastMessage!.asDeleted();
     // 지운 것이 안 읽음이었는지는 back 만 안다 — 안 읽음이 있으면 목록을 다시 읽는다
     if (r != null && r.unread > 0) unawaited(refreshRooms());
+    notifyListeners();
+  }
+
+  // 고친 메시지(r3 · D9-55) — 같은 id 를 바꿔 끼우고, 방 미리보기면 미리보기 글만 바꾼다. 안 읽음 · 배지 · 배너 · 방 순서 그대로.
+  // updatedAt = 서버 값(SSE · PATCH 응답 — W-6)만 · 더 늦은 값이 이미 있으면 덮지 않는다(SSE 와 HTTP 응답이 어느 차례로 와도)
+  void _onEdited(ChatMessage m) {
+    final t = threads[m.roomId];
+    final cur = t?.byId[m.id];
+    if (t != null && cur != null) {
+      final a = DateTime.tryParse(cur.updatedAt), b = DateTime.tryParse(m.updatedAt);
+      if (cur.deleted || (a != null && b != null && b.isBefore(a))) return;
+      t.byId[m.id] = m;
+    }
+    final r = room(m.roomId);
+    if (r != null && r.lastMessage?.id == m.id && !m.deleted) r.lastMessage = r.lastMessage!.withText(m.text);
     notifyListeners();
   }
 
@@ -479,31 +508,112 @@ class ChatState extends ChangeNotifier {
     _deliver(p);
   }
 
-  // [다시 보내기] — 같은 clientId(두 번 가지 않음 · D9-16) · 사진이 올라갔으면 보내기만
+  // 여러 개(r3 · D9-50 · §10.5) — 고른 차례대로 보내는 중 말풍선 N개를 한꺼번에 붙이고, 하나씩 차례로(앞 것의 응답 뒤 다음 것 —
+  // id 차례 = 고른 차례 · OQ-946) 바꾸기 → 올리기 → 보내기. 바꾸지 못한 것(3분 · 90MB · 못 읽음)은 그 말풍선만 지우고 토스트 ·
+  // 올리기 · 보내기 실패는 그 말풍선만 실패로 두고 다음 것은 계속 보낸다
+  Future<void> sendMany(int roomId, List<MediaItem> items) async {
+    if (items.isEmpty) return;
+    final t = thread(roomId);
+    final list = [
+      for (final it in items)
+        PendingMessage(
+            clientId: newClientId(),
+            roomId: roomId,
+            kind: it.video ? MsgKind.video : MsgKind.photo,
+            photoBytes: it.preview,
+            width: it.width,
+            height: it.height,
+            preparing: true)
+          ..progress = 0
+    ];
+    t.pending.addAll(list);
+    final prev = batches[roomId];
+    batches[roomId] = (done: prev?.done ?? 0, total: (prev?.total ?? 0) + list.length);
+    notifyListeners();
+    for (var i = 0; i < list.length; i++) {
+      final p = list[i];
+      if (!threads.containsKey(roomId)) break; // 나감 · 로그아웃 — 남은 것은 버림
+      try {
+        final m = await items[i].prepare();
+        switch (m) {
+          case PreparedPhoto(:final jpeg, :final width, :final height):
+            p
+              ..photoBytes = jpeg
+              ..width = width
+              ..height = height;
+          case PreparedVideo(:final path, :final thumb, :final width, :final height, :final durationMs, :final bytes):
+            p
+              ..videoPath = path
+              ..photoBytes = thumb
+              ..width = width
+              ..height = height
+              ..durationMs = durationMs;
+            if (bytes > maxVideoBytes) throw const MediaRejected(videoTooLarge);
+        }
+        p.preparing = false;
+        if (!thread(roomId).pending.contains(p)) {
+          await deleteTemp(p.videoPath); // 그 사이 비워짐(로그아웃)
+          continue;
+        }
+        await _deliver(p);
+      } on MediaRejected catch (e) {
+        await _drop(p);
+        toaster.show(e.message);
+      } catch (_) {
+        await _drop(p);
+        toaster.show(p.isVideo ? '동영상을 보내지 못했어요' : '사진을 불러오지 못했어요');
+      } finally {
+        final b = batches[roomId];
+        if (b != null) {
+          final done = b.done + 1;
+          done >= b.total ? batches.remove(roomId) : batches[roomId] = (done: done, total: b.total);
+        }
+        notifyListeners();
+      }
+    }
+  }
+
+  // 보내는 중 말풍선을 지운다(바꾸기 실패 · 4xx · 401) — 변환 임시 파일도 같이(§9.2 「변환 파일」)
+  Future<void> _drop(PendingMessage p) async {
+    threads[p.roomId]?.pending.remove(p);
+    await deleteTemp(p.videoPath);
+    p.videoPath = null;
+    notifyListeners();
+  }
+
+  // [다시 보내기] — 같은 clientId(두 번 가지 않음 · D9-16) · 사진 · 동영상이 올라갔으면 보내기만
   void retry(PendingMessage p) => _deliver(p);
 
   Future<void> _deliver(PendingMessage p) async {
     p.state = SendState.sending;
     notifyListeners();
+    void progress(double v) {
+      p.progress = v;
+      notifyListeners();
+    }
+
     try {
       if (p.isPhoto && p.photoId == null) {
-        p.photoId = await api.chatUploadPhoto(p.roomId, p.photoBytes!, width: p.width, height: p.height, onProgress: (v) {
-          p.progress = v;
-          notifyListeners();
-        });
+        p.photoId = await api.chatUploadPhoto(p.roomId, p.photoBytes!, width: p.width, height: p.height, onProgress: progress);
         photos.put(p.photoId!, p.photoBytes!);
       }
-      final m = await api.chatSend(p.roomId, p.clientId, text: p.isPhoto ? null : p.text, photoId: p.photoId);
+      if (p.isVideo && p.videoId == null) {
+        p.videoId = await api.chatUploadVideo(p.roomId, p.videoPath!,
+            thumb: p.photoBytes!, width: p.width, height: p.height, durationMs: p.durationMs, onProgress: progress);
+        photos.put(thumbKey(p.videoId!), p.photoBytes!);
+      }
+      final m = await api.chatSend(p.roomId, p.clientId, text: p.isMedia ? null : p.text, photoId: p.photoId, videoId: p.videoId);
       meId = m.sender.id;
       _onMessage(m); // SSE 로 같은 clientId 가 와도 하나(pending 이 이미 빠짐 · id 로 바꿔 끼움)
       thread(p.roomId).pending.remove(p);
+      await deleteTemp(p.videoPath); // 보내기 끝 = 변환 파일 지움
+      p.videoPath = null;
     } on ApiError catch (e) {
-      final t = thread(p.roomId);
       if (e.status == 401) {
-        t.pending.remove(p);
+        await _drop(p);
         unawaited(onUnauthorized());
       } else if (e.status >= 400 && e.status < 500) {
-        t.pending.remove(p); // 다시 보내도 같은 답(나간 방 404 · 비활성 409 …) — 토스트 + 지움(OQ-934)
+        await _drop(p); // 다시 보내도 같은 답(나간 방 404 · 비활성 409 · 413 …) — 토스트 + 지움(OQ-934)
         toaster.show(e.message);
       } else {
         p.state = SendState.failed; // 네트워크 · 5xx · 시간 넘김
@@ -516,6 +626,12 @@ class ChatState extends ChangeNotifier {
   Future<void> delete(ChatMessage m) async {
     await api.chatDelete(m.id);
     _onDeleted(m.roomId, m.id, null); // 응답에 시각이 없다 — 서버 updatedAt 은 SSE 가 넣는다
+  }
+
+  // 수정(r3 · 내 텍스트만 · §10.7) — PATCH 응답 Message 로 바로 바꾼다(다른 기기 · 다른 사람은 SSE). 오류는 화면이 토스트
+  Future<void> edit(ChatMessage m, String text) async {
+    final r = await api.chatEdit(m.id, text);
+    _onEdited(r);
   }
 
   // ─── 방 바꾸기(§6.2 #3 ~ #8) — 오류는 화면이 app.run 으로 토스트
@@ -559,18 +675,23 @@ class ChatState extends ChangeNotifier {
   }
 
   // 사진 바이트(메모리 캐시 · 같은 사진 동시 요청은 하나로)
-  Future<Uint8List?> photo(int id) {
-    final hit = photos.get(id);
+  Future<Uint8List?> photo(int id) => _load(id, () => api.chatPhoto(id));
+
+  // 동영상 썸네일(#18 · 같은 캐시 · 키는 따로)
+  Future<Uint8List?> thumb(int videoId) => _load(thumbKey(videoId), () => api.chatVideoThumb(videoId));
+
+  Future<Uint8List?> _load(Object key, Future<Uint8List> Function() get) {
+    final hit = photos.get(key);
     if (hit != null) return Future.value(hit);
-    return _photoLoads.putIfAbsent(id, () async {
+    return _photoLoads.putIfAbsent(key, () async {
       try {
-        final b = await api.chatPhoto(id);
-        photos.put(id, b);
+        final b = await get();
+        photos.put(key, b);
         return b;
       } on ApiError {
         return null;
       } finally {
-        _photoLoads.remove(id);
+        _photoLoads.remove(key);
       }
     });
   }
@@ -578,6 +699,14 @@ class ChatState extends ChangeNotifier {
   // 로그아웃 · 계정 바뀜 — 메모리를 비운다(방 · 메시지 · 사진 · 실패 말풍선 · 열린 방 — §11 · D9-24 · D9-41).
   // 푸시로 들어온 열기 요청은 계정이 바뀌어도 남긴다(로그인 뒤 그 방 — §8 · 멤버 아니면 토스트) · 로그아웃만 keepOpen: false
   void clear({bool keepOpen = true}) {
+    // 동영상 변환 임시 파일(보내는 중 · 실패 말풍선이 쥔 것)을 지운다(§9.2 · §11)
+    for (final t in threads.values) {
+      for (final p in t.pending) {
+        unawaited(deleteTemp(p.videoPath));
+        p.videoPath = null;
+      }
+    }
+    batches.clear();
     rooms = [];
     roomsLoaded = false;
     meId = null;

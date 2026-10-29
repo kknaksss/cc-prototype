@@ -14,16 +14,18 @@ String roomTitle(Room r) => r.group ? r.name : (r.peer?.name ?? r.name);
 // 1:1 상대가 비활성(D9-14 · D9-42)
 bool peerInactive(Room r) => !r.group && r.peer != null && !r.peer!.active;
 
-// 미리보기 한 줄(§4.5) — (앞붙임, 본문, 사진 아이콘). 1:1 상대 = 본문 · 내 것 = 「나: 」 · 그룹 = 「<보낸 사람>: 」 ·
-// 사진 = 아이콘 + 「사진」 · 지운 것 = 「삭제된 메시지예요」(1:1 은 앞붙임 없음) · 시스템 줄 = 문구 그대로
-({String prefix, String body, bool photo}) previewOf(Room r) {
+// 미리보기 한 줄(§4.5) — (앞붙임, 본문, 첨부 아이콘 종류). 1:1 상대 = 본문 · 내 것 = 「나: 」 · 그룹 = 「<보낸 사람>: 」 ·
+// 사진 = 아이콘 + 「사진」 · 동영상 = 아이콘 + 「동영상」(r3) · 지운 것 = 「삭제된 메시지예요」(1:1 은 앞붙임 없음) · 시스템 줄 = 문구 그대로 ·
+// 고친 글 = 고친 본문(「수정됨」 없음 · OQ-951)
+({String prefix, String body, MsgKind? media}) previewOf(Room r) {
   final p = r.lastMessage;
-  if (p == null) return (prefix: '', body: '', photo: false);
-  if (p.kind == MsgKind.system) return (prefix: '', body: p.text ?? '', photo: false);
+  if (p == null) return (prefix: '', body: '', media: null);
+  if (p.kind == MsgKind.system) return (prefix: '', body: p.text ?? '', media: null);
   final who = p.mine ? '나: ' : (r.group ? '${p.senderName}: ' : '');
-  if (p.deleted) return (prefix: r.group ? who : '', body: '삭제된 메시지예요', photo: false);
-  if (p.kind == MsgKind.photo) return (prefix: who, body: '사진', photo: true);
-  return (prefix: who, body: (p.text ?? '').replaceAll('\n', ' '), photo: false);
+  if (p.deleted) return (prefix: r.group ? who : '', body: '삭제된 메시지예요', media: null);
+  if (p.kind == MsgKind.photo) return (prefix: who, body: '사진', media: MsgKind.photo);
+  if (p.kind == MsgKind.video) return (prefix: who, body: '동영상', media: MsgKind.video);
+  return (prefix: who, body: (p.text ?? '').replaceAll('\n', ' '), media: null);
 }
 
 // ─── 시각 글자(KST) — 받은 ISO 가 어느 오프셋이든 KST 벽시계로 읽는다
@@ -111,6 +113,31 @@ String newClientId() {
 // 배너 · 푸시 본문 앞부분(§8 · §10.12) — 앞 100자 · 넘으면 「…」 · 줄바꿈은 공백
 String bodyHead(ChatMessage m) {
   if (m.kind == MsgKind.photo) return '사진';
+  if (m.kind == MsgKind.video) return '동영상';
   final t = (m.text ?? '').replaceAll('\n', ' ');
   return t.runes.length > 100 ? '${String.fromCharCodes(t.runes.take(100))}…' : t;
+}
+
+// 동영상 길이 「m:ss」(말풍선 · 최근 줄 · 재생 막대 — OQ-953)
+String durationText(int ms) {
+  final s = (ms / 1000).round();
+  return '${s ~/ 60}:${_two(s % 60)}';
+}
+
+// 텍스트 안 링크(D9-46 · r3 U-3) — `http://` · `https://` 뒤 ASCII 주소 문자만(한글 · 공백에서 끊음) ·
+// 끝 문장부호 `.,)!?'"` 는 링크에서 뺀다(「」』 는 ASCII 밖이라 이미 끊김). `www.` · 메일은 글자 그대로
+final _link = RegExp(r"https?://[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+");
+const _trailing = '.,)!?\'"';
+
+List<({int start, int end})> findLinks(String text) {
+  final out = <({int start, int end})>[];
+  for (final m in _link.allMatches(text)) {
+    var end = m.end;
+    while (end > m.start && _trailing.contains(text[end - 1])) {
+      end--;
+    }
+    final scheme = text.startsWith('https', m.start) ? 8 : 7;
+    if (end - m.start > scheme) out.add((start: m.start, end: end));
+  }
+  return out;
 }

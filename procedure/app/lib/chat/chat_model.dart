@@ -30,10 +30,11 @@ class Member {
       Member(_int(j['id']) ?? 0, '${j['name'] ?? ''}', roleOf(j['role']), active: j['active'] != false, me: j['me'] == true);
 }
 
-enum MsgKind { text, photo, system }
+enum MsgKind { text, photo, video, system }
 
 MsgKind msgKindOf(Object? v) => switch (v) {
       'photo' => MsgKind.photo,
+      'video' => MsgKind.video,
       'system' => MsgKind.system,
       _ => MsgKind.text,
     };
@@ -80,6 +81,16 @@ class Preview {
       );
   Preview asDeleted() =>
       Preview(id: id, senderId: senderId, senderName: senderName, mine: mine, kind: kind, deleted: true, createdAt: createdAt);
+  // 고친 글(chat_message_edited) — 미리보기 글만 바꾼다(「수정됨」 표시 없음 · OQ-951)
+  Preview withText(String? t) => Preview(
+      id: id,
+      senderId: senderId,
+      senderName: senderName,
+      mine: mine,
+      kind: kind,
+      text: t == null ? null : String.fromCharCodes(t.runes.take(100)),
+      deleted: deleted,
+      createdAt: createdAt);
 }
 
 // 방(보는 계정 기준 — name · muted · unread · members[].me 가 계정마다 다름)
@@ -147,7 +158,16 @@ class PhotoRef {
   const PhotoRef(this.id, this.width, this.height);
 }
 
-// 메시지 — {id, roomId, clientId|null, sender, kind, text|null, photo|null, createdAt, updatedAt, deletedAt|null}
+// 동영상(r3) — 썸네일 = GET videos/{id}/thumbnail · 본 파일 = GET videos/{id}(Bearer · 끊어 받기)
+class VideoRef {
+  final int id;
+  final int width;
+  final int height;
+  final int durationMs;
+  const VideoRef(this.id, this.width, this.height, this.durationMs);
+}
+
+// 메시지 — {id, roomId, clientId|null, sender, kind, text|null, photo|null, video|null, createdAt, updatedAt, editedAt|null, deletedAt|null}
 class ChatMessage {
   final int id;
   final int roomId;
@@ -156,8 +176,10 @@ class ChatMessage {
   final MsgKind kind;
   final String? text;
   final PhotoRef? photo;
+  final VideoRef? video;
   final String createdAt;
   final String updatedAt;
+  final String? editedAt;
   final String? deletedAt;
   const ChatMessage({
     required this.id,
@@ -167,12 +189,15 @@ class ChatMessage {
     required this.kind,
     this.text,
     this.photo,
+    this.video,
     required this.createdAt,
     required this.updatedAt,
+    this.editedAt,
     this.deletedAt,
   });
   factory ChatMessage.fromJson(Json j) {
     final p = j['photo'];
+    final v = j['video'];
     return ChatMessage(
       id: _int(j['id']) ?? 0,
       roomId: _int(j['roomId']) ?? 0,
@@ -181,33 +206,89 @@ class ChatMessage {
       kind: msgKindOf(j['kind']),
       text: _str(j['text']),
       photo: p is Map ? PhotoRef(_int(p['id']) ?? 0, _int(p['width']) ?? 0, _int(p['height']) ?? 0) : null,
+      video: v is Map ? VideoRef(_int(v['id']) ?? 0, _int(v['width']) ?? 0, _int(v['height']) ?? 0, _int(v['durationMs']) ?? 0) : null,
       createdAt: '${j['createdAt'] ?? ''}',
       updatedAt: '${j['updatedAt'] ?? j['createdAt'] ?? ''}',
+      editedAt: _str(j['editedAt']),
       deletedAt: _str(j['deletedAt']),
     );
   }
   bool get deleted => deletedAt != null;
-  // SSE chat_message_deleted — 지운 자리(text · photo 없음 · updatedAt 올림)
+  bool get edited => editedAt != null;
+  // SSE chat_message_deleted — 지운 자리(text · photo · video 없음 · updatedAt 올림)
   ChatMessage asDeleted(String at) => ChatMessage(
-      id: id, roomId: roomId, clientId: clientId, sender: sender, kind: kind, createdAt: createdAt, updatedAt: at, deletedAt: at);
+      id: id, roomId: roomId, clientId: clientId, sender: sender, kind: kind, createdAt: createdAt, updatedAt: at, editedAt: editedAt, deletedAt: at);
 }
 
-// 보내는 중 · 실패 말풍선(§10.5) — 기기에 저장하지 않는다(D9-41). 사진은 고른 바이트를 그대로 보여 준다
+// 보내는 중 · 실패 말풍선(§10.5) — 기기에 저장하지 않는다(D9-41). 사진은 고른 바이트를 그대로 보여 준다.
+// 동영상(r3) = 변환 뒤 파일은 앱 임시 폴더에만(100MB 근처를 메모리에 들지 않게 · 다시 보내기가 그 파일을 씀 · §9.2)
 enum SendState { sending, failed }
 
 class PendingMessage {
   final String clientId;
   final int roomId;
+  final MsgKind kind; // text · photo · video
   final String? text;
-  final Uint8List? photoBytes;
-  final int width, height;
+  Uint8List? photoBytes; // 사진 = 올릴 JPEG · 동영상 = 썸네일 JPEG(변환 전엔 최근 줄 미리보기 · 없으면 null)
+  int width, height;
   int? photoId; // 올리기 끝남 — 다시 보내기는 보내기만(§10.6)
+  String? videoPath; // 변환 뒤 MP4(임시 파일)
+  int durationMs;
+  int? videoId;
+  bool preparing; // 바꾸는 중(사진 JPEG · 동영상 MP4)
   SendState state = SendState.sending;
-  double? progress; // 사진 올리는 중 0 ~ 1
+  double? progress; // 올리는 중 0 ~ 1
   final DateTime at;
-  PendingMessage({required this.clientId, required this.roomId, this.text, this.photoBytes, this.width = 0, this.height = 0, DateTime? at})
-      : at = at ?? DateTime.now();
-  bool get isPhoto => photoBytes != null;
+  PendingMessage(
+      {required this.clientId,
+      required this.roomId,
+      MsgKind? kind,
+      this.text,
+      this.photoBytes,
+      this.width = 0,
+      this.height = 0,
+      this.durationMs = 0,
+      this.preparing = false,
+      DateTime? at})
+      : kind = kind ?? (photoBytes != null ? MsgKind.photo : MsgKind.text),
+        at = at ?? DateTime.now();
+  bool get isPhoto => kind == MsgKind.photo;
+  bool get isVideo => kind == MsgKind.video;
+  bool get isMedia => kind != MsgKind.text;
+  bool get uploaded => isPhoto ? photoId != null : (isVideo ? videoId != null : true);
+}
+
+// 보낼 것 하나(r3 · [+] 시트 최근 줄 · 갤러리 · §10.6) — prepare = 사진 → JPEG 2048 · 동영상 → H.264 MP4 1280 + 썸네일(§9).
+// 화면이 피커 · 변환기로 만들고, 시험은 prepare 를 가짜로 끼운다
+sealed class PreparedMedia {
+  const PreparedMedia();
+}
+
+class PreparedPhoto extends PreparedMedia {
+  final Uint8List jpeg;
+  final int width, height;
+  const PreparedPhoto(this.jpeg, this.width, this.height);
+}
+
+class PreparedVideo extends PreparedMedia {
+  final String path; // 변환 뒤 MP4(임시)
+  final Uint8List thumb; // 0초 JPEG
+  final int width, height, durationMs, bytes;
+  const PreparedVideo(this.path, this.thumb, this.width, this.height, this.durationMs, this.bytes);
+}
+
+// 그 하나만 빼고 나머지는 보낸다(D9-52 · OQ-949) — message = 토스트 문구
+class MediaRejected implements Exception {
+  final String message;
+  const MediaRejected(this.message);
+}
+
+class MediaItem {
+  final bool video;
+  final Uint8List? preview; // 보내는 중 말풍선 자리(최근 줄 썸네일)
+  final int width, height; // 미리 아는 크기(없으면 0)
+  final Future<PreparedMedia> Function() prepare;
+  const MediaItem({required this.video, required this.prepare, this.preview, this.width = 0, this.height = 0});
 }
 
 // 앞에서 받은 채팅 · SSE 로 만든 앱 안 배너 한 개(§10.12)
@@ -215,7 +296,7 @@ class ChatBanner {
   final int roomId;
   final int messageId;
   final String title; // 1:1 = 보낸 사람 · 그룹 = 「보낸 사람 · 방 이름」
-  final String body; // 본문 앞부분 · 사진 = 「사진」
+  final String body; // 본문 앞부분 · 사진 = 「사진」 · 동영상 = 「동영상」
   const ChatBanner(this.roomId, this.messageId, this.title, this.body);
   String get line => '$title — $body';
 }

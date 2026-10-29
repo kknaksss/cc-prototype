@@ -209,17 +209,21 @@ CREATE TABLE IF NOT EXISTS chat_member (                 -- 행은 지우지 않
 CREATE INDEX IF NOT EXISTS chat_member_account ON chat_member (account_id);
 CREATE TABLE IF NOT EXISTS chat_message (                -- 지우지 않는다(소프트 삭제 · 보존 기간 없음)
     id INTEGER PRIMARY KEY, room_id INTEGER NOT NULL REFERENCES chat_room(id), account_id INTEGER NOT NULL,
-    kind TEXT NOT NULL,                                  -- text | photo | system
-    body TEXT, photo_id INTEGER, client_id TEXT,
+    kind TEXT NOT NULL,                                  -- text | photo | video | system
+    body TEXT, photo_id INTEGER, client_id TEXT,         -- photo_id = 첨부(사진 · 동영상) id
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL, deleted_at TEXT,
+    edited_at TEXT,                                      -- 마지막으로 고친 시각(r3) · null = 고친 적 없음
     UNIQUE (account_id, client_id)
 );
 CREATE INDEX IF NOT EXISTS chat_message_room ON chat_message (room_id, id);
 CREATE INDEX IF NOT EXISTS chat_message_room_updated ON chat_message (room_id, updated_at);
-CREATE TABLE IF NOT EXISTS chat_photo (                  -- 파일 = PROC_PHOTO_DIR/chat/<file_name> · 썸네일 없음
+CREATE TABLE IF NOT EXISTS chat_photo (                  -- 첨부(사진 · 동영상) · 파일 = PROC_PHOTO_DIR/chat/<file_name>
     id INTEGER PRIMARY KEY, room_id INTEGER NOT NULL, account_id INTEGER NOT NULL, message_id INTEGER,
     file_name TEXT NOT NULL, bytes INTEGER NOT NULL, sha256 TEXT NOT NULL, width INTEGER, height INTEGER,
-    created_at TEXT NOT NULL, deleted_at TEXT
+    created_at TEXT NOT NULL, deleted_at TEXT,
+    kind TEXT NOT NULL DEFAULT 'photo',                  -- photo | video(r3)
+    duration_ms INTEGER,                                 -- 동영상만 · 앱이 잰 길이
+    thumb_file_name TEXT                                 -- 동영상만 · 앱이 만든 썸네일 JPEG(같은 폴더)
 );
 """
 
@@ -234,7 +238,10 @@ MIGRATIONS = (("procedure", "room_kos_id", "TEXT"), ("visit", "open_task_seqs", 
               ("questionnaire_history", "device_id", "INTEGER"), ("questionnaire_history", "display_request_id", "INTEGER"),
               ("identity_check", "photo_id", "INTEGER"),
               ("display_request", "qr_nonce", "TEXT"),  # 고객 문진 웹 토큰(SPEC-006 §3.1) — 스캔 · 옛 행 null
-              ("push_log", "chat_message_id", "INTEGER"))  # 직원 채팅(SPEC-007 §3.5)
+              ("push_log", "chat_message_id", "INTEGER"),  # 직원 채팅(SPEC-007 §3.5)
+              # 직원 채팅 r3(SPEC-007 §3 — 수정 · 동영상) — 1판 채팅 DB(compose 볼륨)에 열만 더한다
+              ("chat_message", "edited_at", "TEXT"), ("chat_photo", "kind", "TEXT NOT NULL DEFAULT 'photo'"),
+              ("chat_photo", "duration_ms", "INTEGER"), ("chat_photo", "thumb_file_name", "TEXT"))
 
 
 class Database:

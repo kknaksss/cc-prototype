@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:procedure_app/api/api.dart';
 import 'package:procedure_app/app_state.dart';
+import 'package:procedure_app/chat/photo_pick.dart';
 import 'package:procedure_app/model/account.dart';
 
 final jsonHeaders = {'content-type': 'application/json; charset=utf-8'};
@@ -60,8 +61,10 @@ Map<String, dynamic> msgJ(int id, int roomId,
         String kind = 'text',
         String? text = '안녕하세요',
         Map<String, dynamic>? photo,
+        Map<String, dynamic>? video,
         String at = t0,
         String? updatedAt,
+        String? editedAt,
         String? deletedAt,
         String? clientId}) =>
     {
@@ -72,8 +75,10 @@ Map<String, dynamic> msgJ(int id, int roomId,
       'kind': kind,
       'text': deletedAt != null ? null : text,
       'photo': deletedAt != null ? null : photo,
+      'video': deletedAt != null ? null : video,
       'createdAt': at,
-      'updatedAt': updatedAt ?? deletedAt ?? at,
+      'updatedAt': updatedAt ?? deletedAt ?? editedAt ?? at,
+      'editedAt': editedAt,
       'deletedAt': deletedAt,
     };
 
@@ -84,20 +89,27 @@ class FakeChat {
   final Map<int, List<Map<String, dynamic>>> messages = {};
   List<Map<String, dynamic>> people = [docM, coordM, consM];
   int nextId = 900;
+  int nextPhotoId = 501;
+  int nextVideoId = 601;
   // 경로 → 응답(있으면 먼저)
   final Map<String, http.Response Function(http.Request)> override = {};
   Uint8List photoBytes = Uint8List.fromList(const [0xFF, 0xD8, 0xFF, 0xD9]);
+  Uint8List videoBytes = Uint8List.fromList(List.filled(4096, 3));
+  String editedAt = '2026-10-29T15:00:00.456+09:00';
 
   List<http.Request> where(String method, String path) => [for (final r in reqs) if (r.method == method && r.url.path == path) r];
 
   http.Response _j(Object o, [int status = 200]) => http.Response(jsonEncode(o), status, headers: jsonHeaders);
 
   Future<void>? delay; // 있으면 응답 전에 기다린다(보내는 중 보기)
+  final Map<String, Future<void>> slow = {}; // 경로 → 응답 전에 기다릴 것(GET 포함)
   late final http.Client client = MockClient((req) async {
     reqs.add(req);
     final d = delay;
     if (d != null && req.method == 'POST') await d;
     final p = req.url.path;
+    final hold = slow[p];
+    if (hold != null) await hold;
     final o = override[p] ?? override['${req.method} $p'];
     if (o != null) return o(req);
     final seg = p.split('/');
@@ -120,7 +132,28 @@ class FakeChat {
       rooms.add(r);
       return _j(r);
     }
-    if (p == '/api/chat/photos' && req.method == 'POST') return _j({'photoId': 501});
+    if (p == '/api/chat/photos' && req.method == 'POST') return _j({'photoId': nextPhotoId++});
+    if (p == '/api/chat/videos' && req.method == 'POST') return _j({'videoId': nextVideoId++});
+    if (seg.length == 5 && p.startsWith('/api/chat/videos/') && req.method == 'GET') {
+      return http.Response.bytes(videoBytes, 200, headers: {'content-type': 'video/mp4'});
+    }
+    // 수정(r3 #15) — 서버 값 editedAt · updatedAt
+    if (seg.length == 5 && p.startsWith('/api/chat/messages/') && req.method == 'PATCH') {
+      final id = int.parse(seg[4]);
+      final text = (jsonDecode(req.body) as Map)['text'] as String;
+      for (final l in messages.values) {
+        for (var i = 0; i < l.length; i++) {
+          if (l[i]['id'] == id) {
+            l[i] = {...l[i], 'text': text, 'editedAt': editedAt, 'updatedAt': editedAt};
+            return _j(l[i]);
+          }
+        }
+      }
+      return _j({'error': {'code': 'chat_message_not_found', 'message': '메시지를 찾을 수 없어요'}}, 404);
+    }
+    if (seg.length == 6 && p.startsWith('/api/chat/videos/') && seg[5] == 'thumbnail') {
+      return http.Response.bytes(photoBytes, 200, headers: {'content-type': 'image/jpeg'});
+    }
     if (seg.length == 5 && p.startsWith('/api/chat/photos/')) return http.Response.bytes(photoBytes, 200, headers: {'content-type': 'image/jpeg'});
     if (seg.length == 6 && seg[5] == 'messages') {
       final rid = int.parse(seg[4]);
@@ -140,7 +173,9 @@ class FakeChat {
       }
       final b = jsonDecode(req.body) as Map;
       final m = msgJ(nextId++, rid, sender: 1, senderName: '가간호', role: 'nurse', text: b['text'] as String?,
-          kind: b['photoId'] != null ? 'photo' : 'text', photo: b['photoId'] != null ? {'id': b['photoId'], 'width': 400, 'height': 300} : null,
+          kind: b['photoId'] != null ? 'photo' : (b['videoId'] != null ? 'video' : 'text'),
+          photo: b['photoId'] != null ? {'id': b['photoId'], 'width': 400, 'height': 300} : null,
+          video: b['videoId'] != null ? {'id': b['videoId'], 'width': 720, 'height': 1280, 'durationMs': 12000} : null,
           clientId: b['clientId'] as String?);
       list.add(m);
       messages[rid] = list;
@@ -191,4 +226,25 @@ Future<void> teardown(WidgetTester t, AppState app) async {
   await t.pumpWidget(const SizedBox());
   await t.pump(const Duration(seconds: 5));
   app.stream.dispose();
+}
+
+// 가짜 사진 보관함(최근 줄) — photo_manager 대신
+class FakeRecent extends RecentMedia {
+  MediaAccess state = MediaAccess.full;
+  List<RecentItem> items = [];
+  Uint8List thumbBytes = Uint8List.fromList(const [0xFF, 0xD8, 0xFF, 0xD9]);
+  Map<String, String> files = {}; // id → 파일 경로
+  int settings = 0, limitedPicks = 0;
+  @override
+  Future<MediaAccess> access() async => state;
+  @override
+  Future<List<RecentItem>> page(int page, {int size = 60}) async => items.skip(page * size).take(size).toList();
+  @override
+  Future<Uint8List?> thumb(RecentItem item) async => thumbBytes;
+  @override
+  Future<String?> file(RecentItem item) async => files[item.id];
+  @override
+  Future<void> pickMoreLimited() async => limitedPicks++;
+  @override
+  Future<void> openSettings() async => settings++;
 }

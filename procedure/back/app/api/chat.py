@@ -1,11 +1,11 @@
-"""직원 채팅 API 14(SPEC-007 §6.2) — Bearer · 다섯 역할 모두 · 가짜 판에서도 됨(require_real_board 안 씀).
+"""직원 채팅 API 18(SPEC-007 §6.2 · 1판 14 + r3 4) — Bearer · 다섯 역할 모두 · 가짜 판에서도 됨(require_real_board 안 씀).
 
 경로는 모두 `async def` — SSE(`send_to_account` 의 `asyncio.Queue`) · 푸시(`PushService._dispatch` 의 이벤트 루프)가
 루프 스레드에서 돌아야 한다. 동기 `def` 면 스레드풀에서 돌아 푸시가 「이벤트 루프 없음」으로 0 이 된다(§6.1).
 """
 
 from fastapi import APIRouter, Query, Request
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 from starlette.datastructures import UploadFile
 
 from app.api.deps import Actor, Ctr
@@ -14,6 +14,7 @@ from app.domain.errors import BadRequest
 from app.schemas.actions import OkResponse
 from app.schemas.chat import (
     DirectRequest,
+    EditRequest,
     GroupRequest,
     MembersRequest,
     Message,
@@ -27,8 +28,9 @@ from app.schemas.chat import (
     Room,
     RoomList,
     SendRequest,
+    VideoUploadResponse,
 )
-from app.service.chat import PAGE
+from app.service.chat import PAGE, VIDEO_MAX_BYTES
 from app.service.id_photo import MAX_BYTES
 from app.service.passport_scan import PhotoTooLarge
 
@@ -93,7 +95,13 @@ async def messages(room_id: int, c: Ctr, actor: Actor, before: int | None = None
 
 @router.post("/rooms/{room_id}/messages", response_model=Message)
 async def post_message(room_id: int, body: SendRequest, c: Ctr, actor: Actor) -> Message:
-    return Message.model_validate(c.chat.post(actor, room_id, body.clientId, body.text, body.photoId))
+    return Message.model_validate(c.chat.post(actor, room_id, body.clientId, body.text, body.photoId, body.videoId))
+
+
+@router.patch("/messages/{message_id}", response_model=Message)
+async def edit_message(message_id: int, body: EditRequest, c: Ctr, actor: Actor) -> Message:
+    """수정(r3) — 내 글만 · SSE chat_message_edited · 푸시 없음 · 응답 Message 의 updatedAt 은 서버 값(앱이 since 에 써도 됨)."""
+    return Message.model_validate(c.chat.edit(actor, message_id, body.text))
 
 
 @router.delete("/messages/{message_id}", response_model=OkResponse)
@@ -131,4 +139,45 @@ async def open_photo(photo_id: int, c: Ctr, actor: Actor) -> Response:
     """열기 — Bearer 헤더만(쿠키 · `?token=` 없음) · 캐시 안 함 · 열람 로그 없음(D9-23) · 앱은 메모리에만 둔다."""
     # 법적 검토 필요: 직원 채팅 — 고객 정보가 메시지 · 사진으로 오갈 수 있음(보존 기간 없음 · 열람 로그 없음 · 잠금 화면에 본문 앞부분)  # noqa: E501
     return Response(c.chat.photo(actor, photo_id), media_type="image/jpeg",
+                    headers={"Cache-Control": "no-store", "Content-Disposition": "inline"})
+
+
+@router.post("/videos", response_model=VideoUploadResponse)
+async def upload_video(request: Request, c: Ctr, actor: Actor) -> VideoUploadResponse:
+    """multipart(r3 · §9.2) — roomId · video(MP4 ≤ 90MB) · thumb(JPEG ≤ 5MB) · width · height · durationMs(1 ~ 180000).
+
+    Content-Length 로 먼저 거른다(앱은 청크 없이 싣는다 · D-58). 전역 spool 한도(api/photos.py)는 그대로 — video 칸은 그보다
+    커서 Starlette 임시 파일로 흐르고, 서비스가 그 파일을 조각 복사한다. 끝나면 form.close() 로 임시 파일을 지운다.
+    """
+    size = request.headers.get("content-length")
+    if size and size.isdigit() and int(size) > VIDEO_MAX_BYTES + MAX_BYTES + FORM_OVERHEAD:
+        raise PhotoTooLarge("chat_video_too_large", "동영상이 90MB 를 넘어요")
+    form = await request.form(max_files=2, max_fields=10)
+    try:
+        video, thumb = form.get("video"), form.get("thumb")
+        if not isinstance(video, UploadFile) or not isinstance(thumb, UploadFile):
+            raise BadRequest("invalid_request", "video · thumb: 파일이어야 해요")
+        room_id = _int(form.get("roomId"), "roomId")
+        width, height = _int(form.get("width"), "width"), _int(form.get("height"), "height")
+        duration_ms = _int(form.get("durationMs"), "durationMs")
+        data = await thumb.read(MAX_BYTES + 1)
+        video_id = c.chat.upload_video(actor, room_id, video.file, data, width, height, duration_ms)
+    finally:
+        await form.close()
+    return VideoUploadResponse(videoId=video_id)
+
+
+@router.get("/videos/{video_id}")
+async def open_video(video_id: int, c: Ctr, actor: Actor) -> FileResponse:
+    """열기(r3) — Bearer 헤더만 · Range 끊어 받기(206 · 416 · Accept-Ranges = Starlette FileResponse) · 캐시 안 함 ·
+    열람 로그 없음(D9-23 · D9-53) · 앱 재생기는 디스크에 남기지 않는다."""
+    # 법적 검토 필요: 직원 채팅 — 고객 정보가 메시지 · 사진으로 오갈 수 있음(보존 기간 없음 · 열람 로그 없음 · 잠금 화면에 본문 앞부분)  # noqa: E501
+    return FileResponse(c.chat.video_path(actor, video_id), media_type="video/mp4",
+                        headers={"Cache-Control": "no-store", "Content-Disposition": "inline"})
+
+
+@router.get("/videos/{video_id}/thumbnail")
+async def open_video_thumb(video_id: int, c: Ctr, actor: Actor) -> Response:
+    """썸네일(r3) — 앱이 만들어 올린 JPEG · 본 파일과 같은 권한."""
+    return Response(c.chat.video_thumb(actor, video_id), media_type="image/jpeg",
                     headers={"Cache-Control": "no-store", "Content-Disposition": "inline"})

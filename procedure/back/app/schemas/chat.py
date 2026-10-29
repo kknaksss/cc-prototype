@@ -31,8 +31,8 @@ class Preview(BaseModel):
     senderId: int
     senderName: str
     mine: bool
-    kind: Literal["text", "photo", "system"]
-    text: str | None  # 앞 100자 · 사진 · 지운 것 = null
+    kind: Literal["text", "photo", "video", "system"]
+    text: str | None  # 앞 100자 · 사진 · 동영상 · 지운 것 = null
     deleted: bool
     createdAt: str
 
@@ -66,16 +66,27 @@ class PhotoRef(BaseModel):
     height: int | None
 
 
+class VideoRef(BaseModel):
+    """썸네일 = GET videos/{id}/thumbnail · 본 파일 = GET videos/{id}(r3)."""
+
+    id: int
+    width: int | None
+    height: int | None
+    durationMs: int | None
+
+
 class Message(BaseModel):
     id: int
     roomId: int
     clientId: str | None
     sender: Sender
-    kind: Literal["text", "photo", "system"]
+    kind: Literal["text", "photo", "video", "system"]
     text: str | None
     photo: PhotoRef | None
+    video: VideoRef | None
     createdAt: str
     updatedAt: str
+    editedAt: str | None
     deletedAt: str | None
 
 
@@ -117,11 +128,18 @@ class MessageList(BaseModel):
 
 
 class SendRequest(_Req):
-    """text 또는 photoId — 둘 다 · 둘 다 없음 · 길이는 서비스가 본다(2000 코드 포인트 = chat_message_too_long · §5)."""
+    """text · photoId · videoId 중 하나 — 둘 이상 · 아무것도 없음 · 길이는 서비스가 본다(2000 코드 포인트 · §5)."""
 
     clientId: str = Field(min_length=8, max_length=64)
     text: str | None = None
     photoId: StrictInt | None = None
+    videoId: StrictInt | None = None
+
+
+class EditRequest(_Req):
+    """수정(r3 · §6.2 #15) — 길이 · 공백은 서비스가 본다(chat_message_too_long · chat_message_empty)."""
+
+    text: str
 
 
 class ReadRequest(_Req):
@@ -137,3 +155,7 @@ class ReadResponse(BaseModel):
 
 class PhotoUploadResponse(BaseModel):
     photoId: int
+
+
+class VideoUploadResponse(BaseModel):
+    videoId: int

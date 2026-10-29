@@ -11,6 +11,7 @@ import 'package:procedure_app/app_state.dart';
 import 'package:procedure_app/chat/chat_state.dart';
 import 'package:procedure_app/chat/chat_view.dart';
 import 'package:procedure_app/chat/photo_pick.dart';
+import 'package:procedure_app/screens/chat_attach_sheet.dart';
 import 'package:procedure_app/screens/chat_list_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -102,7 +103,7 @@ void main() {
       expect(find.byKey(const Key('chat-inactive')), findsOneWidget);
       expect(find.text('비활성 계정이에요'), findsOneWidget);
       expect(find.byKey(const Key('chat-input')), findsNothing);
-      expect(find.byKey(const Key('chat-photo')), findsNothing);
+      expect(find.byKey(const Key('chat-plus')), findsNothing);
       expect(find.text('인수인계 메모'), findsOneWidget);
       await teardown(t, app);
     });
@@ -273,7 +274,7 @@ void main() {
   });
 
   group('삭제(S9a · S9b)', () {
-    testWidgets('내 메시지 길게 → [삭제] → 확인 → DELETE · 「삭제된 메시지예요」 · 남의 것은 메뉴 없음 · SSE 삭제', (t) async {
+    testWidgets('내 메시지 길게 → [삭제] → 확인 → DELETE · 「삭제된 메시지예요」 · 남의 것 = [삭제] 없음(r3 D9-54 · FAIL-1) · SSE 삭제', (t) async {
       final f = FakeChat()
         ..rooms = [roomJ(1, last: preview(2))]
         ..messages[1] = [msgJ(1, 1, text: '상대 글'), msgJ(2, 1, sender: 1, senderName: '가간호', text: '내 글')];
@@ -281,6 +282,9 @@ void main() {
       await t.longPress(find.text('상대 글'));
       await t.pumpAndSettle();
       expect(find.byKey(const Key('chat-delete-menu')), findsNothing);
+      expect(find.byKey(const Key('chat-menu-copy')), findsOneWidget);
+      await t.tapAt(const Offset(5, 5)); // 막 = 닫기
+      await t.pumpAndSettle();
       await t.longPress(find.text('내 글'));
       await t.pumpAndSettle();
       await t.tap(find.byKey(const Key('chat-delete-menu')));
@@ -329,12 +333,26 @@ void main() {
     });
   });
 
-  group('사진(S7a · S7b · S8)', () {
+  group('사진(S7b · S8 · r3 [+] 시트 카메라 칸)', () {
     late PhotoPicker saved;
-    setUp(() => saved = pickChatPhoto);
-    tearDown(() => pickChatPhoto = saved);
+    late RecentMedia savedRecent;
+    setUp(() {
+      saved = pickChatPhoto;
+      savedRecent = recentMedia;
+      recentMedia = FakeRecent();
+    });
+    tearDown(() {
+      pickChatPhoto = saved;
+      recentMedia = savedRecent;
+    });
 
-    testWidgets('[사진] → 시트(카메라 · 앨범 · 1장씩) → 올리기(multipart · roomId · width · height · JPEG) → 보내기 {clientId, photoId}', (t) async {
+    // [+] 시트를 닫는다(카메라 칸은 시트를 닫지 않음 — r3 W-8)
+    Future<void> closeSheet(WidgetTester t) async {
+      Navigator.of(t.element(find.byType(ChatAttachSheet))).pop();
+      await t.pumpAndSettle();
+    }
+
+    testWidgets('[+] → 카메라 칸 → 올리기(multipart · roomId · width · height · JPEG) → 보내기 {clientId, photoId}', (t) async {
       final picked = <PhotoSource>[];
       pickChatPhoto = (src) async {
         picked.add(src);
@@ -344,21 +362,22 @@ void main() {
         ..photoBytes = png
         ..rooms = [roomJ(1)];
       final app = await openRoom(t, f, '나의사');
-      await t.tap(find.byKey(const Key('chat-photo')));
+      await t.tap(find.byKey(const Key('chat-plus')));
       await t.pumpAndSettle();
-      expect(find.text('사진 보내기'), findsOneWidget);
-      expect(find.text('1장씩'), findsOneWidget);
-      expect(find.text('카메라로 찍기'), findsOneWidget);
+      expect(find.text('최근 사진'), findsOneWidget);
+      expect(find.byKey(const Key('attach-camera')), findsOneWidget);
       final gate = Completer<void>();
       f.delay = gate.future; // 올리기 응답을 붙잡아 진행률을 본다(S7b)
-      await t.tap(find.text('앨범에서 고르기'));
-      await t.pumpAndSettle();
+      await t.tap(find.byKey(const Key('attach-camera')));
+      await t.pump();
       await settle(t, 4);
+      expect(find.byType(ChatAttachSheet), findsOneWidget); // 시트는 그대로
+      await closeSheet(t);
       expect(find.text('올리는 중 100%'), findsOneWidget); // 본문 바이트를 다 흘림 · 서버 처리 대기(§10.13 #5)
       expect(find.byType(LinearProgressIndicator), findsOneWidget);
       gate.complete();
       await settle(t, 10);
-      expect(picked, [PhotoSource.album]);
+      expect(picked, [PhotoSource.camera]);
       final up = f.where('POST', '/api/chat/photos').single;
       expect(up.headers['Content-Type'], startsWith('multipart/form-data; boundary='));
       expect(up.headers['Authorization'], 'Bearer t');
@@ -392,11 +411,12 @@ void main() {
         ..rooms = [roomJ(1)];
       final app = await openRoom(t, f, '나의사');
       f.override['POST /api/chat/rooms/1/messages'] = (_) => http.Response('{}', 502);
-      await t.tap(find.byKey(const Key('chat-photo')));
+      await t.tap(find.byKey(const Key('chat-plus')));
       await t.pumpAndSettle();
-      await t.tap(find.text('카메라로 찍기'));
-      await t.pumpAndSettle();
+      await t.tap(find.byKey(const Key('attach-camera')));
+      await t.pump();
       await settle(t, 10);
+      await closeSheet(t);
       expect(find.text('보내지 못했어요'), findsOneWidget);
       f.override.remove('POST /api/chat/rooms/1/messages');
       await t.tap(find.text('다시 보내기'));
@@ -410,10 +430,11 @@ void main() {
       pickChatPhoto = (_) async => throw const PhotoDenied();
       final f = FakeChat()..rooms = [roomJ(1)];
       final app = await openRoom(t, f, '나의사');
-      await t.tap(find.byKey(const Key('chat-photo')));
+      await t.tap(find.byKey(const Key('chat-plus')));
       await t.pumpAndSettle();
-      await t.tap(find.text('앨범에서 고르기'));
-      await t.pumpAndSettle();
+      await t.tap(find.byKey(const Key('attach-camera')));
+      await t.pump();
+      await settle(t, 2);
       expect(app.toaster.text, '설정에서 카메라(사진) 권한을 켜 주세요');
       await teardown(t, app);
     });

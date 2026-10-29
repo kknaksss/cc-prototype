@@ -1,11 +1,19 @@
 // 대화(SPEC-007 §10.4 ~ §10.7 · DS:S4 ~ S9b) — 폰 = 채팅 탭 스택의 상세 화면(DetailHeader 「‹ 채팅」 · 탭바 유지) ·
-// 아이패드 = 오른쪽 칸(뒤로 없음 · D9-38). 말풍선 · 날짜 구분선 · 시스템 줄 · 그룹 보낸 사람 이름 · 보내는 중 · 실패 · 사진 · 길게 눌러 삭제
+// 아이패드 = 오른쪽 칸(뒤로 없음 · D9-38). 말풍선 · 날짜 구분선 · 시스템 줄 · 그룹 보낸 사람 이름 · 보내는 중 · 실패 · 사진 · 길게 눌러 삭제.
+// r3: 넓은 입력창(D9-47) · [+] 시트(D9-48) · 여러 개(D9-50) · 동영상 말풍선 · 재생(D9-53) · 링크(D9-46) · 5메뉴 · 수정 · 공유(D9-54 ~ D9-56)
+import 'dart:async';
+import 'dart:io' show File;
 import 'dart:typed_data';
 
+import 'package:flutter/gestures.dart' show TapGestureRecognizer;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
+
+import '../api/api.dart' show ApiError;
 
 import '../app_state.dart';
 import '../chat/chat_model.dart';
+import '../chat/chat_share.dart';
 import '../chat/chat_state.dart';
 import '../chat/chat_ui.dart';
 import '../chat/chat_view.dart';
@@ -14,8 +22,10 @@ import '../theme/tokens.dart';
 import '../view/view.dart' show BadgeVariant;
 import '../widgets/header.dart';
 import '../widgets/ui.dart';
+import 'chat_attach_sheet.dart';
 import 'chat_info_screen.dart';
 import 'chat_photo_screen.dart';
+import 'chat_video_screen.dart';
 
 const chatRoomRouteName = 'chat-room';
 
@@ -76,6 +86,7 @@ class _ChatRoomViewState extends State<ChatRoomView> with RouteAware {
     if (!widget.pane) _chat.clearTop(_id);
     _chat.viewClosed(_id);
     _text.dispose();
+    _focus.dispose();
     _scroll.dispose();
     super.dispose();
   }
@@ -102,6 +113,8 @@ class _ChatRoomViewState extends State<ChatRoomView> with RouteAware {
 
   // 새 메시지 — 맨 아래 근처면 따라 내려가고(reverse 목록은 0 에 붙어 있음), 위를 보고 있으면 자리를 지킨다(OQ-927)
   void _onChat() {
+    final e = _editing;
+    if (e != null && (_chat.thread(_id).byId[e.id]?.deleted ?? false)) _cancelEdit(); // 고치던 글이 지워짐(다른 기기)
     final last = _chat.thread(_id).lastId;
     if (last == _shownLast || !_scroll.hasClients) {
       _shownLast = last;
@@ -129,19 +142,43 @@ class _ChatRoomViewState extends State<ChatRoomView> with RouteAware {
     if (_scroll.hasClients) _scroll.jumpTo(0);
   }
 
-  Future<void> _photo() async {
-    final src = await pickPhotoSource(context);
-    if (src == null) return;
+  // [+] → 시트(최근 줄 · 카메라 칸 · 「사진」 메뉴 — §10.6)
+  Future<void> _plus() async {
+    final r = await openAttachSheet(context, media: recentMedia, onCamera: _camera);
+    if (!mounted) return;
+    switch (r) {
+      case AttachSend(:final items, :final thumbs):
+        await _sendMany([for (final it in items) recentMedia.item(it, preview: thumbs[it.id])]); // 사본은 항목마다 지움(W-3)
+      case AttachGallery():
+        try {
+          await _sendMany(await pickChatGallery());
+        } on PhotoDenied {
+          _app.toaster.show('설정에서 카메라(사진) 권한을 켜 주세요');
+        } catch (_) {
+          _app.toaster.show(photoFailed);
+        }
+      case null:
+    }
+  }
+
+  // 카메라 칸 — 사진만 · 찍은 한 장을 바로 보냄(시트는 그대로 · 고른 것은 고른 채 — r3 W-8)
+  Future<void> _camera() async {
     try {
-      final p = await pickChatPhoto(src);
+      final p = await pickChatPhoto(PhotoSource.camera);
       if (p == null) return;
       _chat.sendPhoto(_id, p.jpeg, p.width, p.height);
       if (_scroll.hasClients) _scroll.jumpTo(0);
     } on PhotoDenied {
       _app.toaster.show('설정에서 카메라(사진) 권한을 켜 주세요');
     } catch (_) {
-      _app.toaster.show('사진을 불러오지 못했어요');
+      _app.toaster.show(photoFailed);
     }
+  }
+
+  Future<void> _sendMany(List<MediaItem> items) async {
+    if (items.isEmpty) return;
+    if (_scroll.hasClients) _scroll.jumpTo(0);
+    await _chat.sendMany(_id, items);
   }
 
   Future<void> _info(Room r) async {
@@ -221,9 +258,14 @@ class _ChatRoomViewState extends State<ChatRoomView> with RouteAware {
         PendingItem(:final p) => _pendingRow(p),
       };
 
-  Widget _messageRow(ChatMessage m, bool mine, String? name) {
-    final time = Text(bubbleTime(m.createdAt), style: Typo.caption400.copyWith(color: Ms.gray600));
-    final bubble = m.deleted ? _deletedBubble(mine) : (m.photo != null ? _photoBubble(m) : _textBubble(m.text ?? '', mine));
+  // 말풍선 줄(시각 · 「수정됨」 · 그룹 이름) — onDim = 길게 누르기 막 위 복사본(글자 흰색)
+  Widget _content(ChatMessage m, bool mine, String? name, {bool onDim = false}) {
+    final grey = Typo.caption400.copyWith(color: onDim ? Ms.white : Ms.gray600);
+    final time = Row(mainAxisSize: MainAxisSize.min, children: [
+      if (m.edited && !m.deleted) ...[Text('수정됨', key: const Key('chat-edited'), style: grey), const SizedBox(width: 3)],
+      Text(bubbleTime(m.createdAt), style: grey),
+    ]);
+    final bubble = _bubbleOf(m, mine);
     final row = Row(
       mainAxisAlignment: mine ? MainAxisAlignment.end : MainAxisAlignment.start,
       crossAxisAlignment: CrossAxisAlignment.end,
@@ -231,24 +273,36 @@ class _ChatRoomViewState extends State<ChatRoomView> with RouteAware {
           ? [time, const SizedBox(width: 6), Flexible(child: bubble)]
           : [Flexible(child: bubble), const SizedBox(width: 6), time],
     );
-    final canDelete = mine && !m.deleted;
-    final content = Column(crossAxisAlignment: mine ? CrossAxisAlignment.end : CrossAxisAlignment.start, children: [
+    return Column(crossAxisAlignment: mine ? CrossAxisAlignment.end : CrossAxisAlignment.start, children: [
       if (name != null)
         Padding(
           padding: const EdgeInsets.only(left: 2, bottom: 3),
-          child: Text(m.sender.active ? name : '$name $inactiveMark', style: Typo.caption600.copyWith(color: Ms.gray700)),
+          child: Text(m.sender.active ? name : '$name $inactiveMark', style: Typo.caption600.copyWith(color: onDim ? Ms.white : Ms.gray700)),
         ),
       ConstrainedBox(constraints: const BoxConstraints(maxWidth: _bubbleMax + 50), child: row),
     ]);
+  }
+
+  Widget _messageRow(ChatMessage m, bool mine, String? name) {
+    final r = _chat.room(_id);
+    final menu = chatMenuOf(m, mine: mine, peerInactive: r != null && peerInactive(r));
     return Align(
       alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
       child: Builder(
         builder: (ctx) => GestureDetector(
-          onLongPress: canDelete ? () => _deleteMenu(ctx, m) : null,
-          child: content,
+          key: Key('chat-msg-${m.id}'),
+          onLongPress: menu.isEmpty ? null : () => _menu(ctx, m, mine, name, menu),
+          child: _content(m, mine, name),
         ),
       ),
     );
+  }
+
+  Widget _bubbleOf(ChatMessage m, bool mine) {
+    if (m.deleted) return _deletedBubble(mine);
+    if (m.video != null) return _videoBubble(m);
+    if (m.photo != null) return _photoBubble(m);
+    return _textBubble(m.text ?? '', mine);
   }
 
   Widget _textBubble(String text, bool mine) => Container(
@@ -260,7 +314,7 @@ class _ChatRoomViewState extends State<ChatRoomView> with RouteAware {
               ? const BorderRadius.only(topLeft: Radius.circular(14), topRight: Radius.circular(14), bottomLeft: Radius.circular(14), bottomRight: Radius.circular(4))
               : const BorderRadius.only(topLeft: Radius.circular(14), topRight: Radius.circular(14), bottomLeft: Radius.circular(4), bottomRight: Radius.circular(14)),
         ),
-        child: Text(text, style: Typo.body400.copyWith(color: mine ? Ms.white : Ms.gray800)),
+        child: ChatLinkText(text, mine: mine),
       );
 
   Widget _deletedBubble(bool mine) => Container(
@@ -287,20 +341,44 @@ class _ChatRoomViewState extends State<ChatRoomView> with RouteAware {
     );
   }
 
-  // 보내는 중 · 실패(DS:S6 · S7b)
+  // 동영상 말풍선(r3 · D9-53) — 사진과 같은 자리 · 크기 규칙 · 썸네일 + 가운데 ▶ + 오른쪽 아래 「m:ss」 · 누르면 재생 화면
+  Widget _videoBubble(ChatMessage m) {
+    final v = m.video!;
+    return GestureDetector(
+      key: Key('chat-video-${v.id}'),
+      onTap: () => openVideoPlayer(context, m),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: SizedBox.fromSize(
+          size: _photoSize(v.width, v.height),
+          child: Stack(fit: StackFit.expand, children: [
+            ChatPhoto(photoId: v.id, video: true, fit: BoxFit.cover),
+            VideoMarks(durationMs: v.durationMs),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  // 보내는 중 · 실패(DS:S6 · S7b) — 동영상 = 썸네일 + 「바꾸는 중…」 → 「올리는 중 N%」(r3)
   Widget _pendingRow(PendingMessage p) {
     final failed = p.state == SendState.failed;
     final Widget bubble;
-    if (p.isPhoto) {
+    if (p.isMedia) {
       final size = _photoSize(p.width, p.height);
       final pct = ((p.progress ?? 0) * 100).round();
+      final bytes = p.photoBytes;
       bubble = ClipRRect(
         borderRadius: BorderRadius.circular(14),
         child: SizedBox.fromSize(
           size: size,
           child: Stack(fit: StackFit.expand, children: [
-            Image.memory(p.photoBytes!, fit: BoxFit.cover, gaplessPlayback: true),
-            if (!failed && p.photoId == null)
+            if (bytes != null)
+              Image.memory(bytes, fit: BoxFit.cover, gaplessPlayback: true)
+            else
+              Container(color: Ms.gray300, child: Icon(p.isVideo ? Icons.videocam_outlined : Icons.image_outlined, size: 36, color: Ms.gray600)),
+            if (p.isVideo && !p.preparing) VideoMarks(durationMs: p.durationMs),
+            if (!failed && !p.uploaded)
               Positioned(
                 left: 0,
                 right: 0,
@@ -309,9 +387,9 @@ class _ChatRoomViewState extends State<ChatRoomView> with RouteAware {
                   color: const Color(0xCCFFFFFF),
                   padding: const EdgeInsets.fromLTRB(10, 6, 10, 8),
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-                    Text('올리는 중 $pct%', style: Typo.caption600.copyWith(color: Ms.gray800)),
+                    Text(p.isVideo && p.preparing ? '바꾸는 중…' : '올리는 중 $pct%', style: Typo.caption600.copyWith(color: Ms.gray800)),
                     const SizedBox(height: 4),
-                    MsProgress(p.progress ?? 0),
+                    MsProgress(p.preparing ? 0 : p.progress ?? 0),
                   ]),
                 ),
               ),
@@ -327,11 +405,11 @@ class _ChatRoomViewState extends State<ChatRoomView> with RouteAware {
         child: Row(mainAxisAlignment: MainAxisAlignment.end, crossAxisAlignment: CrossAxisAlignment.end, children: [
           if (failed)
             Semantics(label: '보내기 실패', child: const Icon(Icons.error_outline_rounded, size: 18, color: Ms.red))
-          else if (!p.isPhoto || p.photoId != null)
+          else if (p.uploaded)
             Text('보내는 중…', style: Typo.caption400.copyWith(color: Ms.gray600)),
           const SizedBox(width: 6),
-          // 흐림 = 보내는 중(올리는 중인 사진은 진행률이 보이게 그대로)
-          Flexible(child: Opacity(opacity: failed || (p.isPhoto && p.photoId == null) ? 1 : 0.55, child: bubble)),
+          // 흐림 = 보내는 중(올리는 중인 사진 · 동영상은 진행률이 보이게 그대로)
+          Flexible(child: Opacity(opacity: failed || !p.uploaded ? 1 : 0.55, child: bubble)),
         ]),
       ),
       if (failed)
@@ -346,78 +424,251 @@ class _ChatRoomViewState extends State<ChatRoomView> with RouteAware {
     ]);
   }
 
-  // 내 메시지 길게 누름(DS:S9a) — 그 말풍선만 떠오르고(뒤 흐림) 아래 [삭제] 하나 → 확인(DS:S9b)
-  Future<void> _deleteMenu(BuildContext bubbleContext, ChatMessage m) async {
+  // 길게 누르기(DS:S9a · r3 D9-54) — 그 말풍선만 떠오르고(뒤 흐림 · 1판 막) 아래 메뉴 카드(내 것 = 오른쪽 · 상대 = 왼쪽 맞춤 ·
+  // 아래 자리가 모자라면 말풍선 위). 줄 = chatMenuOf(§10.7 표)
+  Future<void> _menu(BuildContext bubbleContext, ChatMessage m, bool mine, String? name, List<ChatMenu> items) async {
     final box = bubbleContext.findRenderObject() as RenderBox?;
     if (box == null) return;
     final rect = box.localToGlobal(Offset.zero) & box.size;
-    final del = await showGeneralDialog<bool>(
+    final pick = await showGeneralDialog<ChatMenu>(
       context: context,
       barrierDismissible: true,
       barrierLabel: '닫기',
       barrierColor: Ms.dim,
       transitionDuration: const Duration(milliseconds: 120),
-      pageBuilder: (ctx, _, _) => Material(type: MaterialType.transparency, child: Stack(children: [
-        Positioned.fromRect(rect: rect, child: IgnorePointer(child: _bubbleCopy(m))),
-        Positioned(
-          top: rect.bottom + 8,
-          right: MediaQuery.sizeOf(ctx).width - rect.right,
-          child: SizedBox(
-            width: 180,
-            child: MsCard(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              shadow: true,
-              child: InkWell(
-                key: const Key('chat-delete-menu'),
-                onTap: () => Navigator.of(ctx).pop(true),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                  child: Text('삭제', style: Typo.body600.copyWith(color: Ms.red)),
+      pageBuilder: (ctx, _, _) {
+        final screen = MediaQuery.sizeOf(ctx);
+        final h = items.length * 44.0 + 8;
+        final below = rect.bottom + 8 + h <= screen.height - MediaQuery.paddingOf(ctx).bottom - 8;
+        return Material(
+          type: MaterialType.transparency,
+          child: Stack(children: [
+            Positioned.fromRect(rect: rect, child: IgnorePointer(child: _content(m, mine, name, onDim: true))),
+            Positioned(
+              top: below ? rect.bottom + 8 : null,
+              bottom: below ? null : screen.height - rect.top + 8,
+              left: mine ? null : rect.left,
+              right: mine ? screen.width - rect.right : null,
+              child: SizedBox(
+                width: 180,
+                child: MsCard(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  shadow: true,
+                  child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                    for (final it in items)
+                      InkWell(
+                        key: Key(it == ChatMenu.delete ? 'chat-delete-menu' : 'chat-menu-${it.name}'),
+                        onTap: () => Navigator.of(ctx).pop(it),
+                        child: SizedBox(
+                          height: 44,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            child: Row(children: [
+                              Icon(it.icon, size: 18, color: it == ChatMenu.delete ? Ms.red : Ms.gray700),
+                              const SizedBox(width: 10),
+                              Text(it.label, style: Typo.body600.copyWith(color: it == ChatMenu.delete ? Ms.red : Ms.gray800)),
+                            ]),
+                          ),
+                        ),
+                      ),
+                  ]),
                 ),
               ),
             ),
-          ),
-        ),
-      ])),
+          ]),
+        );
+      },
     );
-    if (del != true || !mounted) return;
-    final ok = await confirmChat(context, title: '메시지를 삭제할까요?', body: '대화방의 모두에게 「삭제된 메시지예요」로 보여요. 되돌릴 수 없어요.', ok: '삭제');
-    if (ok) await _app.run(() => _chat.delete(m));
+    if (pick == null || !mounted) return;
+    switch (pick) {
+      case ChatMenu.copy:
+        await Clipboard.setData(ClipboardData(text: m.text ?? ''));
+        _app.toaster.show('복사했어요');
+      case ChatMenu.select:
+        await showSelectCopy(context, m.text ?? '');
+      case ChatMenu.share:
+        await _share(m, rect);
+      case ChatMenu.edit:
+        _startEdit(m);
+      case ChatMenu.delete:
+        final ok = await confirmChat(context, title: '메시지를 삭제할까요?', body: '대화방의 모두에게 「삭제된 메시지예요」로 보여요. 되돌릴 수 없어요.', ok: '삭제');
+        if (ok) await _app.run(() => _chat.delete(m));
+    }
   }
 
-  Widget _bubbleCopy(ChatMessage m) => Material(
-        type: MaterialType.transparency,
-        child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-          Row(mainAxisAlignment: MainAxisAlignment.end, crossAxisAlignment: CrossAxisAlignment.end, children: [
-            Text(bubbleTime(m.createdAt), style: Typo.caption400.copyWith(color: Ms.white)),
-            const SizedBox(width: 6),
-            Flexible(child: m.photo != null ? _photoBubble(m) : _textBubble(m.text ?? '', true)),
-          ]),
-        ]),
-      );
+  // 공유(D9-56) — 텍스트 = 본문 · 사진 = 메모리의 JPEG → 임시 파일 · 동영상 = #17 을 Bearer 로 임시 파일에 흘려 받기(진행률 · [취소]) → 시트
+  Future<void> _share(ChatMessage m, Rect origin) async {
+    try {
+      if (m.video != null) return await _shareVideo(m.video!.id, origin);
+      if (m.photo != null) {
+        final b = await _chat.photo(m.photo!.id);
+        if (b == null) throw const ApiError(0, 'error', shareFailed);
+        return await sharePhoto(b, origin: origin);
+      }
+      await shareText(m.text ?? '', origin: origin);
+    } catch (_) {
+      _app.toaster.show(shareFailed);
+    }
+  }
 
-  // 입력줄(DS:S4) — [사진] · 입력(여러 줄 · 코드 포인트 2000) · [보내기](비면 꺼짐)
-  Widget _inputBar() => Container(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-        decoration: const BoxDecoration(color: Ms.white, border: Border(top: BorderSide(color: Ms.gray200))),
-        child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-          MsButton('사진', key: const Key('chat-photo'), icon: Icons.photo_camera_outlined, variant: BtnVariant.outlined, color: BtnColor.gray, onPressed: _photo),
-          const SizedBox(width: 8),
-          Expanded(
-            child: MsInput(
+  Future<void> _shareVideo(int videoId, Rect origin) async {
+    final dir = await shareDir();
+    if (!mounted) return dir.delete(recursive: true).then((_) {});
+    final file = File('${dir.path}/video.mp4');
+    final progress = ValueNotifier<double>(0);
+    var cancelled = false;
+    var open = true;
+    final nav = Navigator.of(context, rootNavigator: true);
+    unawaited(showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      barrierColor: Ms.dim,
+      builder: (ctx) => Dialog(
+        backgroundColor: Ms.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 320),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 12),
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              Text('준비하는 중…', key: const Key('chat-share-preparing'), style: Typo.body600),
+              const SizedBox(height: 12),
+              ValueListenableBuilder<double>(valueListenable: progress, builder: (_, v, _) => MsProgress(v)),
+              const SizedBox(height: 10),
+              Align(
+                alignment: Alignment.centerRight,
+                child: MsButton('취소', key: const Key('chat-share-cancel'), variant: BtnVariant.outlined, color: BtnColor.gray, size: BtnSize.sm, onPressed: () {
+                  cancelled = true;
+                  open = false;
+                  Navigator.of(ctx).pop();
+                }),
+              ),
+            ]),
+          ),
+        ),
+      ),
+    ).whenComplete(() => open = false));
+    try {
+      await _app.api.chatVideoDownload(videoId, file, onProgress: (v) => progress.value = v, cancelled: () => cancelled);
+      if (open) nav.pop();
+      open = false;
+      if (cancelled) return;
+      await shareFileIn(dir, file.path, 'video/mp4', origin: origin);
+    } catch (_) {
+      if (open) nav.pop();
+      open = false;
+      if (!cancelled) _app.toaster.show(shareFailed);
+    } finally {
+      progress.dispose();
+      try {
+        if (await dir.exists()) await dir.delete(recursive: true);
+      } catch (_) {}
+    }
+  }
+
+  // ─── 수정 모드(r3 · D9-55 · §10.4) — 입력창 위 「메시지 수정」 줄 + [✕] · 입력칸 = 원문 · [+] 꺼짐 · [전송] 자리 = [저장]
+  ChatMessage? _editing;
+  final _focus = FocusNode();
+
+  void _startEdit(ChatMessage m) {
+    setState(() {
+      _editing = m;
+      _text.text = m.text ?? '';
+      _text.selection = TextSelection.collapsed(offset: _text.text.length);
+    });
+    _focus.requestFocus();
+  }
+
+  void _cancelEdit() {
+    setState(() {
+      _editing = null;
+      _text.clear();
+    });
+  }
+
+  bool get _canSave {
+    final t = _text.text.trim();
+    return t.isNotEmpty && t != (_editing?.text ?? '').trim();
+  }
+
+  Future<void> _saveEdit() async {
+    final m = _editing;
+    if (m == null || !_canSave) return;
+    try {
+      await _chat.edit(m, _text.text.trim());
+      if (mounted && _editing?.id == m.id) _cancelEdit();
+    } on ApiError catch (e) {
+      if (e.status == 401) return unawaited(_chat.onUnauthorized());
+      _app.toaster.show(e.status >= 400 && e.status < 500 ? e.message : '고치지 못했어요'); // 원문이 남아 있다 — 실패 말풍선 없음
+    }
+  }
+
+  // 여러 개 보내는 중(r3 · §10.5) — 입력창 위 얇은 줄 「N개 보내는 중 · k/N」(2개 이상 · 다 끝나면 없음)
+  Widget _batchLine() {
+    final b = _chat.batches[_id];
+    if (b == null || b.total < 2) return const SizedBox.shrink();
+    final k = (b.done + 1).clamp(1, b.total);
+    return Container(
+      key: const Key('chat-batch'),
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
+      color: Ms.primary100,
+      child: Text('${b.total}개 보내는 중 · $k/${b.total}', style: Typo.caption600.copyWith(color: Ms.primary)),
+    );
+  }
+
+  // 입력창(D9-47 · 카톡 PC 꼴 · r3) — 위 = 넓은 입력칸(처음 2줄 · 6줄까지 늘고 그 뒤 칸 안 스크롤 · 코드 포인트 2000 · 줄바꿈 키 = 줄바꿈) /
+  // 아래 줄 = 왼쪽 [+] · 오른쪽 [전송](비면 꺼짐). 이모지 · 파일 아이콘 없음
+  Widget _inputBar() => Column(mainAxisSize: MainAxisSize.min, children: [
+        _batchLine(),
+        Container(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
+          decoration: const BoxDecoration(color: Ms.white, border: Border(top: BorderSide(color: Ms.gray200))),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            if (_editing != null)
+              Padding(
+                key: const Key('chat-edit-bar'),
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(children: [
+                  const Icon(Icons.edit_outlined, size: 16, color: Ms.primary),
+                  const SizedBox(width: 6),
+                  Expanded(child: Text('메시지 수정', style: Typo.caption600.copyWith(color: Ms.primary))),
+                  IconButton(
+                    key: const Key('chat-edit-cancel'),
+                    tooltip: '수정 취소',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: _cancelEdit,
+                    icon: const Icon(Icons.close_rounded, size: 20, color: Ms.gray700),
+                  ),
+                ]),
+              ),
+            MsInput(
               fieldKey: const Key('chat-input'),
               controller: _text,
+              focusNode: _focus,
               hint: '메시지 입력',
-              minLines: 1,
-              maxLines: 5,
+              minLines: 2,
+              maxLines: 6,
               formatters: const [RuneLimitFormatter()],
               onChanged: (_) => setState(() {}),
             ),
-          ),
-          const SizedBox(width: 8),
-          MsButton('보내기', key: const Key('chat-send'), onPressed: _text.text.trim().isEmpty ? null : _send),
-        ]),
-      );
+            const SizedBox(height: 6),
+            Row(children: [
+              IconButton(
+                key: const Key('chat-plus'),
+                tooltip: '첨부',
+                onPressed: _editing != null ? null : _plus,
+                icon: Icon(Icons.add_rounded, size: 26, color: _editing != null ? Ms.gray400 : Ms.gray700),
+              ),
+              const Spacer(),
+              if (_editing != null)
+                MsButton('저장', key: const Key('chat-save'), onPressed: _canSave ? _saveEdit : null)
+              else
+                MsButton('전송', key: const Key('chat-send'), onPressed: _text.text.trim().isEmpty ? null : _send),
+            ]),
+          ]),
+        ),
+      ]);
 
   // 비활성 상대 1:1(D9-42) — 입력줄 대신 안내 한 줄
   Widget _inactiveLine() => Container(
@@ -471,10 +722,12 @@ List<ChatItem> buildChatItems(List<ChatMessage> messages, List<PendingMessage> p
 }
 
 // 채팅 사진 — Bearer 로 받아 메모리 캐시 · Image.memory(Image.network 안 씀 · D9-24). 받는 동안 회색 자리
+// 동영상 썸네일도 같은 꼴(video: true · #18 · 같은 캐시 · 키는 따로)
 class ChatPhoto extends StatefulWidget {
   final int photoId;
+  final bool video;
   final BoxFit fit;
-  const ChatPhoto({super.key, required this.photoId, this.fit = BoxFit.cover});
+  const ChatPhoto({super.key, required this.photoId, this.video = false, this.fit = BoxFit.cover});
   @override
   State<ChatPhoto> createState() => _ChatPhotoState();
 }
@@ -487,9 +740,9 @@ class _ChatPhotoState extends State<ChatPhoto> {
   void initState() {
     super.initState();
     final chat = AppScope.read(context).chat;
-    _bytes = chat.photos.get(widget.photoId);
+    _bytes = chat.photos.get(widget.video ? thumbKey(widget.photoId) : widget.photoId);
     if (_bytes == null) {
-      chat.photo(widget.photoId).then((b) {
+      (widget.video ? chat.thumb(widget.photoId) : chat.photo(widget.photoId)).then((b) {
         if (mounted) setState(() => b == null ? _failed = true : _bytes = b);
       });
     }
@@ -504,5 +757,170 @@ class _ChatPhotoState extends State<ChatPhoto> {
       alignment: Alignment.center,
       child: Icon(_failed ? Icons.broken_image_outlined : Icons.image_outlined, size: 40, color: Ms.gray600),
     );
+  }
+}
+
+// 동영상 표시(D9-53 · OQ-953) — 가운데 ▶(흰 원 · 반투명 검정 바탕) + 오른쪽 아래 길이 「m:ss」(검정 알약 · 흰 글자)
+class VideoMarks extends StatelessWidget {
+  final int durationMs;
+  const VideoMarks({super.key, required this.durationMs});
+  @override
+  Widget build(BuildContext context) => Stack(fit: StackFit.expand, children: [
+        Center(
+          child: Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(shape: BoxShape.circle, color: const Color(0x66000000), border: Border.all(color: Ms.white, width: 2)),
+            child: const Icon(Icons.play_arrow_rounded, color: Ms.white, size: 28),
+          ),
+        ),
+        Positioned(
+          right: 8,
+          bottom: 8,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+            decoration: BoxDecoration(color: const Color(0xB3000000), borderRadius: BorderRadius.circular(10)),
+            child: Text(durationText(durationMs), key: const Key('chat-video-duration'), style: Typo.caption600.copyWith(color: Ms.white)),
+          ),
+        ),
+      ]);
+}
+
+// 길게 누르기 메뉴 줄(§10.7 표 · D9-54 · r3 처분 FAIL-2) — 차례 = 복사 · 선택 복사 · 공유 · 수정 · 삭제 중 맞는 것만.
+// 시스템 줄 · 지운 메시지 = 없음(보내는 중 · 실패 말풍선은 길게 누르기 자체가 없다 — OQ-955) · 비활성 1:1(입력줄 없음) = [수정] 숨김
+enum ChatMenu {
+  copy('복사', Icons.content_copy_rounded),
+  select('선택 복사', Icons.text_fields_rounded),
+  share('공유', Icons.ios_share_rounded),
+  edit('수정', Icons.edit_outlined),
+  delete('삭제', Icons.delete_outline_rounded);
+
+  final String label;
+  final IconData icon;
+  const ChatMenu(this.label, this.icon);
+}
+
+List<ChatMenu> chatMenuOf(ChatMessage m, {required bool mine, bool peerInactive = false}) {
+  if (m.kind == MsgKind.system || m.deleted) return const [];
+  if (m.photo != null || m.video != null) return [ChatMenu.share, if (mine) ChatMenu.delete];
+  return [ChatMenu.copy, ChatMenu.select, ChatMenu.share, if (mine && !peerInactive) ChatMenu.edit, if (mine) ChatMenu.delete];
+}
+
+// 선택 복사(D9-54 · OQ-955) — 그 본문만 담은 시트(폰 = 아래 · 아이패드 = 가운데) · 처음부터 전부 골라 둔 상태 ·
+// iOS 기본 선택 메뉴의 [복사]로 · [닫기]. 처음 골라 두기를 하려고 SelectableText 대신 읽기 전용 TextField(같은 EditableText)
+Future<void> showSelectCopy(BuildContext context, String text) {
+  if (isTabletWidth(context)) {
+    return showDialog<void>(
+      context: context,
+      barrierColor: Ms.dim,
+      builder: (ctx) => Dialog(
+        backgroundColor: Ms.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 480), child: Padding(padding: const EdgeInsets.only(top: 12), child: _SelectCopy(text))),
+      ),
+    );
+  }
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Ms.white,
+    barrierColor: Ms.dim,
+    shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+    builder: (ctx) => SafeArea(top: false, child: Column(mainAxisSize: MainAxisSize.min, children: [const SheetHandle(), _SelectCopy(text)])),
+  );
+}
+
+// 시트 본문 — 컨트롤러는 이 화면이 갖는다(닫히는 애니메이션이 끝난 뒤 버림)
+class _SelectCopy extends StatefulWidget {
+  final String text;
+  const _SelectCopy(this.text);
+  @override
+  State<_SelectCopy> createState() => _SelectCopyState();
+}
+
+class _SelectCopyState extends State<_SelectCopy> {
+  late final _c = TextEditingController(text: widget.text)..selection = TextSelection(baseOffset: 0, extentOffset: widget.text.length);
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Row(children: [
+            Expanded(child: Text('선택 복사', style: Typo.titleSm600)),
+            MsButton('닫기', key: const Key('chat-select-close'), variant: BtnVariant.outlined, color: BtnColor.gray, size: BtnSize.sm, onPressed: () => Navigator.of(context).pop()),
+          ]),
+          const SizedBox(height: 12),
+          ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.5),
+            child: TextField(
+              key: const Key('chat-select-text'),
+              controller: _c,
+              readOnly: true,
+              autofocus: true,
+              showCursor: false,
+              maxLines: null,
+              style: Typo.body400,
+              decoration: const InputDecoration(border: InputBorder.none, enabledBorder: InputBorder.none, focusedBorder: InputBorder.none, isDense: true),
+            ),
+          ),
+        ]),
+      );
+}
+
+// 본문 + 밑줄 링크(D9-46 · §10.4) — 내 말풍선 = 흰 밑줄 · 상대 = Ms.primary 밑줄 · 누르면 기기 브라우저 ·
+// 길게 누르면 링크 메뉴가 아니라 말풍선 메뉴(누름 인식기만 달아 길게 누르기는 바깥 GestureDetector 로 감)
+class ChatLinkText extends StatefulWidget {
+  final String text;
+  final bool mine;
+  const ChatLinkText(this.text, {super.key, required this.mine});
+  @override
+  State<ChatLinkText> createState() => _ChatLinkTextState();
+}
+
+class _ChatLinkTextState extends State<ChatLinkText> {
+  final List<TapGestureRecognizer> _taps = [];
+
+  void _drop() {
+    for (final r in _taps) {
+      r.dispose();
+    }
+    _taps.clear();
+  }
+
+  @override
+  void dispose() {
+    _drop();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final base = Typo.body400.copyWith(color: widget.mine ? Ms.white : Ms.gray800);
+    final links = findLinks(widget.text);
+    if (links.isEmpty) return Text(widget.text, style: base);
+    _drop();
+    final linkStyle = base.copyWith(
+      color: widget.mine ? Ms.white : Ms.primary,
+      decoration: TextDecoration.underline,
+      decorationColor: widget.mine ? Ms.white : Ms.primary,
+    );
+    final spans = <InlineSpan>[];
+    var at = 0;
+    for (final l in links) {
+      if (l.start > at) spans.add(TextSpan(text: widget.text.substring(at, l.start)));
+      final url = widget.text.substring(l.start, l.end);
+      final tap = TapGestureRecognizer()..onTap = () => openChatLink(Uri.parse(url));
+      _taps.add(tap);
+      spans.add(TextSpan(text: url, style: linkStyle, recognizer: tap));
+      at = l.end;
+    }
+    if (at < widget.text.length) spans.add(TextSpan(text: widget.text.substring(at)));
+    return Text.rich(TextSpan(style: base, children: spans), key: const Key('chat-link-text'));
   }
 }

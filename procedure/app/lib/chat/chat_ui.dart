@@ -68,7 +68,11 @@ class RoomRow extends StatelessWidget {
               height: 22,
               child: Row(children: [
                 if (p.prefix.isNotEmpty) Text(p.prefix, style: Typo.body400.copyWith(color: Ms.gray600)),
-                if (p.photo) const Padding(padding: EdgeInsets.only(right: 4), child: Icon(Icons.image_outlined, size: 15, color: Ms.gray600)),
+                if (p.media != null)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 4),
+                    child: Icon(p.media == MsgKind.video ? Icons.videocam_outlined : Icons.image_outlined, size: 15, color: Ms.gray600),
+                  ),
                 Expanded(child: Text(p.body, maxLines: 1, overflow: TextOverflow.ellipsis, style: Typo.body400.copyWith(color: Ms.gray600))),
                 if (r.unread > 0) ...[
                   const SizedBox(width: 8),

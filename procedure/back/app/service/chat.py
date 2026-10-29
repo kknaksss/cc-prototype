@@ -1,4 +1,4 @@
-"""직원 채팅(SPEC-007) — 1:1 · 그룹 · 텍스트 · 사진 1장. 다섯 역할 모두 같은 권한 · 가짜 판에서도 된다(KOS 없음).
+"""직원 채팅(SPEC-007) — 1:1 · 그룹 · 텍스트 · 사진 · 동영상 · 글 수정(r3). 다섯 역할 모두 같은 권한 · 가짜 판에서도 됨(KOS 없음).
 
 법적 검토 필요: 직원 채팅 — 고객 정보가 메시지 · 사진으로 오갈 수 있음(보존 기간 없음 · 열람 로그 없음 · 잠금 화면에 본문 앞부분)
 
@@ -15,7 +15,7 @@ import logging
 import secrets
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 from app.config import Settings
 from app.domain.clock import Clock, iso_ms, parse, to_db_ms
@@ -36,6 +36,11 @@ PREVIEW = 100  # 미리보기 · 푸시 본문 앞부분(OQ-915)
 INACTIVE = " (비활성)"
 JPEG = b"\xff\xd8\xff"
 PHOTO_SUBDIR = "chat"  # PROC_PHOTO_DIR/chat/ — 신분증(바로 아래)과 섞지 않는다
+# 동영상(r3 · §9.2) — 변환 뒤 본 파일 90MB(코디 처분 D-58: 운영 앞단 본문 한도 100MB 에 multipart 덧붙는 것까지) · 3분
+VIDEO_MAX_BYTES = 90 * 1024 * 1024
+VIDEO_MAX_MS = 180000
+MP4_BOX = b"ftyp"  # MP4 머리 = 4 ~ 8 바이트
+CHUNK = 1024 * 1024  # 임시 파일 → 저장 자리 조각 복사
 
 Event = tuple[int, str, dict[str, Any]]  # (받는 계정 id, 이벤트 이름, 데이터)
 
@@ -83,14 +88,21 @@ class ChatService:
         return {"id": a.id, "name": a.name, "role": a.role, "active": a.active}
 
     def _message(self, m: dict[str, Any], accounts: dict[int, Account], photo: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Message(§6.1) — 첨부 행(photo)은 사진 · 동영상 같은 표. 지운 것 = text · photo · video null."""
         deleted = m["deleted_at"] is not None
-        ref = None
-        if m["kind"] == "photo" and not deleted and m["photo_id"] is not None:
-            ref = {"id": m["photo_id"], "width": photo["width"] if photo else None, "height": photo["height"] if photo else None}
+        attached = not deleted and m["photo_id"] is not None
+        width, height = (photo["width"], photo["height"]) if photo else (None, None)
+        ref = video = None
+        if m["kind"] == "photo" and attached:
+            ref = {"id": m["photo_id"], "width": width, "height": height}
+        if m["kind"] == "video" and attached:
+            video = {"id": m["photo_id"], "width": width, "height": height,
+                     "durationMs": photo["duration_ms"] if photo else None}
         return {"id": m["id"], "roomId": m["room_id"], "clientId": m["client_id"],
                 "sender": self._sender(accounts.get(m["account_id"]), m["account_id"]), "kind": m["kind"],
-                "text": None if deleted else m["body"], "photo": ref, "createdAt": iso_ms(parse(m["created_at"])),
-                "updatedAt": iso_ms(parse(m["updated_at"])), "deletedAt": iso_ms(parse(m["deleted_at"]))}
+                "text": None if deleted else m["body"], "photo": ref, "video": video,
+                "createdAt": iso_ms(parse(m["created_at"])), "updatedAt": iso_ms(parse(m["updated_at"])),
+                "editedAt": iso_ms(parse(m["edited_at"])), "deletedAt": iso_ms(parse(m["deleted_at"]))}
 
     def _messages(self, tx: Tx, rows: list[dict[str, Any]], accounts: dict[int, Account]) -> list[dict[str, Any]]:
         return [self._message(m, accounts, tx.chat_photo(m["photo_id"]) if m["photo_id"] else None) for m in rows]
@@ -111,7 +123,7 @@ class ChatService:
         if last is not None:
             sender = accounts.get(last["account_id"])
             deleted = last["deleted_at"] is not None
-            text = None if deleted or last["kind"] == "photo" or last["body"] is None else last["body"][:PREVIEW]
+            text = None if deleted or last["kind"] in ("photo", "video") or last["body"] is None else last["body"][:PREVIEW]
             preview = {"id": last["id"], "senderId": last["account_id"], "senderName": sender.name if sender else "",
                        "mine": last["account_id"] == viewer_id, "kind": last["kind"], "text": text, "deleted": deleted,
                        "createdAt": iso_ms(parse(last["created_at"]))}
@@ -314,11 +326,17 @@ class ChatService:
             items = self._messages(tx, rows, self._accounts(tx))
         return {"items": items, "hasMore": more}
 
-    def post(self, actor: Account, room_id: int, client_id: str, text: str | None, photo_id: int | None) -> dict[str, Any]:
-        """보내기(§5) — 같은 계정 · 같은 clientId = 처음 것 그대로(SSE · 푸시 다시 안 함) · 커밋 뒤 SSE · 푸시."""
-        if text is not None and photo_id is not None:
-            raise BadRequest("invalid_request", "text · photoId 는 하나만 보내요")
-        if photo_id is None and (text is None or not text.strip()):
+    def post(self, actor: Account, room_id: int, client_id: str, text: str | None, photo_id: int | None,
+             video_id: int | None = None) -> dict[str, Any]:
+        """보내기(§5) — 같은 계정 · 같은 clientId = 처음 것 그대로(SSE · 푸시 다시 안 함) · 커밋 뒤 SSE · 푸시.
+
+        첨부 id 는 사진 · 동영상 같은 표(chat_photo) — 첨부 kind 가 메시지 kind 와 달라도 「보낼 수 없는」 것(§6.2 #10).
+        """
+        if sum(x is not None for x in (text, photo_id, video_id)) > 1:
+            raise BadRequest("invalid_request", "text · photoId · videoId 는 하나만 보내요")
+        attach = photo_id if photo_id is not None else video_id
+        kind = "photo" if photo_id is not None else "video" if video_id is not None else "text"
+        if attach is None and (text is None or not text.strip()):
             raise BadRequest("chat_message_empty", "보낼 내용이 없어요")
         if text is not None and len(text) > MAX_TEXT:
             raise BadRequest("chat_message_too_long", f"메시지는 {MAX_TEXT}자까지예요")
@@ -330,21 +348,23 @@ class ChatService:
             old = tx.chat_message_by_client(actor.id, client_id)
             if old is not None:  # 다시 보내기(D9-16) — 새로 만들지 않는다
                 return self._messages(tx, [old], accounts)[0]
-            if photo_id is not None:
-                p = tx.chat_photo(photo_id)
-                if (p is None or p["account_id"] != actor.id or p["room_id"] != room_id or p["message_id"] is not None
-                        or p["deleted_at"] is not None):
+            if attach is not None:
+                p = tx.chat_photo(attach)
+                if (p is None or p["kind"] != kind or p["account_id"] != actor.id or p["room_id"] != room_id
+                        or p["message_id"] is not None or p["deleted_at"] is not None):
+                    if kind == "video":
+                        raise BadRequest("chat_video_invalid", "보낼 수 없는 동영상이에요")
                     raise BadRequest("chat_photo_invalid", "보낼 수 없는 사진이에요")
             members = tx.chat_members(room_id)
             if room["kind"] == "direct":
                 peer = next((accounts.get(m["account_id"]) for m in members if m["account_id"] != actor.id), None)
                 if peer is None or not peer.active:
                     raise Conflict("chat_peer_inactive", "비활성 계정이에요")
-            mid = tx.add_chat_message(room_id=room_id, account_id=actor.id, kind="photo" if photo_id else "text",
-                                      body=None if photo_id else text, photo_id=photo_id, client_id=client_id,
+            mid = tx.add_chat_message(room_id=room_id, account_id=actor.id, kind=kind,
+                                      body=None if attach is not None else text, photo_id=attach, client_id=client_id,
                                       created_at=at, updated_at=at)
-            if photo_id is not None:
-                tx.update_chat_photo(photo_id, message_id=mid)
+            if attach is not None:
+                tx.update_chat_photo(attach, message_id=mid)
             prev = room["last_message_at"]
             tx.update_chat_room(room_id, last_message_at=at)
             tx.update_chat_member(room_id, actor.id, last_viewed_at=at, last_read_message_id=mid)
@@ -362,7 +382,8 @@ class ChatService:
         return msg
 
     def delete(self, actor: Account, message_id: int) -> None:
-        """삭제(§5) — 내 것만 · 소프트(body null · deleted_at · updated_at) · 사진이면 파일 지움 · 이미 지운 것 = 그대로 200."""
+        """삭제(§5) — 내 것만 · 소프트(body null · deleted_at · updated_at) · 첨부면 파일 지움(동영상 = 본 파일 + 썸네일) ·
+        이미 지운 것 = 그대로 200."""
         at = to_db_ms(self.clock.now())
         with self.repo.tx() as tx:
             m = tx.chat_message(message_id)
@@ -381,10 +402,43 @@ class ChatService:
         if photo is not None:
             path = self._folder()
             if path is not None:
-                (path / photo["file_name"]).unlink(missing_ok=True)
+                for name in (photo["file_name"], photo["thumb_file_name"]):
+                    if name:
+                        (path / name).unlink(missing_ok=True)
         log.info("채팅 지움 room=%d message=%d account=%d", m["room_id"], message_id, actor.id)
         data = {"roomId": m["room_id"], "messageId": message_id, "updatedAt": iso_ms(parse(at))}
         self._emit([(i, "chat_message_deleted", data) for i in members])
+
+    def edit(self, actor: Account, message_id: int, text: str) -> dict[str, Any]:
+        """수정(r3 · §5 · D9-55) — 내 텍스트만 · 시한 없음 · body = 새 글 · edited_at = updated_at = 지금(since 로 메워짐).
+
+        새 메시지 · 안 읽음 · 방 last_message_at · 순서 · 푸시는 그대로(self.push 를 부르지 않는다) · 커밋 뒤
+        chat_message_edited 를 지금 멤버 전원에게. 같은 글 = 그대로 200(SSE 없음). 오류 차례(코디 처분 W-5): 멤버 아님 404 →
+        남의 사진 · 동영상 · 지운 것 · 글 403 chat_not_yours → 내 사진 · 동영상 · 지운 것 · 시스템 줄 400 chat_not_editable.
+        """
+        if not text.strip():
+            raise BadRequest("chat_message_empty", "고칠 내용이 없어요")
+        if len(text) > MAX_TEXT:
+            raise BadRequest("chat_message_too_long", f"메시지는 {MAX_TEXT}자까지예요")
+        at = to_db_ms(self.clock.now())
+        with self.repo.tx() as tx:
+            m = tx.chat_message(message_id)
+            me = tx.chat_member(m["room_id"], actor.id) if m else None
+            if m is None or me is None or me["left_at"] is not None:
+                raise NotFound("메시지를 찾을 수 없어요", "chat_message_not_found")
+            if m["kind"] != "system" and m["account_id"] != actor.id:
+                raise Forbidden("chat_not_yours", "내 메시지만 고칠 수 있어요")
+            if m["kind"] != "text" or m["deleted_at"] is not None:
+                raise BadRequest("chat_not_editable", "글만 고칠 수 있어요")
+            accounts = self._accounts(tx)
+            if m["body"] == text:
+                return self._messages(tx, [m], accounts)[0]
+            tx.update_chat_message(message_id, body=text, edited_at=at, updated_at=at)
+            msg = self._messages(tx, [tx.chat_message(message_id) or {}], accounts)[0]
+            members = [r["account_id"] for r in tx.chat_members(m["room_id"])]
+        log.info("채팅 고침 room=%d message=%d account=%d", m["room_id"], message_id, actor.id)
+        self._emit([(i, "chat_message_edited", {"roomId": m["room_id"], "message": msg}) for i in members])
+        return msg
 
     def read(self, actor: Account, room_id: int, message_id: int) -> dict[str, Any]:
         """읽음(§5) — last_read = max(지금, min(messageId, 방 마지막 id)) · last_viewed_at = 지금.
@@ -436,12 +490,14 @@ class ChatService:
         log.info("채팅 사진 올림 room=%d photo=%d account=%d", room_id, photo_id, actor.id)
         return photo_id
 
-    def photo(self, actor: Account, photo_id: int) -> bytes:
-        """열기 — 붙기 전 = 올린 사람만 · 붙은 뒤 = 그 방 지금 멤버만 · 지움 · 파일 없음 = 404 · 열람 로그 없음(D9-23)."""
-        missing = NotFound("사진을 찾을 수 없어요", "chat_photo_not_found")
+    def _attachment(self, actor: Account, attach_id: int, kind: str, missing: NotFound) -> tuple[dict[str, Any], Path]:
+        """첨부 열기 권한(§6.2 #14 · #17 · #18) — 붙기 전 = 올린 사람만 · 붙은 뒤 = 그 방 지금 멤버만 · 지움 · 종류 다름 = 404.
+
+        (행, 폴더) — 파일이 있는지는 부르는 쪽이 본다(행 있고 파일 없음 = 404). 열람 로그 없음(D9-23).
+        """
         with self.repo.tx() as tx:
-            p = tx.chat_photo(photo_id)
-            if p is None or p["deleted_at"] is not None:
+            p = tx.chat_photo(attach_id)
+            if p is None or p["deleted_at"] is not None or p["kind"] != kind:
                 raise missing
             if p["message_id"] is None:
                 if p["account_id"] != actor.id:
@@ -453,7 +509,80 @@ class ChatService:
         folder = self._folder()
         if folder is None:
             raise Conflict("photo_disabled", "사진 저장이 꺼져 있어요")
+        return p, folder
+
+    def photo(self, actor: Account, photo_id: int) -> bytes:
+        """사진 열기 — 동영상 id = 없는 것(404 chat_photo_not_found · §6.2)."""
+        missing = NotFound("사진을 찾을 수 없어요", "chat_photo_not_found")
+        p, folder = self._attachment(actor, photo_id, "photo", missing)
         path = folder / p["file_name"]
         if not path.is_file():
             raise missing
         return path.read_bytes()
+
+    # ------------------------------------------------------------------ #16 ~ #18 동영상(§9.2 · r3)
+    def upload_video(self, actor: Account, room_id: int, video: BinaryIO, thumb: bytes, width: int, height: int,
+                     duration_ms: int) -> int:
+        """`PROC_PHOTO_DIR/chat/<무작위>.mp4`(본 파일) + `<무작위>.jpg`(앱이 만든 썸네일) + chat_photo 1행(kind = video).
+
+        video = multipart 가 흘린 임시 파일(전역 spool 한도 5MB + 64KB 보다 커서 디스크) — 메모리에 다 올리지 않고 1MB 씩
+        조각 복사하며 90MB 를 넘으면 그 자리에서 멈추고 쓰던 파일을 지운다. 붙기 전엔 올린 사람만 연다.
+        """
+        if duration_ms < 1:
+            raise BadRequest("invalid_request", "durationMs: 1 이상이어야 해요")
+        if duration_ms > VIDEO_MAX_MS:
+            raise BadRequest("chat_video_too_long", "3분 이하 동영상만 보낼 수 있어요")
+        if len(thumb) > MAX_BYTES:
+            raise PhotoTooLarge("photo_too_large", "사진이 5MB 를 넘어요")
+        if not thumb.startswith(JPEG):
+            raise BadRequest("chat_photo_type", "JPEG 사진만 보낼 수 있어요")
+        video.seek(0)
+        head = video.read(8)
+        if head[4:8] != MP4_BOX:
+            raise BadRequest("chat_video_type", "MP4 동영상만 보낼 수 있어요")
+        with self.repo.tx() as tx:
+            self._member(tx, room_id, actor)
+        folder = self._folder()
+        if folder is None:
+            raise Conflict("photo_disabled", "사진 저장이 꺼져 있어요")
+        folder.mkdir(parents=True, exist_ok=True)
+        name, thumb_name = f"{secrets.token_hex(16)}.mp4", f"{secrets.token_hex(16)}.jpg"
+        digest, size = hashlib.sha256(), 0
+        video.seek(0)
+        try:
+            with (folder / name).open("wb") as out:
+                while chunk := video.read(CHUNK):
+                    size += len(chunk)
+                    if size > VIDEO_MAX_BYTES:
+                        raise PhotoTooLarge("chat_video_too_large", "동영상이 90MB 를 넘어요")
+                    digest.update(chunk)
+                    out.write(chunk)
+            (folder / thumb_name).write_bytes(thumb)
+            with self.repo.tx() as tx:
+                video_id = tx.add_chat_photo(room_id=room_id, account_id=actor.id, kind="video", file_name=name,
+                                             thumb_file_name=thumb_name, bytes=size, sha256=digest.hexdigest(),
+                                             width=width, height=height, duration_ms=duration_ms,
+                                             created_at=to_db_ms(self.clock.now()))
+        except BaseException:
+            for n in (name, thumb_name):
+                (folder / n).unlink(missing_ok=True)
+            raise
+        log.info("채팅 동영상 올림 room=%d video=%d account=%d", room_id, video_id, actor.id)
+        return video_id
+
+    def _video_file(self, actor: Account, video_id: int, thumb: bool) -> Path:
+        missing = NotFound("동영상을 찾을 수 없어요", "chat_video_not_found")
+        p, folder = self._attachment(actor, video_id, "video", missing)
+        name = p["thumb_file_name"] if thumb else p["file_name"]
+        path = folder / name if name else None
+        if path is None or not path.is_file():
+            raise missing
+        return path
+
+    def video_path(self, actor: Account, video_id: int) -> Path:
+        """본 파일 자리 — 끊어 받기(Range)는 router 의 FileResponse 가 한다. 사진 id = 없는 것(404 chat_video_not_found)."""
+        return self._video_file(actor, video_id, thumb=False)
+
+    def video_thumb(self, actor: Account, video_id: int) -> bytes:
+        """썸네일 JPEG — 본 파일과 같은 권한."""
+        return self._video_file(actor, video_id, thumb=True).read_bytes()

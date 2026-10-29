@@ -1,3 +1,4 @@
+import AVFoundation
 import Flutter
 import UIKit
 import UserNotifications
@@ -17,6 +18,7 @@ import UserNotifications
   private var pendingLink: String? // Dart 준비 전에 온 ccc:// 링크(꺼진 상태에서 QR 로 열림)
   private lazy var links = LinkHandler { [weak self] url in self?.openLink(url) }
   private let scanner = TextScanner() // QR · 여권 사진 · 글자 인식(채널 procedure/scan)
+  private let video = VideoConverter() // 채팅 동영상 바꾸기(채널 procedure/video · SPEC-007 §9.2)
 
   override func application(
     _ application: UIApplication,
@@ -38,6 +40,7 @@ import UserNotifications
     ch.setMethodCallHandler { [weak self] call, result in self?.handle(call, result) }
     channel = ch
     if let r = engineBridge.pluginRegistry.registrar(forPlugin: "ProcedureScan") { scanner.attach(r.messenger()) }
+    if let r = engineBridge.pluginRegistry.registrar(forPlugin: "ProcedureVideo") { video.attach(r.messenger()) }
     // ccc:// 딥링크(웹 QR 을 iOS 기본 카메라로 찍음 — §5-3 · E2E batch 1 #5) — 장면 생명주기로 받는다
     if let r = engineBridge.pluginRegistry.registrar(forPlugin: "ProcedureLink") { r.addSceneDelegate(links) }
   }
@@ -336,3 +339,108 @@ enum AuthKeychain {
   }
 }
 
+
+// 채팅 동영상 바꾸기(SPEC-007 §9.2 · D9-51 · r3) — 채널 "procedure/video". 기기 안에서만 · 앱 임시 폴더에만 쓴다(사진첩 저장 없음 · D9-24)
+//   probe({path}) → {durationMs}(배경 큐) · audioSave · audioFollowSilent · audioRestore(재생 화면 — 무음 스위치를 따름)
+//   convert({path}) → {path, width, height, durationMs, bytes, thumb} — HEVC · H.264 · MOV · 슬로모 · 고프레임 · 4K 무엇이든
+//     H.264 MP4 · 긴 변 1280 · AAC(AVAssetExportPreset1280x720 — 세로 영상은 720×1280 · 더 작은 원본은 그 크기) + 0초 JPEG(품질 80 · 같은 크기)
+//   실패 = FlutterError(convert_failed) — 만들다 만 파일은 지운다
+final class VideoConverter {
+  private var channel: FlutterMethodChannel?
+
+  func attach(_ messenger: FlutterBinaryMessenger) {
+    let ch = FlutterMethodChannel(name: "procedure/video", binaryMessenger: messenger)
+    ch.setMethodCallHandler { [weak self] call, result in self?.handle(call, result) }
+    channel = ch
+  }
+
+  // 재생 화면이 여는 동안 오디오 세션(review-code r2 W-4 · SPEC §9.2 「무음 스위치를 따른다」) — video_player 는 플레이어 초기화 때
+  // .playback(무음 스위치 무시)으로 올리므로, 재생 화면이 audioSave → (플레이어 초기화) → audioFollowSilent(.soloAmbient) → 닫을 때 audioRestore.
+  // 통역(audio_session · .playAndRecord)이 잡고 있던 세션이면 건드리지 않는다
+  private var savedAudio: (AVAudioSession.Category, AVAudioSession.Mode, AVAudioSession.CategoryOptions)?
+
+  private func handle(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {
+    let session = AVAudioSession.sharedInstance()
+    switch call.method {
+    case "audioSave":
+      savedAudio = (session.category, session.mode, session.categoryOptions)
+      result(nil)
+      return
+    case "audioFollowSilent":
+      if let a = savedAudio, a.0 == .playAndRecord || a.0 == .record {
+        result(false)
+        return
+      }
+      result((try? session.setCategory(.soloAmbient, mode: .default, options: [])) != nil)
+      return
+    case "audioRestore":
+      if let a = savedAudio, a.0 != .playAndRecord, a.0 != .record {
+        try? session.setCategory(a.0, mode: a.1, options: a.2)
+      }
+      savedAudio = nil
+      result(nil)
+      return
+    default:
+      break
+    }
+    guard let args = call.arguments as? [String: Any], let path = args["path"] as? String else {
+      result(FlutterError(code: "bad_args", message: nil, details: nil))
+      return
+    }
+    let url = URL(fileURLWithPath: path)
+    switch call.method {
+    case "probe":
+      // 길이 읽기는 로드가 끝날 때까지 막으므로 배경에서 · 결과만 메인으로(W-6)
+      DispatchQueue.global(qos: .userInitiated).async {
+        let ms = Self.ms(AVURLAsset(url: url).duration)
+        DispatchQueue.main.async { result(["durationMs": ms]) }
+      }
+    case "convert":
+      convert(url, result)
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+  }
+
+  private static func ms(_ t: CMTime) -> Int {
+    let s = t.seconds
+    return s.isFinite ? Int((s * 1000).rounded()) : 0
+  }
+
+  private func convert(_ src: URL, _ result: @escaping FlutterResult) {
+    let fail: (String?) -> Void = { msg in
+      DispatchQueue.main.async { result(FlutterError(code: "convert_failed", message: msg, details: nil)) }
+    }
+    let asset = AVURLAsset(url: src)
+    guard let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPreset1280x720) else {
+      fail("no_session")
+      return
+    }
+    let out = FileManager.default.temporaryDirectory.appendingPathComponent("chat-video-\(UUID().uuidString).mp4")
+    export.outputURL = out
+    export.outputFileType = .mp4
+    export.shouldOptimizeForNetworkUse = true
+    export.exportAsynchronously {
+      guard export.status == .completed else {
+        try? FileManager.default.removeItem(at: out)
+        fail(export.error?.localizedDescription)
+        return
+      }
+      let made = AVURLAsset(url: out)
+      let gen = AVAssetImageGenerator(asset: made)
+      gen.appliesPreferredTrackTransform = true
+      guard let cg = try? gen.copyCGImage(at: .zero, actualTime: nil),
+            let jpeg = UIImage(cgImage: cg).jpegData(compressionQuality: 0.8) else {
+        try? FileManager.default.removeItem(at: out)
+        fail("no_thumb")
+        return
+      }
+      let bytes = ((try? FileManager.default.attributesOfItem(atPath: out.path))?[.size] as? NSNumber)?.intValue ?? 0
+      let info: [String: Any] = [
+        "path": out.path, "width": cg.width, "height": cg.height, "durationMs": Self.ms(made.duration),
+        "bytes": bytes, "thumb": FlutterStandardTypedData(bytes: jpeg),
+      ]
+      DispatchQueue.main.async { result(info) }
+    }
+  }
+}

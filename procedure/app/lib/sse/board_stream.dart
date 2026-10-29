@@ -154,8 +154,17 @@ class BoardStream extends ChangeNotifier {
     }
   }
 
-  // board 말고 받는 이벤트 — id: 없음 · version 규칙 밖(§7.1 · SPEC-007 §7 채팅 5개)
-  static const otherEvents = {'display', 'notification', 'chat_message', 'chat_message_deleted', 'chat_room', 'chat_room_removed', 'chat_read'};
+  // board 말고 받는 이벤트 — id: 없음 · version 규칙 밖(§7.1 · SPEC-007 §7 채팅 6개 — r3 chat_message_edited)
+  static const otherEvents = {
+    'display',
+    'notification',
+    'chat_message',
+    'chat_message_deleted',
+    'chat_message_edited',
+    'chat_room',
+    'chat_room_removed',
+    'chat_read',
+  };
 
   void _other(String event, String data) {
     if (!otherEvents.contains(event)) return;

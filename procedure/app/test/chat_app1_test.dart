@@ -35,7 +35,7 @@ void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
   group('SSE', () {
-    test('채팅 이벤트 5개는 version 규칙 없이 onEvent 로(board 만 version) · 모르는 이름은 버림', () async {
+    test('채팅 이벤트 6개(r3 chat_message_edited)는 version 규칙 없이 onEvent 로(board 만 version) · 모르는 이름은 버림', () async {
       final ctl = StreamController<List<int>>();
       final got = <String>[];
       final s = BoardStream(
@@ -47,11 +47,11 @@ void main() {
       s.start();
       await Future<void>.delayed(Duration.zero);
       ctl.add(utf8.encode('event: board\ndata: ${jsonEncode({'now': t0, 'version': 3, 'cards': []})}\n\n'));
-      for (final e in ['chat_message', 'chat_message_deleted', 'chat_room', 'chat_room_removed', 'chat_read', 'chat_typing']) {
+      for (final e in ['chat_message', 'chat_message_deleted', 'chat_message_edited', 'chat_room', 'chat_room_removed', 'chat_read', 'chat_typing']) {
         ctl.add(utf8.encode('event: $e\ndata: {"roomId":1}\n\n'));
       }
       await Future<void>.delayed(Duration.zero);
-      expect(got, ['chat_message', 'chat_message_deleted', 'chat_room', 'chat_room_removed', 'chat_read']);
+      expect(got, ['chat_message', 'chat_message_deleted', 'chat_message_edited', 'chat_room', 'chat_room_removed', 'chat_read']);
       expect(s.board?.version, 3); // 허브 version 그대로
       s.stop();
       await ctl.close();
@@ -68,15 +68,15 @@ void main() {
     });
 
     test('미리보기 — 1:1 상대 = 본문 · 내 것 = 「나: 」 · 그룹 = 「보낸 사람: 」 · 사진 · 지운 것 · 시스템 줄', () {
-      ({String prefix, String body, bool photo}) p(Map<String, dynamic> last, {bool group = false}) =>
+      ({String prefix, String body, MsgKind? media}) p(Map<String, dynamic> last, {bool group = false}) =>
           previewOf(room(roomJ(1, group: group, members: [meM, docM, coordM], last: last)));
-      expect(p(preview(1, text: '줄\n바꿈')), (prefix: '', body: '줄 바꿈', photo: false));
-      expect(p(preview(1, mine: true, sender: 1)), (prefix: '나: ', body: '안녕하세요', photo: false));
-      expect(p(preview(1), group: true), (prefix: '나의사: ', body: '안녕하세요', photo: false));
-      expect(p(preview(1, kind: 'photo', text: null), group: true), (prefix: '나의사: ', body: '사진', photo: true));
-      expect(p(preview(1, deleted: true, text: null)), (prefix: '', body: '삭제된 메시지예요', photo: false));
-      expect(p(preview(1, deleted: true, text: null), group: true), (prefix: '나의사: ', body: '삭제된 메시지예요', photo: false));
-      expect(p(preview(1, kind: 'system', text: '나의사 님이 나갔어요'), group: true), (prefix: '', body: '나의사 님이 나갔어요', photo: false));
+      expect(p(preview(1, text: '줄\n바꿈')), (prefix: '', body: '줄 바꿈', media: null));
+      expect(p(preview(1, mine: true, sender: 1)), (prefix: '나: ', body: '안녕하세요', media: null));
+      expect(p(preview(1), group: true), (prefix: '나의사: ', body: '안녕하세요', media: null));
+      expect(p(preview(1, kind: 'photo', text: null), group: true), (prefix: '나의사: ', body: '사진', media: MsgKind.photo));
+      expect(p(preview(1, deleted: true, text: null)), (prefix: '', body: '삭제된 메시지예요', media: null));
+      expect(p(preview(1, deleted: true, text: null), group: true), (prefix: '나의사: ', body: '삭제된 메시지예요', media: null));
+      expect(p(preview(1, kind: 'system', text: '나의사 님이 나갔어요'), group: true), (prefix: '', body: '나의사 님이 나갔어요', media: null));
       expect(previewOf(room(roomJ(1))).body, '');
     });
 

@@ -33,10 +33,13 @@ CHAT_TTL_SEC = 86400  # 채팅 apns-expiration = 보낼 때 + 1일(D9-31) — �
 
 
 def chat_body(kind: str, text: str | None) -> str:
-    """채팅 푸시 본문(SPEC-007 §8) — 텍스트 앞 100자(넘으면 「…」 · 줄바꿈 = 공백) · 사진 = 「사진」(잠금 화면에 보인다)."""
+    """채팅 푸시 본문(SPEC-007 §8) — 텍스트 앞 100자(넘으면 「…」 · 줄바꿈 = 공백) ·
+    사진 = 「사진」 · 동영상 = 「동영상」(잠금 화면에 보인다)."""
     # 법적 검토 필요: 직원 채팅 — 고객 정보가 메시지 · 사진으로 오갈 수 있음(보존 기간 없음 · 열람 로그 없음 · 잠금 화면에 본문 앞부분)  # noqa: E501
     if kind == "photo":
         return "사진"
+    if kind == "video":
+        return "동영상"
     flat = " ".join((text or "").splitlines())
     return flat[:PREVIEW] + ("…" if len(flat) > PREVIEW else "")
 

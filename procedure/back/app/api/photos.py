@@ -18,6 +18,8 @@ from app.service.passport_scan import PhotoTooLarge
 router = APIRouter(prefix="/api", tags=["photos"])
 FORM_OVERHEAD = 64 * 1024  # 사진 밖 칸 · 경계 문자열
 MultiPartParser.spool_max_size = MAX_BYTES + FORM_OVERHEAD  # 받은 사진을 디스크 임시 파일로 흘리지 않는다(§6.16 원본)
+# ↑ 프로세스 전역 — 채팅 사진(api/chat.py · SPEC-007 §9)도 이 값을 쓴다. 바꾸면 여권 스캔 · 채팅 사진이 같이 바뀐다
+# ↑ 채팅 동영상(api/chat.py · SPEC-007 §9.2)은 이 값보다 커서 Starlette 임시 파일로 흐른다 — 동영상 때문에 올리지 않는다
 
 
 def _int(v: object, name: str) -> int | None:

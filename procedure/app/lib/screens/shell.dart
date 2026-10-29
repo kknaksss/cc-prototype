@@ -1,10 +1,15 @@
-// 공통 틀(SPEC-004 §6.8) — 폰 = 아래 탭바 4칸 · 태블릿 = 왼쪽 레일 92px. 탭마다 자기 스택(바꿔도 유지 · 같은 탭 다시 = 맨 위로)
+// 공통 틀(SPEC-004 §6.8) — 폰 = 아래 탭바 5칸 · 태블릿 = 왼쪽 레일 92px. 탭마다 자기 스택(바꿔도 유지 · 같은 탭 다시 = 맨 위로).
+// 「채팅」= 설정 앞 5번째 · 안 읽은 방 수 배지 · 앱 안 채팅 배너는 이 셸 안 맨 위 층(SPEC-007 §10.1 · §10.12)
 import 'package:flutter/material.dart';
 
 import '../app_state.dart';
+import '../chat/chat_model.dart' show ChatBanner;
+import '../chat/chat_ui.dart' show RedCount;
 import '../theme/tokens.dart';
 import '../widgets/header.dart';
+import '../widgets/ui.dart' show MsBanner;
 import 'board_screen.dart';
+import 'chat_list_screen.dart';
 import 'launchers.dart' show openDisplay;
 import 'notifications_screen.dart';
 import 'reservations_screen.dart';
@@ -15,6 +20,7 @@ const tabName = {
   AppTab.reservations: '예약 현황',
   AppTab.visits: '내원 현황',
   AppTab.board: '시술 현황',
+  AppTab.chat: '채팅',
   AppTab.settings: '설정',
 };
 
@@ -22,6 +28,7 @@ const _tabIcon = {
   AppTab.reservations: Icons.calendar_month_rounded,
   AppTab.visits: Icons.groups_rounded,
   AppTab.board: Icons.meeting_room_rounded,
+  AppTab.chat: Icons.chat_bubble_rounded, // 말풍선(OQ-928)
   AppTab.settings: Icons.settings_rounded,
 };
 
@@ -68,6 +75,7 @@ class _ShellState extends State<Shell> {
         AppTab.reservations => const ReservationsScreen(),
         AppTab.visits => const VisitsScreen(),
         AppTab.board => const BoardScreen(),
+        AppTab.chat => const ChatScreen(),
         AppTab.settings => const SettingsScreen(),
       };
 
@@ -93,6 +101,7 @@ class _ShellState extends State<Shell> {
               HeroControllerScope.none(
                 child: Navigator(
                   key: _navs[t],
+                  observers: [if (t == AppTab.chat) app.chat.chatRoutes],
                   onGenerateRoute: (_) => MaterialPageRoute(builder: (_) => _root(t)),
                 ),
               ),
@@ -104,21 +113,40 @@ class _ShellState extends State<Shell> {
           child: stack,
         );
         if (tablet) {
+          // 키보드(D9-61) — 레일은 전체 높이 그대로(키보드가 아래를 덮음 · 줄이면 가로 아이패드에서 레일이 넘친다) ·
+          // 오른쪽 본문만 키보드만큼 줄여 입력줄이 키보드 위에 붙는다
+          final mq = MediaQuery.of(context);
           return Scaffold(
             backgroundColor: Ms.gray100,
-            body: Row(children: [
-              _Rail(cur: cur, onPick: (t) => _pick(app, t)),
-              Expanded(child: body),
+            resizeToAvoidBottomInset: false,
+            body: Stack(children: [
+              Row(children: [
+                _Rail(cur: cur, onPick: (t) => _pick(app, t)),
+                Expanded(
+                  child: Padding(
+                    padding: EdgeInsets.only(bottom: mq.viewInsets.bottom),
+                    child: MediaQuery(data: mq.removeViewInsets(removeBottom: true), child: body),
+                  ),
+                ),
+              ]),
+              const ChatBannerLayer(),
             ]),
           );
         }
         final mq = MediaQuery.of(context);
+        // 화면 키보드가 열리면 탭바를 숨긴다(D9-61 — D9-36 「대화 중 탭바 유지」는 키보드가 닫혀 있을 때만) ·
+        // Scaffold 가 키보드만큼 본문을 줄이므로 입력줄은 키보드 바로 위에 붙는다
+        final keyboard = mq.viewInsets.bottom > 0;
         return Scaffold(
           backgroundColor: Ms.gray100,
-          body: Column(children: [
-            // 탭 안 화면은 탭바 위까지 — 아래 안전 영역은 탭바가 먹는다
-            Expanded(child: MediaQuery(data: mq.removePadding(removeBottom: true), child: body)),
-            _TabBar(cur: cur, onPick: (t) => _pick(app, t), bottom: mq.padding.bottom),
+          body: Stack(children: [
+            Column(children: [
+              // 탭 안 화면은 탭바 위까지 — 아래 안전 영역은 탭바가 먹는다(키보드가 열리면 키보드가 덮음).
+              // 키보드 높이는 이 Scaffold 가 이미 뺐으므로 안쪽에 다시 넘기지 않는다(넘기면 대화 화면 Scaffold 가 한 번 더 빼 입력줄이 키보드보다 한참 위로 뜬다)
+              Expanded(child: MediaQuery(data: mq.removePadding(removeBottom: true).removeViewInsets(removeBottom: true), child: body)),
+              if (!keyboard) _TabBar(cur: cur, onPick: (t) => _pick(app, t), bottom: mq.padding.bottom),
+            ]),
+            const ChatBannerLayer(),
           ]),
         );
       },
@@ -147,7 +175,7 @@ class _TabBar extends StatelessWidget {
                   behavior: HitTestBehavior.opaque,
                   onTap: () => onPick(t),
                   child: Column(mainAxisSize: MainAxisSize.min, children: [
-                    Icon(_tabIcon[t], size: 22, color: t == cur ? Ms.primary : Ms.gray500),
+                    _TabIcon(t, size: 22, color: t == cur ? Ms.primary : Ms.gray500),
                     const SizedBox(height: 4),
                     Text(tabName[t]!,
                         style: (t == cur ? Typo.caption600 : Typo.caption500).copyWith(color: t == cur ? Ms.primary : Ms.gray600)),
@@ -193,7 +221,7 @@ class _Rail extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(vertical: 10),
                   decoration: BoxDecoration(color: t == cur ? Ms.primary100 : null, borderRadius: BorderRadius.circular(12)),
                   child: Column(children: [
-                    Icon(_tabIcon[t], size: 26, color: t == cur ? Ms.primary : Ms.gray500),
+                    _TabIcon(t, size: 26, color: t == cur ? Ms.primary : Ms.gray500),
                     const SizedBox(height: 6),
                     MediaQuery.withNoTextScaling(
                       child: Text(tabName[t]!,
@@ -213,7 +241,60 @@ class _Rail extends StatelessWidget {
   }
 }
 
-// 탭 루트 화면 꼴 — 공통 헤더 한 줄 [메뉴명][Céramique][알림] + 연결 줄 + 본문(폰 · 태블릿 같음)
+// 탭 아이콘 — 「채팅」은 안 읽은 방 수 빨간 배지(0 이면 없음 · 99+ · 알림 끈 방도 셈 — SPEC-007 §10.1)
+class _TabIcon extends StatelessWidget {
+  final AppTab tab;
+  final double size;
+  final Color color;
+  const _TabIcon(this.tab, {required this.size, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    final icon = Icon(_tabIcon[tab], size: size, color: color);
+    if (tab != AppTab.chat) return icon;
+    return ValueListenableBuilder<int>(
+      valueListenable: AppScope.of(context).chat.unreadRooms,
+      builder: (context, n, _) => Semantics(
+        label: n > 0 ? '안 읽은 대화 $n개' : null,
+        child: Stack(clipBehavior: Clip.none, children: [
+          icon,
+          if (n > 0) Positioned(top: -6, right: -12, child: MediaQuery.withNoTextScaling(child: RedCount(n, key: const Key('chat-tab-badge')))),
+        ]),
+      ),
+    );
+  }
+}
+
+// 앱 안 채팅 배너(SPEC-007 §10.12 · DS:S11 · S13d) — 셸 안 맨 위 층(탭 본문 · 탭바 · 레일 위). MaterialApp.builder 의 토스트 층에는
+// 두지 않는다 — 문진 QR · 여권 스캔(루트 전체 화면)이 셸을 덮어 그 아래에 깔린다(D9-44). 폰 = 위 · 아이패드 = 위 가운데 · 4초 · 소리 없음
+class ChatBannerLayer extends StatelessWidget {
+  const ChatBannerLayer({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final app = AppScope.of(context);
+    final tablet = isTabletWidth(context);
+    final top = MediaQuery.paddingOf(context).top + 8;
+    return ValueListenableBuilder<ChatBanner?>(
+      valueListenable: app.chat.banner,
+      builder: (context, b, _) {
+        if (b == null) return const SizedBox.shrink();
+        final banner = MsBanner(b.line, key: const Key('chat-banner'), action: '보기', onAction: () {
+          app.tab.value = AppTab.chat;
+          app.chat.openRoom(b.roomId);
+        });
+        return Positioned(
+          top: top,
+          left: tablet ? 0 : 12,
+          right: tablet ? 0 : 12,
+          child: tablet ? Center(child: SizedBox(width: 520, child: banner)) : banner,
+        );
+      },
+    );
+  }
+}
+
+// 탭 루트 화면 꼴 — 공통 헤더 한 줄 [Céramique][메뉴명][알림] + 연결 줄 + 본문(폰 · 태블릿 같음)
 class TabScaffold extends StatelessWidget {
   final AppTab tab;
   final Widget body;

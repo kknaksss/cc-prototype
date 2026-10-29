@@ -69,12 +69,13 @@ class HeaderBack extends StatelessWidget {
 // 상세 화면 머리(예약 상세 · 룸 상세 · 알림) — 흰 바탕 · 공통 헤더 높이 · [‹ 들어온 탭 이름] · 제목(화면 이름)은 왼쪽 버튼 폭과
 // 상관없이 정가운데 · 오른쪽은 비우거나 동작 하나(사용자 2026-10-28 — 상태 색 · 상태 제목 · 시각 없음)
 class DetailHeader extends StatelessWidget {
-  final String back;
+  final String? back; // null = 뒤로 없음(아이패드 대화 칸 — SPEC-007 §10.11)
   final String title;
+  final Widget? titleWidget; // 제목 옆 Badge · 「N명」(채팅 대화 머리 — SPEC-007 §10.4)
   final Widget? trailing;
   final VoidCallback? onBack;
   final bool chevron;
-  const DetailHeader({super.key, required this.back, required this.title, this.trailing, this.onBack, this.chevron = true});
+  const DetailHeader({super.key, required this.back, required this.title, this.titleWidget, this.trailing, this.onBack, this.chevron = true});
 
   @override
   Widget build(BuildContext context) => Container(
@@ -84,16 +85,17 @@ class DetailHeader extends StatelessWidget {
           Center(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 120), // 양쪽 버튼 자리 — 긴 제목이 버튼 밑으로 안 들어가게
-              child: Text(title, key: const Key('detail-title'), maxLines: 1, overflow: TextOverflow.ellipsis, style: Typo.headingMd600),
+              child: titleWidget ?? Text(title, key: const Key('detail-title'), maxLines: 1, overflow: TextOverflow.ellipsis, style: Typo.headingMd600),
             ),
           ),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Padding(
-              padding: const EdgeInsets.only(left: 4),
-              child: HeaderBack(back, chevron: chevron, onTap: onBack ?? () => Navigator.of(context).maybePop()),
+          if (back != null)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Padding(
+                padding: const EdgeInsets.only(left: 4),
+                child: HeaderBack(back!, chevron: chevron, onTap: onBack ?? () => Navigator.of(context).maybePop()),
+              ),
             ),
-          ),
           if (trailing != null) Align(alignment: Alignment.centerRight, child: Padding(padding: const EdgeInsets.only(right: 8), child: trailing)),
         ]),
       );

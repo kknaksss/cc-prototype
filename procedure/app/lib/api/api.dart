@@ -1,11 +1,14 @@
 // back REST — 이 모듈에서만 부른다(SPEC-003 §7 · SPEC-004 §3.3). 오류 본문 = {error:{code,message}}
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show File;
+import 'dart:math' show min;
 
 import 'package:flutter/foundation.dart' show Uint8List;
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart' show MediaType;
 
+import '../chat/chat_model.dart';
 import '../model/account.dart';
 import '../model/board.dart' show Json;
 import '../model/display.dart';
@@ -191,6 +194,242 @@ class Api {
   // [사진 다시 올리기](KOS 사진 실패 · D7-56)
   Future<String> photoKosRetry(int photoId) async =>
       '${((await _post('/api/id-photos/$photoId/kos-retry')) as Map)['kos'] ?? 'failed'}';
+
+  // ─── 채팅(SPEC-007 §6.2) — 18 경로(r3) · JSON = 12초 · 사진 올리기 = 40초 · 동영상 올리기 = 300초(§9)
+  Future<List<Person>> chatPeople() async {
+    final d = await _req('GET', '/api/chat/people');
+    final l = d is Map ? d['items'] : null;
+    return [for (final e in (l is List ? l : const [])) if (e is Map) Person.fromJson(e.cast<String, dynamic>())];
+  }
+
+  Future<({List<Room> items, int unreadRooms})> chatRooms() async {
+    final d = await _req('GET', '/api/chat/rooms');
+    final l = d is Map ? d['items'] : null;
+    final items = [for (final e in (l is List ? l : const [])) if (e is Map) Room.fromJson(e.cast<String, dynamic>())];
+    final n = d is Map ? d['unreadRooms'] : null;
+    return (items: items, unreadRooms: n is num ? n.toInt() : items.where((r) => r.unread > 0).length);
+  }
+
+  Future<Room> _room(Future<dynamic> f) async => Room.fromJson(((await f) as Map).cast<String, dynamic>());
+  Future<Room> chatOpenDirect(int accountId) => _room(_post('/api/chat/rooms/direct', {'accountId': accountId}));
+  Future<Room> chatCreateGroup(List<int> accountIds, {String? title}) =>
+      _room(_post('/api/chat/rooms', {'accountIds': accountIds, if (title != null && title.trim().isNotEmpty) 'title': title.trim()}));
+  Future<Room> chatAddMembers(int roomId, List<int> accountIds) => _room(_post('/api/chat/rooms/$roomId/members', {'accountIds': accountIds}));
+  Future<void> chatLeave(int roomId) => _post('/api/chat/rooms/$roomId/leave');
+  Future<void> chatHide(int roomId) => _post('/api/chat/rooms/$roomId/hide');
+  Future<void> chatMute(int roomId, bool muted) => _req('PUT', '/api/chat/rooms/$roomId/mute', body: {'muted': muted});
+
+  // before = id < before · since = updatedAt >= since(KST · 밀리초 — `+` 가 공백으로 읽히지 않게 queryParameters 로 %2B)
+  Future<({List<ChatMessage> items, bool hasMore})> chatMessages(int roomId, {int? before, String? since, int? limit}) async {
+    final q = Uri(queryParameters: {'before': ?before?.toString(), 'since': ?since, 'limit': ?limit?.toString()}).query;
+    final d = await _req('GET', '/api/chat/rooms/$roomId/messages${q.isEmpty ? '' : '?$q'}');
+    final l = d is Map ? d['items'] : null;
+    return (
+      items: [for (final e in (l is List ? l : const [])) if (e is Map) ChatMessage.fromJson(e.cast<String, dynamic>())],
+      hasMore: d is Map && d['hasMore'] == true,
+    );
+  }
+
+  Future<ChatMessage> chatSend(int roomId, String clientId, {String? text, int? photoId, int? videoId}) async => ChatMessage.fromJson(
+      ((await _post('/api/chat/rooms/$roomId/messages', {'clientId': clientId, 'text': ?text, 'photoId': ?photoId, 'videoId': ?videoId})) as Map)
+          .cast<String, dynamic>());
+  // 수정(r3 · 내 텍스트만) — 응답 = 고친 Message(editedAt · 서버 updatedAt — W-6)
+  Future<ChatMessage> chatEdit(int messageId, String text) async =>
+      ChatMessage.fromJson(((await _req('PATCH', '/api/chat/messages/$messageId', body: {'text': text})) as Map).cast<String, dynamic>());
+  Future<void> chatDelete(int messageId) => _req('DELETE', '/api/chat/messages/$messageId');
+  Future<Json> chatRead(int roomId, int messageId) async =>
+      ((await _post('/api/chat/rooms/$roomId/read', {'messageId': messageId})) as Map).cast<String, dynamic>();
+
+  static const photoTimeout = Duration(seconds: 40);
+
+  // 사진 올리기(multipart) — 진행률을 알려고 본문 바이트를 직접 흘린다(MultipartRequest 는 보낸 바이트를 알려 주지 않음 · A27)
+  Future<int> chatUploadPhoto(int roomId, Uint8List jpeg, {required int width, required int height, void Function(double)? onProgress}) async {
+    final boundary = 'ccc-${DateTime.now().microsecondsSinceEpoch}';
+    List<int> field(String k, String v) => utf8.encode('--$boundary\r\nContent-Disposition: form-data; name="$k"\r\n\r\n$v\r\n');
+    final head = <int>[
+      ...field('roomId', '$roomId'),
+      ...field('width', '$width'),
+      ...field('height', '$height'),
+      ...utf8.encode('--$boundary\r\nContent-Disposition: form-data; name="photo"; filename="photo.jpg"\r\nContent-Type: image/jpeg\r\n\r\n'),
+    ];
+    final tail = utf8.encode('\r\n--$boundary--\r\n');
+    final req = http.StreamedRequest('POST', Uri.parse('${base()}/api/chat/photos'));
+    final t = token();
+    req.headers['Accept'] = 'application/json';
+    req.headers['Content-Type'] = 'multipart/form-data; boundary=$boundary';
+    if (t != null) req.headers['Authorization'] = 'Bearer $t';
+    final total = head.length + jpeg.length + tail.length;
+    req.contentLength = total;
+    http.Response res;
+    try {
+      final sending = client.send(req).timeout(photoTimeout);
+      const chunk = 64 * 1024;
+      final body = Stream<List<int>>.fromIterable([
+        head,
+        for (var i = 0; i < jpeg.length; i += chunk) Uint8List.sublistView(jpeg, i, min(i + chunk, jpeg.length)),
+        tail,
+      ]);
+      await _pump(req, body, total, onProgress);
+      res = await http.Response.fromStream(await sending);
+    } on TimeoutException {
+      throw const ApiError(0, 'network', '서버 응답이 없어요');
+    } catch (_) {
+      throw const ApiError(0, 'network', '서버에 연결할 수 없어요');
+    }
+    final data = _decode(res);
+    final id = data is Map ? data['photoId'] : null;
+    if (id is! num) throw const ApiError(0, 'error', '사진을 올리지 못했어요');
+    return id.toInt();
+  }
+
+  // 사진 바이트(Bearer 헤더만 · 쿠키 · ?token= 없음 — D9-23). 앱은 메모리에만 둔다(D9-24)
+  Future<Uint8List> chatPhoto(int photoId) async {
+    final headers = <String, String>{'Accept': 'image/jpeg'};
+    final t = token();
+    if (t != null) headers['Authorization'] = 'Bearer $t';
+    http.Response res;
+    try {
+      final req = http.Request('GET', Uri.parse('${base()}/api/chat/photos/$photoId'))..headers.addAll(headers);
+      res = await http.Response.fromStream(await client.send(req).timeout(photoTimeout));
+    } on TimeoutException {
+      throw const ApiError(0, 'network', '서버 응답이 없어요');
+    } catch (_) {
+      throw const ApiError(0, 'network', '서버에 연결할 수 없어요');
+    }
+    if (res.statusCode < 200 || res.statusCode >= 300) _decode(res);
+    return res.bodyBytes;
+  }
+
+  static const videoTimeout = Duration(seconds: 300);
+
+  // 동영상 올리기(r3 · #16) — 변환 뒤 MP4 를 파일에서 되밀기 있게 흘린다(메모리에 다 올리지 않음 · 진행률 = 보낸 바이트 · W-2) · Content-Length 를 싣는다(청크 금지 — 서버가 413 을 먼저 거름 · r3 처분)
+  Future<int> chatUploadVideo(int roomId, String path,
+      {required Uint8List thumb, required int width, required int height, required int durationMs, void Function(double)? onProgress}) async {
+    final file = File(path);
+    final size = await file.length();
+    final boundary = 'ccc-${DateTime.now().microsecondsSinceEpoch}';
+    List<int> field(String k, String v) => utf8.encode('--$boundary\r\nContent-Disposition: form-data; name="$k"\r\n\r\n$v\r\n');
+    final head = <int>[
+      ...field('roomId', '$roomId'),
+      ...field('width', '$width'),
+      ...field('height', '$height'),
+      ...field('durationMs', '$durationMs'),
+      ...utf8.encode('--$boundary\r\nContent-Disposition: form-data; name="thumb"; filename="thumb.jpg"\r\nContent-Type: image/jpeg\r\n\r\n'),
+      ...thumb,
+      ...utf8.encode('\r\n--$boundary\r\nContent-Disposition: form-data; name="video"; filename="video.mp4"\r\nContent-Type: video/mp4\r\n\r\n'),
+    ];
+    final tail = utf8.encode('\r\n--$boundary--\r\n');
+    final req = http.StreamedRequest('POST', Uri.parse('${base()}/api/chat/videos'));
+    final t = token();
+    req.headers['Accept'] = 'application/json';
+    req.headers['Content-Type'] = 'multipart/form-data; boundary=$boundary';
+    if (t != null) req.headers['Authorization'] = 'Bearer $t';
+    final total = head.length + size + tail.length;
+    req.contentLength = total;
+    http.Response res;
+    try {
+      final sending = client.send(req).timeout(videoTimeout);
+      Stream<List<int>> body() async* {
+        yield head;
+        yield* file.openRead(); // 받는 쪽이 멈추면 파일 읽기도 멈춤
+        yield tail;
+      }
+
+      await _pump(req, body(), total, onProgress);
+      res = await http.Response.fromStream(await sending);
+    } on TimeoutException {
+      throw const ApiError(0, 'network', '서버 응답이 없어요');
+    } catch (_) {
+      throw const ApiError(0, 'network', '서버에 연결할 수 없어요');
+    }
+    final data = _decode(res);
+    final id = data is Map ? data['videoId'] : null;
+    if (id is! num) throw const ApiError(0, 'error', '동영상을 올리지 못했어요');
+    return id.toInt();
+  }
+
+  // 재생 · 썸네일 · 공유 — Bearer 헤더만(쿠키 · ?token= 없음 — D9-23 · §6.2)
+  Uri chatVideoUri(int videoId) => Uri.parse('${base()}/api/chat/videos/$videoId');
+  Map<String, String> get authHeaders {
+    final t = token();
+    return {if (t != null) 'Authorization': 'Bearer $t'};
+  }
+
+  // 썸네일 바이트(#18) — 메모리에만(사진과 같은 캐시 · 키는 따로)
+  Future<Uint8List> chatVideoThumb(int videoId) async {
+    http.Response res;
+    try {
+      final req = http.Request('GET', Uri.parse('${base()}/api/chat/videos/$videoId/thumbnail'))
+        ..headers.addAll({'Accept': 'image/jpeg', ...authHeaders});
+      res = await http.Response.fromStream(await client.send(req).timeout(photoTimeout));
+    } on TimeoutException {
+      throw const ApiError(0, 'network', '서버 응답이 없어요');
+    } catch (_) {
+      throw const ApiError(0, 'network', '서버에 연결할 수 없어요');
+    }
+    if (res.statusCode < 200 || res.statusCode >= 300) _decode(res);
+    return res.bodyBytes;
+  }
+
+  // 동영상 공유용 받기(r3 U-4) — #17 을 Bearer 로 받아 파일로 흘려 쓴다(메모리에 다 올리지 않음) · 진행률 · cancelled 면 멈추고 파일 지움
+  Future<void> chatVideoDownload(int videoId, File out, {void Function(double)? onProgress, bool Function()? cancelled}) async {
+    final sink = out.openWrite();
+    var ok = false;
+    try {
+      final req = http.Request('GET', chatVideoUri(videoId))..headers.addAll({'Accept': 'video/mp4', ...authHeaders});
+      final res = await client.send(req).timeout(videoTimeout);
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        _decode(await http.Response.fromStream(res));
+      }
+      final total = res.contentLength ?? 0;
+      var got = 0;
+      await for (final b in res.stream.timeout(videoTimeout)) {
+        if (cancelled?.call() ?? false) throw const ApiError(0, 'cancelled', '');
+        sink.add(b);
+        got += b.length;
+        if (total > 0) onProgress?.call(got / total);
+      }
+      ok = true;
+    } on ApiError {
+      rethrow;
+    } on TimeoutException {
+      throw const ApiError(0, 'network', '서버 응답이 없어요');
+    } catch (_) {
+      throw const ApiError(0, 'network', '서버에 연결할 수 없어요');
+    } finally {
+      await sink.close();
+      if (!ok) {
+        try {
+          await out.delete();
+        } catch (_) {}
+      }
+    }
+  }
+
+  // 본문을 요청에 흘린다 — sink.addStream 은 받는 쪽(소켓)이 멈추면 원천(파일 읽기)도 멈춘다(되밀기) → 메모리에 다 쌓이지 않고,
+  // 진행률 = 요청 스트림이 실제로 가져간 바이트(소켓 버퍼 몫만큼 앞섬 · review-code r2 W-2). Content-Length 는 부르는 쪽이 싣는다
+  Future<void> _pump(http.StreamedRequest req, Stream<List<int>> body, int total, void Function(double)? onProgress) async {
+    var sent = 0;
+    await req.sink.addStream(body.map((b) {
+      sent += b.length;
+      onProgress?.call(sent / total);
+      return b;
+    }));
+    unawaited(req.sink.close());
+  }
+
+  // 오류 본문 → ApiError(2xx 면 JSON 그대로)
+  dynamic _decode(http.Response res) {
+    dynamic data;
+    try {
+      data = res.body.isEmpty ? null : jsonDecode(utf8.decode(res.bodyBytes));
+    } catch (_) {}
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      final err = data is Map && data['error'] is Map ? data['error'] as Map : const {};
+      throw ApiError(res.statusCode, '${err['code'] ?? 'error'}', '${err['message'] ?? '요청을 처리하지 못했어요'}');
+    }
+    return data;
+  }
 
   // §7.1 SSE 주소 — ?token= (+ deviceId · 0.4.0)
   Uri streamUri(String tokenValue, {int? deviceId}) => Uri.parse('${base()}/api/board/stream')

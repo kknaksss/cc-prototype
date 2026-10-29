@@ -664,6 +664,110 @@ class Tx:
         return [dict(r) for r in self.con.execute("SELECT * FROM questionnaire_history WHERE customer_id = ? ORDER BY id",
                                                   (customer_id,))]
 
+    # ---------------------------------------------------------------- 직원 채팅(SPEC-007 §3)
+    # 시각은 서비스가 to_db_ms 로 넘긴 문자열(UTC · 밀리초)
+    def add_chat_room(self, **fields: Any) -> int:
+        return self._insert("chat_room", fields)
+
+    def add_direct_room(self, key: str, created_by: int, at: str) -> tuple[int, bool]:
+        """같은 두 사람 = 방 1(UNIQUE direct_key) — 이미 있으면 그 방. (방 id, 새로 만들었나)."""
+        cur = self.con.execute("INSERT OR IGNORE INTO chat_room (kind, direct_key, created_by, created_at) "
+                               "VALUES ('direct', ?, ?, ?)", (key, created_by, at))
+        r = self.con.execute("SELECT id FROM chat_room WHERE direct_key = ?", (key,)).fetchone()
+        return int(r["id"]), cur.rowcount == 1
+
+    def chat_room(self, room_id: int) -> dict[str, Any] | None:
+        r = self.con.execute("SELECT * FROM chat_room WHERE id = ?", (room_id,)).fetchone()
+        return dict(r) if r else None
+
+    def chat_room_by_key(self, key: str) -> dict[str, Any] | None:
+        r = self.con.execute("SELECT * FROM chat_room WHERE direct_key = ?", (key,)).fetchone()
+        return dict(r) if r else None
+
+    def update_chat_room(self, room_id: int, **fields: Any) -> None:
+        self._update("chat_room", room_id, fields)
+
+    def chat_rooms_of(self, account_id: int) -> list[dict[str, Any]]:
+        """그 계정이 지금 멤버인 방 전부(숨김 여부는 서비스가 본다) — 내 멤버 행 열은 `me_` 를 붙여 같이."""
+        rows = self.con.execute(
+            "SELECT r.*, m.hidden_at AS me_hidden_at, m.muted AS me_muted, m.last_read_message_id AS me_last_read "
+            "FROM chat_room r JOIN chat_member m ON m.room_id = r.id "
+            "WHERE m.account_id = ? AND m.left_at IS NULL "
+            "ORDER BY COALESCE(r.last_message_at, r.created_at) DESC, r.id DESC", (account_id,))
+        return [dict(r) for r in rows]
+
+    def chat_member(self, room_id: int, account_id: int) -> dict[str, Any] | None:
+        r = self.con.execute("SELECT * FROM chat_member WHERE room_id = ? AND account_id = ?", (room_id, account_id)).fetchone()
+        return dict(r) if r else None
+
+    def chat_members(self, room_id: int) -> list[dict[str, Any]]:
+        """지금 멤버(left_at null)만."""
+        rows = self.con.execute("SELECT * FROM chat_member WHERE room_id = ? AND left_at IS NULL ORDER BY account_id",
+                                (room_id,))
+        return [dict(r) for r in rows]
+
+    def add_chat_member(self, **fields: Any) -> None:
+        self._insert("chat_member", fields)
+
+    def update_chat_member(self, room_id: int, account_id: int, **fields: Any) -> None:
+        if not fields:
+            return
+        sets = ", ".join(f'"{k}" = ?' for k in fields)
+        self.con.execute(f"UPDATE chat_member SET {sets} WHERE room_id = ? AND account_id = ?",
+                         [*(_val(v) for v in fields.values()), room_id, account_id])
+
+    def add_chat_message(self, **fields: Any) -> int:
+        return self._insert("chat_message", fields)
+
+    def chat_message(self, message_id: int) -> dict[str, Any] | None:
+        r = self.con.execute("SELECT * FROM chat_message WHERE id = ?", (message_id,)).fetchone()
+        return dict(r) if r else None
+
+    def chat_message_by_client(self, account_id: int, client_id: str) -> dict[str, Any] | None:
+        r = self.con.execute("SELECT * FROM chat_message WHERE account_id = ? AND client_id = ?",
+                             (account_id, client_id)).fetchone()
+        return dict(r) if r else None
+
+    def update_chat_message(self, message_id: int, **fields: Any) -> None:
+        self._update("chat_message", message_id, fields)
+
+    def last_chat_message(self, room_id: int) -> dict[str, Any] | None:
+        r = self.con.execute("SELECT * FROM chat_message WHERE room_id = ? ORDER BY id DESC LIMIT 1", (room_id,)).fetchone()
+        return dict(r) if r else None
+
+    def chat_messages(self, room_id: int, *, before: int | None = None, since: str | None = None,
+                      limit: int = 50) -> tuple[list[dict[str, Any]], bool]:
+        """최근 limit 개(오래된 것 위) + 더 있나.
+
+        before = id < before · since = updated_at >= since(같은 폭 UTC ms 문자열).
+        """
+        where, args = ["room_id = ?"], [room_id]
+        if before is not None:
+            where.append("id < ?")
+            args.append(before)
+        if since is not None:
+            where.append("updated_at >= ?")
+            args.append(since)
+        rows = self.con.execute(f"SELECT * FROM chat_message WHERE {' AND '.join(where)} ORDER BY id DESC LIMIT ?",
+                                [*args, limit + 1]).fetchall()
+        return [dict(r) for r in reversed(rows[:limit])], len(rows) > limit
+
+    def chat_unread(self, room_id: int, account_id: int, last_read: int) -> int:
+        """남이 보낸 · 시스템 줄 아닌 · 안 지운 메시지 중 id > last_read."""
+        r = self.con.execute("SELECT COUNT(*) AS n FROM chat_message WHERE room_id = ? AND id > ? AND account_id != ? "
+                             "AND kind != 'system' AND deleted_at IS NULL", (room_id, last_read, account_id)).fetchone()
+        return int(r["n"])
+
+    def add_chat_photo(self, **fields: Any) -> int:
+        return self._insert("chat_photo", fields)
+
+    def chat_photo(self, photo_id: int) -> dict[str, Any] | None:
+        r = self.con.execute("SELECT * FROM chat_photo WHERE id = ?", (photo_id,)).fetchone()
+        return dict(r) if r else None
+
+    def update_chat_photo(self, photo_id: int, **fields: Any) -> None:
+        self._update("chat_photo", photo_id, fields)
+
 
 class Repository:
     def __init__(self, db: Database):

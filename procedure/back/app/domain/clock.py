@@ -30,6 +30,16 @@ def to_db(at: datetime | None) -> str | None:
     return at.astimezone(UTC).isoformat(timespec="seconds") if at else None
 
 
+def iso_ms(at: datetime | None) -> str | None:
+    """채팅 API 시각(SPEC-007 §6.1) — KST 오프셋 · 밀리초. `iso` 는 초라 채팅 `since` 경계에 쓰지 않는다."""
+    return at.astimezone(KST).isoformat(timespec="milliseconds") if at else None
+
+
+def to_db_ms(at: datetime | None) -> str | None:
+    """채팅 표 시각(SPEC-007 §3) — UTC · 밀리초 · 늘 같은 폭(`…T…:…:….mmm+00:00`)이라 SQL 문자열 비교 = 시간 순."""
+    return at.astimezone(UTC).isoformat(timespec="milliseconds") if at else None
+
+
 def parse(value: str | None) -> datetime | None:
     """KOS · DB 의 ISO 문자열 → aware datetime(오프셋 없으면 UTC 로 본다)."""
     if not value:

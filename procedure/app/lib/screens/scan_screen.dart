@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 
 import '../api/api.dart';
 import '../app_state.dart';
+import '../chat/chat_state.dart' show whileDisplayScreen;
 import '../model/board.dart' show Json;
 import '../model/reservation.dart';
 import '../scan/mrz.dart';
@@ -22,12 +23,12 @@ import '../view/resv_view.dart' show nationName;
 import '../widgets/ui.dart';
 import 'board_screen.dart' show isTablet;
 
-// 예약 상세 [여권 스캔] · 띄우기(kind = scan) · QR — 나갈 때까지 기다린다
+// 예약 상세 [여권 스캔] · 띄우기(kind = scan) · QR — 나갈 때까지 기다린다. 떠 있는 동안 띄우기 화면 수를 올린다(채팅 배너 없음 · D9-44)
 Future<void> showPassportScan(BuildContext context, ResvDetail d, {int? displayRequestId}) =>
-    Navigator.of(context, rootNavigator: true).push(MaterialPageRoute(
-      fullscreenDialog: true,
-      builder: (_) => ScanScreen(detail: d, displayRequestId: displayRequestId),
-    ));
+    whileDisplayScreen(() => Navigator.of(context, rootNavigator: true).push(MaterialPageRoute(
+          fullscreenDialog: true,
+          builder: (_) => ScanScreen(detail: d, displayRequestId: displayRequestId),
+        )));
 
 // 스캔 확인 칸(§6.16 ③) — name 없음(D7-53)
 const scanFields = [

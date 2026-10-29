@@ -157,8 +157,9 @@ CREATE TABLE IF NOT EXISTS {name} (    -- 푸시 내역 · 쌓기만(event_log �
     status TEXT NOT NULL,                                                   -- sent | failed | skipped_no_key | token_removed
     apns_status INTEGER, apns_reason TEXT, apns_id TEXT, attempts INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL, sent_at TEXT,
-    kind TEXT NOT NULL DEFAULT 'doctor_call',                               -- doctor_call | counselor_call | display
-    reservation_id INTEGER, display_request_id INTEGER, notification_id INTEGER
+    kind TEXT NOT NULL DEFAULT 'doctor_call',                               -- doctor_call | counselor_call | display | chat
+    reservation_id INTEGER, display_request_id INTEGER, notification_id INTEGER,
+    chat_message_id INTEGER                                                 -- 채팅(SPEC-007 §3.5)
 );
 """
 
@@ -189,6 +190,43 @@ CREATE TABLE IF NOT EXISTS id_photo (
 );
 """
 
+# 직원 채팅(SPEC-007 §3) — 추가만. 시각 열은 clock.to_db_ms(UTC · 밀리초 · 같은 폭)로만 쓴다
+# 법적 검토 필요: 직원 채팅 — 고객 정보가 메시지 · 사진으로 오갈 수 있음(보존 기간 없음 · 열람 로그 없음 · 잠금 화면에 본문 앞부분)  # noqa: E501
+CHAT_SCHEMA = """
+CREATE TABLE IF NOT EXISTS chat_room (
+    id INTEGER PRIMARY KEY, kind TEXT NOT NULL,          -- direct | group
+    direct_key TEXT UNIQUE,                              -- 1:1 만 "<작은 account id>:<큰 account id>" · 그룹 = null
+    title TEXT, created_by INTEGER NOT NULL, created_at TEXT NOT NULL,
+    last_message_at TEXT                                 -- 시스템 줄 포함 · 방 목록 정렬
+);
+CREATE TABLE IF NOT EXISTS chat_member (                 -- 행은 지우지 않는다(나가기 = left_at)
+    room_id INTEGER NOT NULL REFERENCES chat_room(id), account_id INTEGER NOT NULL REFERENCES account(id),
+    joined_at TEXT NOT NULL, left_at TEXT, hidden_at TEXT, last_viewed_at TEXT,
+    last_read_message_id INTEGER NOT NULL DEFAULT 0,     -- 안 읽음 = id > 이 값(늘기만)
+    muted INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (room_id, account_id)
+);
+CREATE INDEX IF NOT EXISTS chat_member_account ON chat_member (account_id);
+CREATE TABLE IF NOT EXISTS chat_message (                -- 지우지 않는다(소프트 삭제 · 보존 기간 없음)
+    id INTEGER PRIMARY KEY, room_id INTEGER NOT NULL REFERENCES chat_room(id), account_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,                                  -- text | photo | video | system
+    body TEXT, photo_id INTEGER, client_id TEXT,         -- photo_id = 첨부(사진 · 동영상) id
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, deleted_at TEXT,
+    edited_at TEXT,                                      -- 마지막으로 고친 시각(r3) · null = 고친 적 없음
+    UNIQUE (account_id, client_id)
+);
+CREATE INDEX IF NOT EXISTS chat_message_room ON chat_message (room_id, id);
+CREATE INDEX IF NOT EXISTS chat_message_room_updated ON chat_message (room_id, updated_at);
+CREATE TABLE IF NOT EXISTS chat_photo (                  -- 첨부(사진 · 동영상) · 파일 = PROC_PHOTO_DIR/chat/<file_name>
+    id INTEGER PRIMARY KEY, room_id INTEGER NOT NULL, account_id INTEGER NOT NULL, message_id INTEGER,
+    file_name TEXT NOT NULL, bytes INTEGER NOT NULL, sha256 TEXT NOT NULL, width INTEGER, height INTEGER,
+    created_at TEXT NOT NULL, deleted_at TEXT,
+    kind TEXT NOT NULL DEFAULT 'photo',                  -- photo | video(r3)
+    duration_ms INTEGER,                                 -- 동영상만 · 앱이 잰 길이
+    thumb_file_name TEXT                                 -- 동영상만 · 앱이 만든 썸네일 JPEG(같은 폴더)
+);
+"""
+
 
 MIGRATIONS = (("procedure", "room_kos_id", "TEXT"), ("visit", "open_task_seqs", "TEXT NOT NULL DEFAULT '[]'"),
               ("procedure", "kind", "TEXT NOT NULL DEFAULT 'procedure'"), ("account", "password_hash", "TEXT"),
@@ -199,7 +237,11 @@ MIGRATIONS = (("procedure", "room_kos_id", "TEXT"), ("visit", "open_task_seqs", 
               ("questionnaire_history", "source", "TEXT NOT NULL DEFAULT 'read'"), ("questionnaire_history", "language", "TEXT"),
               ("questionnaire_history", "device_id", "INTEGER"), ("questionnaire_history", "display_request_id", "INTEGER"),
               ("identity_check", "photo_id", "INTEGER"),
-              ("display_request", "qr_nonce", "TEXT"))  # 고객 문진 웹 토큰(SPEC-006 §3.1) — 스캔 · 옛 행 null
+              ("display_request", "qr_nonce", "TEXT"),  # 고객 문진 웹 토큰(SPEC-006 §3.1) — 스캔 · 옛 행 null
+              ("push_log", "chat_message_id", "INTEGER"),  # 직원 채팅(SPEC-007 §3.5)
+              # 직원 채팅 r3(SPEC-007 §3 — 수정 · 동영상) — 1판 채팅 DB(compose 볼륨)에 열만 더한다
+              ("chat_message", "edited_at", "TEXT"), ("chat_photo", "kind", "TEXT NOT NULL DEFAULT 'photo'"),
+              ("chat_photo", "duration_ms", "INTEGER"), ("chat_photo", "thumb_file_name", "TEXT"))
 
 
 class Database:
@@ -211,6 +253,7 @@ class Database:
             con.executescript(RESV_SCHEMA)
             con.executescript(PUSH_LOG.format(name="push_log"))
             con.executescript(APP_SCHEMA)
+            con.executescript(CHAT_SCHEMA)
             for table, column, kind in MIGRATIONS:  # 이미 있는 DB 파일(compose 볼륨)에 새 열을 더한다
                 cols = {r["name"] for r in con.execute(f"PRAGMA table_info({table})")}
                 if column not in cols:

@@ -167,8 +167,9 @@ class StatusChip extends StatelessWidget {
   final Color? dot, dotRing; // 필터 점(시술 현황 ○ 대기 · ● 진행 등)
   final bool selected;
   final VoidCallback? onTap;
+  final VoidCallback? onRemove; // 끝 ✕(채팅 고른 사람 칩 — SPEC-007 §10.0)
   const StatusChip(this.label,
-      {super.key, this.count, this.bg = Ms.gray100, this.fg = Ms.gray700, this.outline, this.dot, this.dotRing, this.selected = false, this.onTap});
+      {super.key, this.count, this.bg = Ms.gray100, this.fg = Ms.gray700, this.outline, this.dot, this.dotRing, this.selected = false, this.onTap, this.onRemove});
 
   @override
   Widget build(BuildContext context) {
@@ -187,6 +188,14 @@ class StatusChip extends StatelessWidget {
           const SizedBox(width: 4),
         ],
         Text(count == null ? label : '$label $count', style: Typo.caption600.copyWith(color: f)),
+        if (onRemove != null) ...[
+          const SizedBox(width: 4),
+          Semantics(
+            button: true,
+            label: '$label 빼기',
+            child: GestureDetector(behavior: HitTestBehavior.opaque, onTap: onRemove, child: Icon(Icons.close_rounded, size: 14, color: f)),
+          ),
+        ],
       ]),
     );
     if (!filter) return chip;

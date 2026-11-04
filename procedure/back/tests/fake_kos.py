@@ -462,6 +462,7 @@ class FakeKos(ResvFake):
         self.rooms = [{"id": f"room-{i}", "zoneId": ZONE, "title": f"A-룸{i}", "order": i} for i in range(1, 4)]
         self.schedules = [schedule(1)]
         self.calls: list[tuple[str, dict]] = []  # (경로, 본문)
+        self.headers: list[tuple[str, httpx.Headers]] = []  # (host + 경로, 요청 헤더) — presigned PUT 포함
         self.apply_writes = True  # 쓰기를 일정에 반영하나
         self.fail_paths: dict[str, int] = {}  # 경로 끝 → 돌려줄 상태 코드
         self.expire_once: set[str] = set()  # "open" / "internal" — 다음 호출 1번 401
@@ -488,6 +489,7 @@ class FakeKos(ResvFake):
 
     def handle(self, req: httpx.Request) -> httpx.Response:
         path = req.url.path
+        self.headers.append((f"{req.url.host}{path}", req.headers))
         if req.url.host == "s3.fake.test":  # presigned PUT(인증 헤더 없음)
             self.uploads.append({"url": str(req.url), "content": req.content, "contentType": req.headers.get("content-type"),
                                  "auth": req.headers.get("authorization")})

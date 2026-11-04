@@ -7,6 +7,8 @@
   getAccounts 의 id 와 같다). `sign-in` 의 `data.id` 는 사용자 id 라 담당자로 넣으면 KOS 가 200 을 주고 무시한다
   (2026-10-21 데모 실호출 확인)
 - 401 이면 다시 받기 1회 후 같은 요청 1회
+- 내부 요청(sign-in · get-user-account · internal)은 KOS 웹이 보내는 User-Agent · Origin · kos-client-uri 를 싣는다 —
+  2026-11-03 부터 내부 API 가 브라우저 UA 가 아니면 매 요청 403 `Unsupported client.`. 공개 · presigned PUT 엔 싣지 않는다
 - 키 · 비밀번호 · 토큰은 로그 · 오류 메시지에 싣지 않는다(KosError 는 HTTP 상태 · 오류 이름만)
 """
 
@@ -26,6 +28,8 @@ OPEN_TOKEN_PATH = "open/authorization/commands/exchange-token"
 SIGN_IN_PATH = "common/v1/user/commands/sign-in"
 USER_ACCOUNT_PATH = "v1/account/queries/get-user-account"
 REFRESH_BEFORE = timedelta(minutes=10)
+WEB_USER_AGENT = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/150.0.0.0 Safari/537.36")  # KOS 웹 HAR 값
 
 
 class KosError(Exception):
@@ -74,6 +78,17 @@ class KosClient:
             t = tx.token("internal")
         return t[2] if t else None
 
+    def _internal_headers(self, token: str | None = None) -> dict[str, str]:
+        """내부 API 요청 헤더 — KOS 웹 값. kos_web_base 가 비면 User-Agent 만."""
+        headers = {"User-Agent": WEB_USER_AGENT}
+        web = self.s.kos_web_base.rstrip("/")
+        if web:
+            headers["Origin"] = web
+            headers["kos-client-uri"] = f"{web}/{self.s.kos_tenant_id}/reservation/schedule/"
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        return headers
+
     async def _post_raw(self, url: str, body: dict[str, Any], headers: dict[str, str] | None = None) -> httpx.Response:
         try:
             return await self.http.post(url, json=body, headers=headers or {})
@@ -106,7 +121,8 @@ class KosClient:
         if saved and not force and saved[1] and saved[1] - REFRESH_BEFORE > now:
             return saved[0]
         resp = await self._post_raw(f"{self.s.kos_internal_api_base.rstrip('/')}/{SIGN_IN_PATH}",
-                                    {"email": self.s.kos_system_email, "password": self.s.kos_system_password})
+                                    {"email": self.s.kos_system_email, "password": self.s.kos_system_password},
+                                    self._internal_headers())
         if resp.status_code // 100 != 2:
             raise _error_of(resp)
         try:
@@ -127,7 +143,7 @@ class KosClient:
 
     async def _user_account_id(self, token: str) -> str:
         url = f"{self.s.kos_internal_api_base.rstrip('/')}/tenants/{self.s.kos_tenant_id}/{USER_ACCOUNT_PATH}"
-        resp = await self._post_raw(url, {}, {"Authorization": f"Bearer {token}"})
+        resp = await self._post_raw(url, {}, self._internal_headers(token))
         if resp.status_code // 100 != 2:
             raise _error_of(resp)
         try:
@@ -144,7 +160,7 @@ class KosClient:
             if kind == "open":
                 headers = {"Authorization": await self.open_token(force=attempt == 1)}
             else:
-                headers = {"Authorization": f"Bearer {await self.internal_token(force=attempt == 1)}"}
+                headers = self._internal_headers(await self.internal_token(force=attempt == 1))
             resp = await self._post_raw(url, body, headers)
             if resp.status_code == 401 and attempt == 0:
                 log.info("KOS %s 401 — 토큰 다시 받기", kind)

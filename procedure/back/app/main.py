@@ -21,6 +21,7 @@ from app.api import (
     chat,
     devices,
     display,
+    ext,
     interpret,
     notifications,
     photos,
@@ -110,6 +111,8 @@ def create_app(settings: Settings | None = None, container: Container | None = N
             resp.headers["Referrer-Policy"] = "no-referrer"
         return resp
 
+    app.middleware("http")(ext.ext_middleware)  # 외부 연동(SPEC-008 §7.3 · §7.4) — IP 차단 · ext_call · no-store
+
     @app.exception_handler(DomainError)
     async def domain_error(_: Request, exc: DomainError) -> JSONResponse:
         return _error(exc.status, exc.code, exc.message, exc.extra)
@@ -125,7 +128,7 @@ def create_app(settings: Settings | None = None, container: Container | None = N
         return _error(exc.status_code, "not_found" if exc.status_code == 404 else "http_error", str(exc.detail))
 
     for r in (auth.router, board.router, actions.router, interpret.router, devices.router, reservations.router,
-              notifications.router, display.router, public_questionnaire.router, photos.router, chat.router):
+              notifications.router, display.router, public_questionnaire.router, photos.router, chat.router, ext.router):
         app.include_router(r)
 
     @app.get("/api/health", response_model=HealthResponse, tags=[T_HEALTH], summary="서버 상태 · KOS 토큰 보유 여부",

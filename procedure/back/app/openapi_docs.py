@@ -1,4 +1,4 @@
-"""OpenAPI 문서 — 앱 설명(공통 규칙) · 태그 설명 · 문서에만 싣는 Bearer 보안 표시. 요청 처리에는 관여하지 않는다.
+"""OpenAPI 문서 — 앱 설명(공통 규칙) · 태그 설명 · 문서에만 싣는 Bearer · ExtApiKey 보안 표시. 요청 처리에는 관여하지 않는다.
 
 `decorate(app)` 는 `app.openapi` 를 감싸 **만들어진 스키마 dict 만** 고친다(라우트 · 의존성 · 처리기는 그대로).
 """
@@ -13,6 +13,7 @@ from fastapi.openapi import utils as openapi_utils
 
 from app.api import docs as d
 from app.api.deps import require_login
+from app.api.ext import require_ext_key
 
 TITLE = "CCC procedure API"
 
@@ -69,6 +70,33 @@ DESCRIPTION = """
 `GET /api/board/stream?token=<토큰>` (선택 `&deviceId=<기기 id>`) — 브라우저 `EventSource` 는 헤더를 못 실어서 쿼리로 받는다.
 이벤트 종류 · 본문은 그 엔드포인트 설명 참고.
 
+## 외부 연동 API — `/api/ext/*`
+email 이 없는 기존 고객은 조회하면 `404` 다. 그 고객을 처음 예약하면 KOS 에 고객이 하나 더 생길 수 있다(데스크가 정리한다).
+이름은 KOS 에 저장된 띄어쓰기 그대로 보내야 한다(띄어쓰기가 다르면 찾지 못해 `404`).
+
+- **경로 셋**: `GET /api/ext/menu`(시술 · 상품 메뉴) · `POST /api/ext/customers/lookup`(이름 + 이메일 → 고객 + 남은 시술권) ·
+  `POST /api/ext/reservations`(이름 + 이메일 + 시작 시각 → 예약). tag 「외부 연동」.
+- **인증**: 헤더 **`X-Api-Key: <연동처 키>`**. 연동처(링키 · 차티)마다 키가 따로 있다(서버 env · 키 교체 = 배포 설정).
+  Swagger **Authorize** 의 `ExtApiKey` 에 넣는다. 직원 API 와 섞이지 않는다 — 외부 경로는 `Authorization: Bearer` 를 보지 않고,
+  직원 경로는 `X-Api-Key` 를 보지 않는다(각각 `401 ext_unauthorized` · `401 unauthorized`).
+- **검사 순서**: 키(`401 ext_unauthorized`) → 호출 제한(`429 too_many_requests`) → 칸 검증(`400 invalid_request` — 필수 · 타입 ·
+  모르는 키 · 빈 값) → 엔드포인트 규칙. 단 IP 차단 `429` 는 무엇보다 먼저 · JSON 이 아닌 본문 `400` 은 키보다 먼저 · 없는 경로
+  `404 not_found` 는 키 없이 난다.
+- **호출 제한**(서버 메모리 · 미끄러지는 60초 창 · 응답 헤더 없음): 키당 최근 60초 60번(세 경로 합산 · 막힌 요청은 세지 않음).
+  연동처가 정해지지 않은 오류 응답(키 없음 · 틀림 `401` · 없는 경로 `404` · 깨진 본문 `400` · 메서드 `405`)이 같은 IP 에서 최근
+  60초 10번이면 그 IP 의 `/api/ext` 요청을 키 검사 전에 `429` 로 막는다. IP = `CF-Connecting-IP` → `X-Forwarded-For` 첫 값 →
+  소켓 주소(카운터에만 쓰고 저장하지 않음).
+- **기록**: 요청마다 서버 표 `ext_call` 에 시각 · 연동처 · `<METHOD> <경로 틀>`(없는 경로는 `<METHOD> (unknown)`) · 상태 · 결과
+  code 만 1줄. 이름 · 이메일 원문 · 키 · IP · 고객 · 예약 id 는 남기지 않는다. 연동처 없는 오류 응답은 같은 IP · 같은 결과면
+  1분에 1줄. 응답(오류 포함)마다 `Cache-Control: no-store`.
+- **공통 오류**: `401 ext_unauthorized` · `429 too_many_requests` · `400 invalid_request` · `404 not_found`(없는 경로) ·
+  `405 http_error`(허용하지 않는 메서드). 외부 오류에는 `step` · `candidate` 가 없다.
+  처리하지 못한 예외 = `500 internal_error`(본문에 예외 문구 없음 · 호출 기록 1줄 · IP 카운트 안 함).
+- **금액**: `{value: 정수(원), currency}`. 메뉴 정가 `listPriceExVat` = 부가세 별도. 시술권 `bundlePrice` = KOS 묶음 가격 그대로
+  (고객이 낸 돈이 아니고 부가세 포함 여부를 표기하지 않는다).
+- **id**: 메뉴 · 시술권의 카테고리 · 상품 · 옵션 · 시술 id = KOS id 문자열 · 고객 · 예약 id = ccc 정수
+  (고객의 KOS id 는 내지 않는다).
+
 ## 통역 WebSocket — `WS /api/interpret`
 OpenAPI 는 WebSocket 을 싣지 못해 여기 적는다. 한국어 ↔ 고른 언어 양방향 실시간 통역 중계(자막 + 번역 음성).
 - **연결**: `wss://ccc.medisolveai.xyz/api/interpret`. 토큰 = 핸드셰이크 헤더 `Authorization: Bearer <토큰>`(앱) 또는
@@ -111,15 +139,21 @@ _TAG_TEXT = {
     d.T_PHOTO: "여권 스캔 · 신분증 사진 열람 · KOS 재전송 · 삭제.",
     d.T_CHAT: "직원 채팅 — 사람 · 방 · 메시지 · 읽음 · 사진 · 동영상. 다섯 역할 모두 · 가짜 스냅샷 모드에서도 된다.",
     d.T_HEALTH: "서버 상태 확인(로그인 없음).",
+    d.T_EXT: "링키 · 차티 같은 외부 연동처용 — `X-Api-Key` 헤더로 연다. 직원 로그인 토큰으로는 열리지 않는다.",
 }
 TAGS: list[dict[str, str]] = [{"name": k, "description": v} for k, v in _TAG_TEXT.items()]
 
 
 BEARER = "BearerAuth"
+EXT_KEY = "ExtApiKey"
 
 
 def _needs_login(dep: Dependant) -> bool:
     return dep.call is require_login or any(_needs_login(x) for x in dep.dependencies)
+
+
+def _needs_ext_key(dep: Dependant) -> bool:
+    return dep.call is require_ext_key or any(_needs_ext_key(x) for x in dep.dependencies)
 
 
 def _api_routes(routes: list[Any]) -> list[Any]:
@@ -149,14 +183,17 @@ def _patch(schema: dict[str, Any], routes: list[Any]) -> None:
     comps = schema.setdefault("components", {})
     comps["securitySchemes"] = {BEARER: {
         "type": "http", "scheme": "bearer",
-        "description": "`POST /api/auth/login` 응답의 `token`. 헤더 `Authorization: Bearer <token>` 으로 보낸다."}}
+        "description": "`POST /api/auth/login` 응답의 `token`. 헤더 `Authorization: Bearer <token>` 으로 보낸다."},
+        EXT_KEY: {"type": "apiKey", "in": "header", "name": "X-Api-Key",
+                  "description": "연동처별 API 키(링키 · 차티 각각). 직원 Bearer 와 다르다."}}
     paths = schema.get("paths", {})
     for r in _api_routes(routes):
-        if r.include_in_schema and _needs_login(r.dependant):
+        scheme = BEARER if _needs_login(r.dependant) else EXT_KEY if _needs_ext_key(r.dependant) else None
+        if r.include_in_schema and scheme:
             for m in r.methods or ():
                 op = paths.get(r.path_format, {}).get(m.lower())
                 if op is not None:
-                    op["security"] = [{BEARER: []}]
+                    op["security"] = [{scheme: []}]
     # FastAPI 기본 422 는 이 서버가 내지 않는다(검증 오류 = 400 invalid_request · main 의 처리기) — 문서에서 뺀다
     for item in paths.values():
         for op in item.values():

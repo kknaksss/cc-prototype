@@ -479,6 +479,50 @@ class Tx:
             if r["kos_id"] not in keep_kos_ids:
                 self._update(table, r["id"], {"present": 0})
 
+    # ---------------------------------------------------------------- 메뉴(SPEC-008 §3.2) — kos_id 표 = upsert
+    def upsert_composition(self, option_kos_id: str, seq: int, fields: dict[str, Any]) -> int:
+        row = self.con.execute("SELECT id FROM menu_composition WHERE option_kos_id = ? AND seq = ?",
+                               (option_kos_id, seq)).fetchone()
+        if row:
+            self._update("menu_composition", row["id"], fields)
+            return int(row["id"])
+        return self._insert("menu_composition", {"option_kos_id": option_kos_id, "seq": seq, **fields})
+
+    def mark_absent_compositions(self, keep: set[tuple[str, int]]) -> None:
+        """이번 getProducts 결과에 없는 구성 — present = 0(행은 남김 · 키 = (option_kos_id, seq))."""
+        for r in self.con.execute("SELECT id, option_kos_id, seq FROM menu_composition WHERE present = 1").fetchall():
+            if (r["option_kos_id"], r["seq"]) not in keep:
+                self._update("menu_composition", r["id"], {"present": 0})
+
+    def upsert_target_country(self, raw: str, fields: dict[str, Any]) -> int:
+        row = self.con.execute("SELECT id FROM menu_target_country WHERE raw = ?", (raw,)).fetchone()
+        if row:
+            self._update("menu_target_country", row["id"], fields)
+            return int(row["id"])
+        return self._insert("menu_target_country", {"raw": raw, **fields})
+
+    def mark_absent_target_countries(self, keep_raws: set[str]) -> None:
+        for r in self.con.execute("SELECT id, raw FROM menu_target_country WHERE present = 1").fetchall():
+            if r["raw"] not in keep_raws:
+                self._update("menu_target_country", r["id"], {"present": 0})
+
+    def set_option_medical_service(self, option_kos_id: str, medical_service_kos_id: str) -> None:
+        self.con.execute("UPDATE menu_option SET medical_service_kos_id = ? WHERE kos_id = ?",
+                         (medical_service_kos_id, option_kos_id))
+
+    def menu_rows(self, table: str, present_only: bool = True) -> list[dict[str, Any]]:
+        """메뉴 표 행(dict) — 정렬은 부르는 쪽이 한다."""
+        sql = f"SELECT * FROM {table}" + (" WHERE present = 1" if present_only else "") + " ORDER BY id"
+        return [dict(r) for r in self.con.execute(sql)]
+
+    # ---------------------------------------------------------------- 외부 연동 호출 기록(SPEC-008 §3.4)
+    def add_ext_call(self, at: datetime, client: str | None, endpoint: str, status: int, outcome: str) -> int:
+        return self._insert("ext_call", {"at": at, "client": client, "endpoint": endpoint, "status": status,
+                                         "outcome": outcome})
+
+    def ext_calls(self) -> list[dict[str, Any]]:
+        return [dict(r) for r in self.con.execute("SELECT * FROM ext_call ORDER BY id")]
+
     def reservations(self, day: str | None = None, present_only: bool = True) -> list[Reservation]:
         sql, args = "SELECT * FROM reservation WHERE 1 = 1", []
         if day is not None:

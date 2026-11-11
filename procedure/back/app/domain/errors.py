@@ -46,3 +46,6 @@ class TooManyRequests(DomainError):
 class BadGateway(DomainError):
     status = 502
 
+
+class ServiceUnavailable(DomainError):
+    status = 503

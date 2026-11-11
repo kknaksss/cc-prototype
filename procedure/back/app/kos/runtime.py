@@ -1,7 +1,7 @@
 """KOS 루프 — 서버 시작: 토큰 2종 → 직원 · 방 1회 → 조회 루프 · 반영 루프(SPEC-003 §2.2).
 
 - 일정 루프(KOS_POLL_SCHEDULE_SEC): 조회 시간 안이면 일정 조회 · 확인 → 그 뒤 시간과 상관없이 대기 op 보내기(재전송 포함)
-- 직원 · 방 루프(KOS_POLL_MASTER_SEC)
+- 직원 · 방 루프(KOS_POLL_MASTER_SEC) — 뒤이어 예약 목록 · 시술 · 상품 메뉴(SPEC-008 §4.1)
 - 반영 루프: 조작 직후 `kick()` 으로 깨어 새 op 을 바로 보낸다
 - 바뀐 뒤마다 `on_change()`(SSE 발행)
 """
@@ -14,6 +14,7 @@ from collections.abc import Callable
 from app.config import Settings
 from app.domain.clock import Clock
 from app.kos.client import KosClient, KosError
+from app.kos.menu_sync import MenuSync
 from app.kos.ops import OpSender
 from app.kos.reservation_sync import ReservationSync
 from app.kos.sync import KosSync
@@ -32,6 +33,7 @@ class KosRuntime:
         self.sync = KosSync(settings, repo, self.client, clock)
         self.sender = OpSender(repo, self.client, clock)
         self.resv = ReservationSync(settings, repo, self.client, clock)  # 예약 현황(SPEC-005 §4.2)
+        self.menu = MenuSync(repo, self.client, clock)  # 시술 · 상품 메뉴(SPEC-008 §4.1)
         self.on_change = on_change
         self.on_staff: Callable[[], None] = lambda: None  # 직원 · 방 조회 뒤 — 계정(doctor) 맞추기(SPEC-004 §3.1)
         self._kick = asyncio.Event()
@@ -60,6 +62,11 @@ class KosRuntime:
             await self.resv.master()
         except Exception as e:
             log.error("KOS 예약 목록 오류: %s", type(e).__name__)
+        # 시술 · 상품 메뉴 — 예약 목록 다음 · 조회 시간과 상관없이(SPEC-008 §4.1)
+        try:
+            await self.menu.run()
+        except Exception as e:
+            log.error("KOS 메뉴 오류: %s", type(e).__name__)
 
     async def tick(self) -> dict | None:
         """일정 조회 1번 + 대기 op 보내기 1번."""

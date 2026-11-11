@@ -27,10 +27,16 @@ from app.api import (
     public_questionnaire,
     reservations,
 )
+from app.api.docs import T_HEALTH
 from app.config import Settings, get_settings
 from app.container import Container, build_container
 from app.domain.errors import DomainError
+from app.openapi_docs import DESCRIPTION, TAGS, TITLE, decorate
 from app.schemas.actions import HealthResponse, KosTokens
+
+HEALTH_DOC = ("로그인 없이 부른다. 서버가 응답하면 늘 `ok: true`. "
+              "`kos` = 서버 DB 에 KOS 토큰이 저장돼 있는지(공개 API · 내부 API 각각) — 토큰이 유효한지는 보지 않는다. "
+              "KOS 를 부르지 않고 DB 만 읽는다. 부수효과 없음.")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)  # 요청 URL(테넌트 id)을 로그에 남기지 않는다
@@ -83,7 +89,10 @@ def create_app(settings: Settings | None = None, container: Container | None = N
         if container.push.client is not None:
             await container.push.client.aclose()
 
-    app = FastAPI(title="procedure backend", version="0.1.0", lifespan=lifespan)
+    # 문서는 /api 아래 — 운영 ingress 가 /api → back · / → front 로 보낸다. 인증 없이 연다(문서만 · 동작은 openapi_docs 참고)
+    app = FastAPI(title=TITLE, version="0.1.0", description=DESCRIPTION, openapi_tags=TAGS, lifespan=lifespan,
+                  docs_url="/api/docs", redoc_url="/api/redoc", openapi_url="/api/openapi.json",
+                  swagger_ui_oauth2_redirect_url="/api/docs/oauth2-redirect")
     app.state.container = container
     app.add_middleware(
         CORSMiddleware,
@@ -119,10 +128,12 @@ def create_app(settings: Settings | None = None, container: Container | None = N
               notifications.router, display.router, public_questionnaire.router, photos.router, chat.router):
         app.include_router(r)
 
-    @app.get("/api/health", response_model=HealthResponse)
+    @app.get("/api/health", response_model=HealthResponse, tags=[T_HEALTH], summary="서버 상태 · KOS 토큰 보유 여부",
+             description=HEALTH_DOC)
     def health() -> HealthResponse:
         open_, internal = app.state.container.kos_tokens()
         return HealthResponse(ok=True, kos=KosTokens(open=open_, internal=internal))
 
+    decorate(app)
     return app
 

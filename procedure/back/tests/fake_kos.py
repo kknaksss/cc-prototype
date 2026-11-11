@@ -58,6 +58,8 @@ RESV_NAMES = {
     "generate-uploading-url", "register-visitor-images",  # 앱 여권 사진(SPEC-004 §6.16 ④-c)
     "get-visitor-images", "delete-visitor-images",  # 사진 삭제(E2E batch 3 #1)
 }
+MENU_NAMES = {"get-categories", "get-products", "get-product-options", "get-procedures", "get-medical-services",
+              "get-machines", "get-medicines", "get-target-countries", "get-ticket-bundles"}
 DAY = datetime(2026, 10, 21, tzinfo=UTC)  # 시험 날짜(수요일) — KST 하루 = 전날 15:00Z ~ 15:00Z
 
 
@@ -179,6 +181,22 @@ class ResvFake:
         self._pending: list[list] = []  # [남은 읽기, 적용 함수]
         self.resv_fail: dict[str, tuple[int, dict]] = {}  # 이름 → (상태, 본문) — 한 번만이 아니라 계속
         self._new = 0
+        self.visitors_page: dict | None = None  # get-visitors 응답을 통째로(외부 조회 시험)
+        self.bundles: dict[str, dict] = {}  # visitorId → get-ticket-bundles 응답 통째로(없으면 {})
+        # 시술 · 상품 메뉴(SPEC-008 §4.1) — 작업 이름 → data 값(배열이 아니면 모양 오류 시험). 기본 = 빈 메뉴
+        self.menu: dict[str, object] = {n: [] for n in MENU_NAMES - {"get-product-options", "get-ticket-bundles"}}
+        self.option_services: dict[str, dict] = {}  # SINGLE 옵션 id → getProductOptions 의 medicalService(없으면 응답에서 빠짐)
+
+    def menu_handle(self, name, body):
+        if name == "get-ticket-bundles":
+            return httpx.Response(200, json=deepcopy(self.bundles.get(body.get("visitorId"), {})))
+        if name == "get-product-options":
+            opts = [o for p in self.menu.get("get-products") or [] if isinstance(p, dict) for o in p.get("options") or []]
+            out = [{**{k: v for k, v in deepcopy(o).items() if k != "compositions"},
+                    "medicalService": deepcopy(self.option_services[o["id"]])}
+                   for o in opts if o["id"] in body["optionIds"] and o["id"] in self.option_services]
+            return httpx.Response(200, json={"data": out})
+        return httpx.Response(200, json={"data": deepcopy(self.menu.get(name))})
 
     def _resv_sch(self, sid):
         return next((x for x in self.resv if x["id"] == sid), None)
@@ -257,6 +275,8 @@ class ResvFake:
             return httpx.Response(200, json={"data": deepcopy(v)}) if v else httpx.Response(
                 400, json={"className": "InvalidRequestException", "errorProperties": [{"key": "id", "reason": "NotFound"}]})
         if name == "get-visitors":
+            if self.visitors_page is not None:  # 외부 조회 시험(SPEC-008 §4.2) — 받은 본문과 상관없이 이 응답 그대로
+                return httpx.Response(200, json=deepcopy(self.visitors_page))
             q = (body.get("visitorName") or "").lower()
             found = [v for v in self.visitors.values() if q in v["name"].lower()]
             if body.get("chartNumber"):
@@ -302,6 +322,8 @@ class ResvFake:
         if name == "find-duplicated-visitor":
             for v in self.visitors.values():
                 if v["name"] == body.get("name") and body.get("birthDateUtc") and v.get("dateOfBirth"):
+                    return httpx.Response(200, json={"data": deepcopy(v)})
+                if body.get("email") and v.get("email") == body["email"]:  # 저장된 이메일과 같은 고객(조사 4 §2)
                     return httpx.Response(200, json={"data": deepcopy(v)})
             return ok
         if name == "create-visitor":
@@ -525,6 +547,8 @@ class FakeKos(ResvFake):
             today = [x for x in self.resv if (x.get("zone") or {}).get("id") == ZONE and x.get("listed", True)]
             return httpx.Response(200, json={"data": [{"zone": {"id": ZONE},
                                                        "schedules": deepcopy(self.schedules) + _public(today)}]})
+        if name in MENU_NAMES:
+            return self.menu_handle(name, body)
         if name in RESV_NAMES or (name in ("change-flow-step", "change-tasks-room")
                                   and self._resv_sch(body.get("scheduleId") or body.get("id"))):
             return self.resv_handle(name, body, kind)

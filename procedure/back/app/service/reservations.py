@@ -475,8 +475,9 @@ class ReservationService:
             raise NotFound("없는 예약이에요")
         return r
 
-    def _event(self, tx: Tx, actor: Account, type_: str, payload: dict[str, Any]) -> int:
-        return tx.add_event(self.clock.now(), actor.login_id, type_, None, payload)
+    def _event(self, tx: Tx, actor: Account | str, type_: str, payload: dict[str, Any]) -> int:
+        """actor = 직원 계정(→ login_id) 또는 행위자 문자열 그대로(외부 연동 `ext:<연동처>` · SPEC-008 §3.5)."""
+        return tx.add_event(self.clock.now(), actor if isinstance(actor, str) else actor.login_id, type_, None, payload)
 
 
     # ------------------------------------------------------------------ §7.3 예약 상세
@@ -706,7 +707,7 @@ class ReservationService:
             tx.add_identity_check(customer_id, status, now, actor.login_id, ev)
 
     # ------------------------------------------------------------------ KOS 쓰기 공통(§4.4 — 동기)
-    async def kos_write(self, actor: Account, op: str, call, *, reservation_id: int | None = None,
+    async def kos_write(self, actor: Account | str, op: str, call, *, reservation_id: int | None = None,
                         customer_id: int | None = None, step: str | None = None) -> dict[str, Any]:
         """KOS 쓰기 1번 — 실패면 event_log(kos_rejected) 1줄 + 409 kos_rejected / 502 kos_unavailable."""
         try:
@@ -770,7 +771,7 @@ class ReservationService:
         self._pins[kos_id] = (step, now, now + timedelta(seconds=PIN_SEC))
 
     # ------------------------------------------------------------------ §5.5 예약 등록
-    async def create(self, actor: Account, body: CreateReservationRequest) -> CreateReservationResponse:
+    async def create(self, actor: Account | str, body: CreateReservationRequest) -> CreateReservationResponse:
         start = parse_at(body.start)
         day = start.astimezone(KST).date()
         with self.repo.tx() as tx:
@@ -887,7 +888,7 @@ class ReservationService:
         if not identifiable(new.name, phone=phone, sns=sns, email=new.email, passport=new.passportNumber, birth=new.dateOfBirth):
             raise Conflict("not_identifiable", "고객을 구분할 수 있는 정보가 부족합니다")
 
-    async def _new_visitor(self, actor: Account, new: NewCustomer, birth: date | None) -> tuple[str, int]:
+    async def _new_visitor(self, actor: Account | str, new: NewCustomer, birth: date | None) -> tuple[str, int]:
         """(검사 끝난) 신규 고객 → find-duplicated-visitor → create-visitor(§5.5 · §8)."""
         phone = new.phone.model_dump() if new.phone else None
         sns = new.sns.model_dump() if new.sns else None

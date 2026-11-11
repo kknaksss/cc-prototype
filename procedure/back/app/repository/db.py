@@ -231,6 +231,71 @@ CREATE INDEX IF NOT EXISTS chat_photo_file ON chat_photo (file_name);
 """
 
 
+# 시술 · 상품 메뉴(SPEC-008 §3.2) — KOS 메뉴 9종 · 표마다 조회 칸 + raw(KOS 원본 객체 json · 고치지 않음) · present(「없음」 표시)
+MENU_SCHEMA = """
+CREATE TABLE IF NOT EXISTS menu_category (
+    id INTEGER PRIMARY KEY, kos_id TEXT NOT NULL UNIQUE, name TEXT NOT NULL DEFAULT '', "order" INTEGER NOT NULL DEFAULT 0,
+    opened INTEGER NOT NULL DEFAULT 1, deleted INTEGER NOT NULL DEFAULT 0,
+    raw TEXT NOT NULL, present INTEGER NOT NULL DEFAULT 1, synced_at TEXT
+);
+CREATE TABLE IF NOT EXISTS menu_product (       -- raw 에서 options[] 는 뺀다(옵션은 menu_option.raw)
+    id INTEGER PRIMARY KEY, kos_id TEXT NOT NULL UNIQUE, title TEXT NOT NULL DEFAULT '', is_event INTEGER NOT NULL DEFAULT 0,
+    closed INTEGER NOT NULL DEFAULT 0, deleted INTEGER NOT NULL DEFAULT 0,
+    seq INTEGER NOT NULL DEFAULT 0,             -- getProducts 배열 순서 0..
+    category_kos_ids TEXT NOT NULL DEFAULT '[]',
+    raw TEXT NOT NULL, present INTEGER NOT NULL DEFAULT 1, synced_at TEXT
+);
+CREATE TABLE IF NOT EXISTS menu_option (        -- raw 에서 compositions[] 는 뺀다(구성은 menu_composition.raw)
+    id INTEGER PRIMARY KEY, kos_id TEXT NOT NULL UNIQUE, product_kos_id TEXT, seq INTEGER NOT NULL DEFAULT 0,
+    type TEXT, title TEXT NOT NULL DEFAULT '', deleted INTEGER NOT NULL DEFAULT 0,
+    list_price INTEGER, currency TEXT,           -- price.amount(정가 · 부가세 별도)
+    count INTEGER, procedure_kos_id TEXT,        -- SINGLE 만
+    medical_service_kos_id TEXT,                 -- SINGLE 만 — getProductOptions 로 채움(빠진 옵션은 이전 값)
+    raw TEXT NOT NULL, present INTEGER NOT NULL DEFAULT 1, synced_at TEXT
+);
+CREATE INDEX IF NOT EXISTS menu_option_product ON menu_option (product_kos_id);
+CREATE TABLE IF NOT EXISTS menu_composition (   -- KOS 구성에는 id 가 없다 → (옵션, 순서)로 맞춘다
+    id INTEGER PRIMARY KEY, option_kos_id TEXT NOT NULL, seq INTEGER NOT NULL, title TEXT NOT NULL DEFAULT '',
+    count INTEGER, unit_type TEXT, unit_value REAL, list_price INTEGER, currency TEXT, procedure_kos_id TEXT,
+    medical_service_kos_id TEXT, raw TEXT NOT NULL, present INTEGER NOT NULL DEFAULT 1, synced_at TEXT,
+    UNIQUE (option_kos_id, seq)
+);
+CREATE INDEX IF NOT EXISTS menu_composition_option ON menu_composition (option_kos_id);
+CREATE TABLE IF NOT EXISTS menu_procedure (
+    id INTEGER PRIMARY KEY, kos_id TEXT NOT NULL UNIQUE, name TEXT NOT NULL DEFAULT '',
+    raw TEXT NOT NULL, present INTEGER NOT NULL DEFAULT 1, synced_at TEXT
+);
+CREATE TABLE IF NOT EXISTS menu_medical_service (
+    id INTEGER PRIMARY KEY, kos_id TEXT NOT NULL UNIQUE, title TEXT NOT NULL DEFAULT '', status TEXT, code TEXT,
+    procedure_kos_id TEXT, unit_type TEXT, unit_value REAL,
+    raw TEXT NOT NULL, present INTEGER NOT NULL DEFAULT 1, synced_at TEXT
+);
+CREATE TABLE IF NOT EXISTS menu_machine (
+    id INTEGER PRIMARY KEY, kos_id TEXT NOT NULL UNIQUE, name TEXT NOT NULL DEFAULT '',
+    raw TEXT NOT NULL, present INTEGER NOT NULL DEFAULT 1, synced_at TEXT
+);
+CREATE TABLE IF NOT EXISTS menu_medicine (
+    id INTEGER PRIMARY KEY, kos_id TEXT NOT NULL UNIQUE, name TEXT NOT NULL DEFAULT '',
+    raw TEXT NOT NULL, present INTEGER NOT NULL DEFAULT 1, synced_at TEXT
+);
+CREATE TABLE IF NOT EXISTS menu_target_country (  -- id 가 없고 같은 code 가 두 번 온다 → 객체 전체(raw)가 키
+    id INTEGER PRIMARY KEY, raw TEXT NOT NULL UNIQUE, code TEXT, "order" INTEGER,
+    present INTEGER NOT NULL DEFAULT 1, synced_at TEXT
+);
+"""
+
+# 외부 연동 API 호출 기록(SPEC-008 §3.4) — 쌓기만. 이름 · 이메일 · 키 · IP · 고객 · 예약 id 는 싣지 않는다
+EXT_SCHEMA = """
+CREATE TABLE IF NOT EXISTS ext_call (
+    id INTEGER PRIMARY KEY, at TEXT NOT NULL,
+    client TEXT,                                 -- linky | charty | null(키 없음 · 틀림 · 의존성 전에 끝난 요청)
+    endpoint TEXT NOT NULL,                      -- "<METHOD> <경로 틀>" · 매칭 라우트 없으면 "<METHOD> (unknown)"
+    status INTEGER NOT NULL, outcome TEXT NOT NULL  -- ok | 오류 code
+);
+CREATE INDEX IF NOT EXISTS ext_call_at ON ext_call (at);
+"""
+
+
 MIGRATIONS = (("procedure", "room_kos_id", "TEXT"), ("visit", "open_task_seqs", "TEXT NOT NULL DEFAULT '[]'"),
               ("procedure", "kind", "TEXT NOT NULL DEFAULT 'procedure'"), ("account", "password_hash", "TEXT"),
               ("customer", "gender", "TEXT"),
@@ -259,6 +324,7 @@ class Database:
             con.executescript(PUSH_LOG.format(name="push_log"))
             con.executescript(APP_SCHEMA)
             con.executescript(CHAT_SCHEMA)
+            con.executescript(MENU_SCHEMA + EXT_SCHEMA)
             added = set()
             for table, column, kind in MIGRATIONS:  # 이미 있는 DB 파일(compose 볼륨)에 새 열을 더한다
                 cols = {r["name"] for r in con.execute(f"PRAGMA table_info({table})")}

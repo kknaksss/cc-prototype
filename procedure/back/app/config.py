@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     kos_room_task_id: str = ""  # 「방 배정」 기타 작업 id — 비면 get-etcetera-tasks 의 제목 「방 배정」
     kos_resv_cache_sec: float = 10  # 날짜별 예약 조회 캐시(초)
 
+    # 외부 연동 API(SPEC-008 §2.2) — 연동처 키(비면 그 연동처 꺼짐) · 외부 예약 그룹 KOS id(비면 외부 예약만 503)
+    proc_ext_key_linky: str = ""
+    proc_ext_key_charty: str = ""
+    kos_ext_reservation_group_id: str = ""
+
     # ccc 계정(SPEC-004 §2.3) — 비면 그 계정 · 카드를 만들지 않는다
     ccc_admin_id: str = ""
     ccc_doctor_id: str = ""

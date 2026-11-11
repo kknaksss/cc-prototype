@@ -19,6 +19,7 @@ from app.service.board_service import BoardService
 from app.service.chat import ChatService
 from app.service.devices import DeviceService
 from app.service.display import DisplayService
+from app.service.ext import ExtService
 from app.service.fake_board import fake_snapshot
 from app.service.id_photo import PhotoService
 from app.service.interpret.soniox import SonioxStt, SonioxTts, SttConn, TtsConn
@@ -51,6 +52,7 @@ class Container:
     resv: Any = None  # ReservationService — 예약 현황(SPEC-005)
     reception: Any = None  # ReceptionService
     chat: Any = None  # ChatService — 직원 채팅(SPEC-007)
+    ext: Any = None  # ExtService — 외부 연동 API(SPEC-008)
     kos: Any = None  # app.kos.runtime.KosRuntime — KOS env 가 있을 때만
     # 통역 — Soniox 연결 팩토리(시험에서 가짜로 바꾼다 · SPEC-004 §4.1)
     open_stt: Callable[[str, str], Awaitable[SttConn]] = field(default=SonioxStt.open)
@@ -117,6 +119,7 @@ def build_container(settings: Settings, clock: Clock | None = None) -> Container
     c.resv = ReservationService(settings, repo, clock, lambda: c.kos)
     c.resv.displays_of = c.display.of_reservation  # 상세 응답 displays[](§5-3 「닫기」)
     c.reception = ReceptionService(c.resv)
+    c.ext = ExtService(settings, repo, clock, c.resv)  # 외부 연동 API(SPEC-008) — 예약은 c.resv.create 를 다시 쓴다
     c.questionnaire = QuestionnaireService(repo, clock, settings, c.resv, c.display)  # 고객 문진 웹(SPEC-006)
     c.photos = PhotoService(repo, clock, settings, c.resv.client)
     c.scan = PassportScanService(repo, c.resv, c.devices, c.photos, c.display)

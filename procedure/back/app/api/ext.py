@@ -9,7 +9,7 @@ import json
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, Request
+from fastapi import APIRouter, Depends, Header, Query, Request
 from fastapi.responses import JSONResponse, Response
 
 from app.api.deps import Ctr, get_container
@@ -17,11 +17,15 @@ from app.api.docs import T_EXT, errors
 from app.api.public_questionnaire import client_ip
 from app.domain.errors import TooManyRequests, Unauthorized
 from app.schemas.ext import (
+    ExtAvailability,
+    ExtCustomerRequest,
+    ExtCustomerReservations,
     ExtLookupRequest,
     ExtLookupResponse,
     ExtMenu,
     ExtReservationRequest,
     ExtReservationResponse,
+    ExtVisits,
 )
 from app.service.ext import RATE, UNAUTHORIZED
 
@@ -97,8 +101,8 @@ EXT_UNAUTHORIZED = (401, "ext_unauthorized",
                     "직원 로그인이 아니라 `X-Api-Key` 헤더의 연동처 키가 없거나 · 비었거나 · 어느 연동처 키와도 같지 않거나 · "
                     "그 연동처 키 env 가 비어 꺼졌을 때. 직원 `Authorization: Bearer` 토큰만 실린 경우도 같다")
 EXT_RATE = (429, "too_many_requests",
-            "그 키로 최근 60초 안에 60번을 이미 불렀을 때(세 엔드포인트 합산) · 그 IP 의 연동처 없는 오류 응답이 최근 60초 안에 "
-            "10번 이상일 때(키 검사 전에 막는다)")
+            "그 키로 최근 60초 안에 60번을 이미 불렀을 때(외부 경로 전부 합산) · "
+            "그 IP 의 연동처 없는 오류 응답이 최근 60초 안에 10번 이상일 때(키 검사 전에 막는다)")
 LOOKUP_INVALID = (400, "invalid_request",
                   "본문이 JSON 이 아님(키 검사보다 먼저) · 필수 칸 없음 · 타입 · 모르는 키 · "
                   "앞뒤 공백을 지우면 빈 `name` · `email`. message = `<위치>: <이유>`")
@@ -199,3 +203,84 @@ async def lookup(body: ExtLookupRequest, c: Ctr, _: ExtClient) -> ExtLookupRespo
 async def reserve(body: ExtReservationRequest, c: Ctr, client: ExtClient) -> ExtReservationResponse:
     return ExtReservationResponse.model_validate(await c.ext.reserve(client, body.name, body.email, body.start, body.memo))
 
+
+
+# ------------------------------------------------------------------ 0.3.0(add1) — SPEC-008 §6.6 ~ §6.9
+AVAIL_INVALID = (400, "invalid_request",
+                 "질의 `date` 없음(message `query.date: …`) · 빈 문자열 · `YYYY-MM-DD` 꼴 아님 · 오늘(KST) 앞 · "
+                 "오늘 + 90일 뒤(message `date: <이유>`)")
+CUSTOMER_INVALID = (400, "invalid_request",
+                    "본문이 JSON 이 아님(키 검사보다 먼저) · 필수 칸 없음 · 타입 · 모르는 키 · "
+                    "앞뒤 공백을 지우면 빈 `name` · `email`. message = `<위치>: <이유>`")
+HISTORY_502 = (502, "kos_unavailable", "KOS 이름 검색 · 고객 일정 읽기가 실패했을 때(네트워크 · 5xx · 4xx · KOS 인증 실패 · "
+                                       "응답 모양 오류 — 빈 목록이 아니다). message 「KOS 에 연결하지 못했어요」")
+OVERLAP = "**오늘 겹침**: 오늘 이미 시작한 일정은 과거 시술과 예약 내역 둘 다에 나온다(과거 = 지금 앞 · 내역 = 오늘 0시 이후)."
+
+AVAIL_DOC = SHARED + """
+그날(`date` · KST) **서버 기본 예약 그룹 하나**(env `KOS_EXT_RESERVATION_GROUP_ID` — 외부 예약이 들어가는 그 그룹)의 예약 가능한
+칸을 준다. 칸마다 시작 시각과 남은 자리 수만 준다(그룹 · 구역 이름 · 구역별 정원 · 예약 수 없음).
+
+- **날짜 범위**: 오늘(KST) ~ 오늘 + 90일. 지난 날짜 · 범위 밖 · `YYYY-MM-DD` 가 아닌 값은 `400`.
+- **후보 시각**: 그 그룹 시간표의 그날 운영 구간(쉬는 시간 뺌) 안에서 자정 기준 그룹 간격 경계마다(시작 + 간격 ≤ 구간 끝).
+  휴무 요일이면 `slots: []`.
+- **남은 자리** = 그 그룹의 켜진 구역마다 `max(0, 정원 − 예약 수)` 를 더한 값. **0 인 칸 · (오늘이면) 시작이 지금과 같거나
+  지난 칸 · 자리 수를 모르는 칸(KOS 가 정원을 주지 않음)은 나오지 않는다 — 목록에 없어도 예약이 될 수 있다.**
+- **예약과 같은 규칙**: 요청마다 KOS 칸 정원을 새로 읽어 서버 사본을 바꾸고, 예약(`POST /api/ext/reservations`)의 정원 검사도
+  그 사본을 본다. 그래서 **이 목록의 `start` 로 예약하면 정원 때문에 거절되지 않는다 — 그 사이 다른 예약이 끼면
+  `409 slot_full`** 이다. 운영 시간 밖 시각의 예약을 이 목록이 막지는 않는다.
+- 설정(기본 그룹 env 가 빔 · 그 그룹이 KOS 에서 사라짐 · 켜진 구역 0)이 맞지 않으면 KOS 를 부르기 전에 `503`.
+- **KOS 호출**: 요청 1번 = KOS 공개 칸 정원 조회 1번(`400` · `503` 이면 0번). 부작용: 서버 칸 정원 사본(직원 예약 현황도 보는
+  값)을 새로 바꾼다. KOS 쓰기 없음.
+"""
+
+VISITS_DOC = SHARED + NAME_RULE + """
+1명이 맞으면 그 고객의 **과거 시술**(지금보다 앞선 KOS 일정)을 **최신 순 · 최근 50건까지** 준다. 고객 찾기는 조회
+(`POST /api/ext/customers/lookup`)와 같은 함수 · 같은 응답이다(「없음」 `404` 는 조회 `404` 와 바이트까지 같다).
+
+- 칸 = 날짜 · 시작 · 결과(`completed` · `noshow` · `canceled` · `other`) · 시술 이름 목록. **예약 메모 · 상담 메모 · 의사 이름은
+  내지 않는다.** 취소 · 부도 일정도 결과 칸으로 나온다.
+- 지난 일정이 없으면 `visits: []`(고객은 있음). 일정 읽기가 실패하면 빈 배열이 아니라 `502`.
+- """ + OVERLAP + """
+- **KOS 호출**: 이름 검색 1번 + 고객 일정 1번 = 2번(`404` · `409` 이면 1번). 서버 사본에 쓰지 않는다 · KOS 쓰기 없음.
+"""
+
+CUSTOMER_RESV_DOC = SHARED + NAME_RULE + """
+1명이 맞으면 그 고객의 **예약 내역**(오늘(KST) 0시 이후 KOS 일정)을 **시작 오름차순**으로 준다(개수 상한 없음 · **취소 · 부도
+포함**). 고객 찾기는 조회와 같은 함수 · 같은 응답이다(「없음」 `404` 는 조회 `404` 와 바이트까지 같다).
+지난 일정은 과거 시술에서 본다.
+
+- 칸 = `reservationId` · 날짜 · 시작 · 끝(첫 묶음) · 상태(직원 예약 현황의 주 상태 그대로). 그룹 · 구역 이름 · 메모 · 담당자 ·
+  상담사는 내지 않는다.
+- **`reservationId`** = ccc 예약 id(예약 응답과 같은 체계). ccc 서버 사본에 그 일정이 없으면(KOS 에서 직접 만든 예약을 서버가
+  아직 읽지 않음) **null** 이다. 외부 예약 API 로 만든 예약은 늘 id 가 있다.
+- 오늘 이후 일정이 없으면 `reservations: []`. 일정 읽기가 실패하면 빈 배열이 아니라 `502`.
+- """ + OVERLAP + """
+- **KOS 호출**: 이름 검색 1번 + 고객 일정 1번 = 2번(`404` · `409` 이면 1번). 서버 사본에 쓰지 않는다 · KOS 쓰기 없음.
+"""
+
+
+@router.get("/availability", response_model=ExtAvailability, summary="예약 가능 시간대 — 날짜 → 칸 · 남은 자리",
+            description=AVAIL_DOC,
+            responses=errors(*COMMON, AVAIL_INVALID,
+                             (502, "kos_unavailable", "KOS 칸 정원 조회가 실패했을 때(네트워크 · 5xx · 4xx · KOS 인증 실패 · "
+                                                      "응답 모양 오류 · KOS 설정 없음 — 사본은 그대로). "
+                                                      "message 「KOS 에 연결하지 못했어요」"),
+                             (503, "ext_not_configured", "기본 예약 그룹 env 가 비었거나 · 그 그룹이 KOS 에서 사라졌거나 · "
+                                                         "그 그룹에 켜진 구역이 0 일 때(KOS 를 부르기 전)")))
+async def availability(c: Ctr, _: ExtClient,
+                       date: str = Query(description="볼 날짜 `YYYY-MM-DD`(KST) — 오늘 ~ 오늘 + 90일",
+                                         examples=["2026-11-20"])) -> ExtAvailability:
+    return ExtAvailability.model_validate(await c.ext.availability(date))
+
+
+@router.post("/customers/visits", response_model=ExtVisits, summary="고객 과거 시술 — 이름 + 이메일 → 지난 일정(최신 50)",
+             description=VISITS_DOC, responses=errors(*COMMON, CUSTOMER_INVALID, NOT_FOUND_ROW, AMBIGUOUS_ROW, HISTORY_502))
+async def visits(body: ExtCustomerRequest, c: Ctr, _: ExtClient) -> ExtVisits:
+    return ExtVisits.model_validate(await c.ext.visits(body.name, body.email))
+
+
+@router.post("/customers/reservations", response_model=ExtCustomerReservations,
+             summary="고객 예약 내역 — 이름 + 이메일 → 오늘 이후 예약", description=CUSTOMER_RESV_DOC,
+             responses=errors(*COMMON, CUSTOMER_INVALID, NOT_FOUND_ROW, AMBIGUOUS_ROW, HISTORY_502))
+async def customer_reservations(body: ExtCustomerRequest, c: Ctr, _: ExtClient) -> ExtCustomerReservations:
+    return ExtCustomerReservations.model_validate(await c.ext.reservations(body.name, body.email))

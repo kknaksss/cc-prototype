@@ -269,8 +269,10 @@ def test_route_count_71(client):
     assert ("PUT", URL) in http and ws == ["/api/interpret"]
     assert {("POST", "/api/procedures/{procedure_id}/undo-start"), ("POST", "/api/procedures/{procedure_id}/undo-finish")} <= http
     assert ("PUT", "/api/reservations/notice") in http
-    ext = {x for x in http if x[1].startswith("/api/ext/")}  # 외부 연동 3(SPEC-008 §6) — 직원 경로 수와 따로 센다
-    assert ext == {("GET", "/api/ext/menu"), ("POST", "/api/ext/customers/lookup"), ("POST", "/api/ext/reservations")}
+    ext = {x for x in http if x[1].startswith("/api/ext/")}  # 외부 연동 6(SPEC-008 §6 · 0.3.0) — 직원 경로 수와 따로 센다
+    assert ext == {("GET", "/api/ext/menu"), ("POST", "/api/ext/customers/lookup"), ("POST", "/api/ext/reservations"),
+                   ("GET", "/api/ext/availability"), ("POST", "/api/ext/customers/visits"),
+                   ("POST", "/api/ext/customers/reservations")}
     http -= ext
     assert len([x for x in http - APP_ROUTES if "/reservations" in x[1] or "/customers" in x[1]]) == 16
     assert len(APP_ROUTES) == 16 and APP_ROUTES <= http
@@ -281,4 +283,4 @@ def test_route_count_71(client):
     assert len([x for x in http if x[1].startswith("/api/chat")]) == 20
     assert len(http - CHAT_ROUTES) + len(ws) == 51, sorted(http)
     assert len(http) + len(ws) == 71, sorted(http)
-    assert len(http) + len(ext) + len(ws) == 74  # + 외부 연동 3
+    assert len(http) + len(ext) + len(ws) == 77  # + 외부 연동 6

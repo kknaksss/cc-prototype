@@ -186,6 +186,9 @@ class ResvFake:
         # 시술 · 상품 메뉴(SPEC-008 §4.1) — 작업 이름 → data 값(배열이 아니면 모양 오류 시험). 기본 = 빈 메뉴
         self.menu: dict[str, object] = {n: [] for n in MENU_NAMES - {"get-product-options", "get-ticket-bundles"}}
         self.option_services: dict[str, dict] = {}  # SINGLE 옵션 id → getProductOptions 의 medicalService(없으면 응답에서 빠짐)
+        self.slots_page: dict | None = None  # get-reservation-slots-by-groups 응답 통째로(외부 가능 시간대 시험)
+        # (그룹 id, 구역 id, KST "HH:MM") → {capacity, reservationCount} 덮어쓰기 · None = 그 칸 행 없음
+        self.slot_patch: dict[tuple[str, str, str], dict | None] = {}
 
     def menu_handle(self, name, body):
         if name == "get-ticket-bundles":
@@ -260,6 +263,8 @@ class ResvFake:
             out = [x for x in self.resv if x.get("listed", True) and lo <= _start(x) < hi]
             return httpx.Response(200, json={"data": _public(out)})
         if name == "get-reservation-slots-by-groups":
+            if self.slots_page is not None:  # 외부 가능 시간대 시험(SPEC-008 §6.6) — 응답 통째로
+                return httpx.Response(200, json=deepcopy(self.slots_page))
             return httpx.Response(200, json={"data": self._slots(body)})
         if name == "get-notices":
             lo, hi = _rng(body)
@@ -452,10 +457,17 @@ class ResvFake:
                             and o["reservationGroup"]["reservationGroupId"] == g["id"]
                             and o["reservationGroup"]["zoneId"] == cap["zoneId"]
                             and t <= _parse(o["reservationTime"]["startDateTimeUtc"]) < e)
-                    slots.append({"reservationGroupId": g["id"], "zone": {"id": cap["zoneId"], "name": ""},
-                                  "startDateTimeUtc": z(t), "endDateTimeUtc": z(e), "capacity": cap["intervalCapacity"],
-                                  "reservationCount": n})
+                    row = {"reservationGroupId": g["id"], "zone": {"id": cap["zoneId"], "name": ""},
+                           "startDateTimeUtc": z(t), "endDateTimeUtc": z(e), "capacity": cap["intervalCapacity"],
+                           "reservationCount": n}
                     t = e
+                    hhmm = (datetime.fromisoformat(row["startDateTimeUtc"].replace("Z", "+00:00")) + timedelta(hours=9))
+                    key = (g["id"], cap["zoneId"], hhmm.strftime("%H:%M"))
+                    if key in self.slot_patch:
+                        if self.slot_patch[key] is None:
+                            continue
+                        row.update(self.slot_patch[key])
+                    slots.append(row)
                 out.append({"reservationGroupId": g["id"], "zoneId": cap["zoneId"], "slots": slots})
         return out
 

@@ -74,15 +74,18 @@ DESCRIPTION = """
 email 이 없는 기존 고객은 조회하면 `404` 다. 그 고객을 처음 예약하면 KOS 에 고객이 하나 더 생길 수 있다(데스크가 정리한다).
 이름은 KOS 에 저장된 띄어쓰기 그대로 보내야 한다(띄어쓰기가 다르면 찾지 못해 `404`).
 
-- **경로 셋**: `GET /api/ext/menu`(시술 · 상품 메뉴) · `POST /api/ext/customers/lookup`(이름 + 이메일 → 고객 + 남은 시술권) ·
-  `POST /api/ext/reservations`(이름 + 이메일 + 시작 시각 → 예약). tag 「외부 연동」.
+- **경로 여섯**: `GET /api/ext/menu`(시술 · 상품 메뉴) · `POST /api/ext/customers/lookup`(이름 + 이메일 → 고객 + 남은 시술권) ·
+  `POST /api/ext/reservations`(이름 + 이메일 + 시작 시각 → 예약) · `GET /api/ext/availability?date=`(그날 예약 가능 시간대) ·
+  `POST /api/ext/customers/visits`(이름 + 이메일 → 과거 시술) · `POST /api/ext/customers/reservations`(이름 + 이메일 → 예약 내역).
+  tag 「외부 연동」.
 - **인증**: 헤더 **`X-Api-Key: <연동처 키>`**. 연동처(링키 · 차티)마다 키가 따로 있다(서버 env · 키 교체 = 배포 설정).
   Swagger **Authorize** 의 `ExtApiKey` 에 넣는다. 직원 API 와 섞이지 않는다 — 외부 경로는 `Authorization: Bearer` 를 보지 않고,
   직원 경로는 `X-Api-Key` 를 보지 않는다(각각 `401 ext_unauthorized` · `401 unauthorized`).
 - **검사 순서**: 키(`401 ext_unauthorized`) → 호출 제한(`429 too_many_requests`) → 칸 검증(`400 invalid_request` — 필수 · 타입 ·
   모르는 키 · 빈 값) → 엔드포인트 규칙. 단 IP 차단 `429` 는 무엇보다 먼저 · JSON 이 아닌 본문 `400` 은 키보다 먼저 · 없는 경로
   `404 not_found` 는 키 없이 난다.
-- **호출 제한**(서버 메모리 · 미끄러지는 60초 창 · 응답 헤더 없음): 키당 최근 60초 60번(세 경로 합산 · 막힌 요청은 세지 않음).
+- **호출 제한**(서버 메모리 · 미끄러지는 60초 창 · 응답 헤더 없음): 키당 최근 60초 60번(외부 경로 전부 합산 ·
+  막힌 요청은 세지 않음).
   연동처가 정해지지 않은 오류 응답(키 없음 · 틀림 `401` · 없는 경로 `404` · 깨진 본문 `400` · 메서드 `405`)이 같은 IP 에서 최근
   60초 10번이면 그 IP 의 `/api/ext` 요청을 키 검사 전에 `429` 로 막는다. IP = `CF-Connecting-IP` → `X-Forwarded-For` 첫 값 →
   소켓 주소(카운터에만 쓰고 저장하지 않음).

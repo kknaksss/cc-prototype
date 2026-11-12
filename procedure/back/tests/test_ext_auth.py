@@ -254,3 +254,41 @@ def test_w6_unhandled_error_logged_and_no_store(env, monkeypatch, caplog):
     assert [(x["client"], x["endpoint"], x["status"], x["outcome"]) for x in ext_calls(c)] == [
         ("linky", "GET /api/ext/menu", 500, "internal_error")]
     assert "비밀 문구" not in caplog.text and "a@example.com" not in caplog.text and "RuntimeError" in caplog.text
+
+
+# ------------------------------------------------------------------ T44 공유 규칙(0.3.0 새 세 경로 · 0.3.1)
+NEW3 = (("get", "/api/ext/availability", {"params": {"date": "2026-10-22"}}),
+        ("post", "/api/ext/customers/visits", {"json": {"name": "고객", "email": "a@example.com"}}),
+        ("post", "/api/ext/customers/reservations", {"json": {"name": "고객", "email": "a@example.com"}}))
+
+
+def test_t44_shared_rules_new_three(env, caplog):
+    c, fake, cl, mono = env
+    caplog.set_level(logging.INFO)
+    fake.visitors_page = {"count": 0, "data": []}
+    for m, path, kw in NEW3:
+        r = getattr(cl, m)(path, **kw)
+        assert (r.status_code, code(r)) == (401, "ext_unauthorized") and r.headers["cache-control"] == "no-store"
+        mono[0] += 61.0  # 연동처 없는 오류 1분 1줄 — 다음 경로도 1줄 남게
+        r = getattr(cl, m)(path, headers=H_LINKY, **kw)
+        assert r.status_code in (200, 404) and r.headers["cache-control"] == "no-store"
+    rows = ext_calls(c)
+    assert [(x["endpoint"], x["status"]) for x in rows if x["status"] == 401] == [
+        ("GET /api/ext/availability", 401), ("POST /api/ext/customers/visits", 401),
+        ("POST /api/ext/customers/reservations", 401)]
+    assert {x["endpoint"] for x in rows if x["client"] == "linky"} == {
+        "GET /api/ext/availability", "POST /api/ext/customers/visits", "POST /api/ext/customers/reservations"}
+    r = cl.post("/api/ext/availability", params={"date": "2026-10-22"}, headers=H_LINKY)
+    assert (r.status_code, code(r)) == (405, "http_error")
+    blob = repr(ext_calls(c)) + caplog.text
+    assert "a@example.com" not in blob and "고객" not in blob and LINKY not in blob
+
+
+def test_t44_one_limit_across_six(env):
+    c, fake, cl, mono = env
+    for _ in range(30):
+        assert cl.get("/api/ext/menu", headers=H_LINKY).status_code == 200
+    for _ in range(30):
+        assert cl.get("/api/ext/availability", params={"date": "2026-10-22"}, headers=H_LINKY).status_code == 200
+    r = cl.post("/api/ext/customers/visits", json={"name": "고객", "email": "a@example.com"}, headers=H_LINKY)
+    assert (r.status_code, code(r)) == (429, "too_many_requests")

@@ -151,3 +151,53 @@ class ExtLookupResponse(BaseModel):
 class ExtReservationResponse(BaseModel):
     reservationId: int = Field(description="만든 예약의 ccc id")
     customerId: int = Field(description="예약 고객의 ccc id(새 고객이면 새로 만든 행)")
+
+
+# ------------------------------------------------------------------ 0.3.0(add1) — 가능 시간대 · 과거 시술 · 예약 내역
+class ExtCustomerRequest(ExtLookupRequest):
+    """과거 시술 · 예약 내역 요청 — 조회(`ExtLookupRequest`)와 같은 칸 · 같은 검증. 이름 · 이메일은 본문으로만 받는다."""
+
+
+class ExtSlot(BaseModel):
+    start: str = Field(description=(
+        "칸 시작 ISO `+09:00`(초 단위). 이 값을 그대로 예약(`POST /api/ext/reservations`) `start` 로 보내면 된다"))
+    remainingSeats: int = Field(description=(
+        "남은 자리 수(1 이상) — 기본 그룹의 켜진 구역마다 `max(0, 정원 − 예약 수)` 를 더한 값. 0 인 칸은 나오지 않는다"))
+
+
+class ExtAvailability(BaseModel):
+    date: str = Field(description="요청 날짜 `YYYY-MM-DD`(KST)")
+    intervalMinutes: int = Field(description="기본 예약 그룹의 시간 간격(분). 칸 끝 = `start` + 이 값(예약의 끝과 같다)")
+    slots: list[ExtSlot] = Field(description="예약 가능한 칸 — 시각 오름차순. 없으면 `[]`(휴무 요일 · 다 참 · 다 지남)")
+
+
+class ExtVisit(BaseModel):
+    date: str = Field(description="일정 시작의 KST 날짜 `YYYY-MM-DD`")
+    start: str = Field(description="일정 시작 ISO `+09:00`(묶음 시작 중 가장 이른 값)")
+    result: Literal["completed", "noshow", "canceled", "other"] = Field(description=(
+        "결과 — KOS 예약 상태가 `COMPLETED` → `completed` · `NO_SHOW` → `noshow` · `CANCELED` → `canceled` · "
+        "그 밖(값 없음 포함) → `other`(직원 「이전 방문」 분류 그대로)"))
+    procedures: list[str] = Field(description=(
+        "그 일정 작업의 이름(KOS 배열 순서 · 빈 값이면 빈 문자열). 「방 배정」 기타 작업은 뺀다. 작업이 없으면 `[]`"))
+
+
+class ExtVisits(BaseModel):
+    visits: list[ExtVisit] = Field(description=(
+        "지금보다 앞선 일정 — 최신 순 · 최대 50건 · 취소 · 부도 포함. 없으면 `[]`(고객은 있는데 지난 일정 없음)"))
+
+
+class ExtCustomerReservation(BaseModel):
+    reservationId: int | None = Field(description=(
+        "ccc 예약 id(예약 응답 `reservationId` 와 같은 체계). ccc 사본에 그 일정이 없으면 null — "
+        "외부 예약 API 로 만든 예약은 늘 id 가 있다"))
+    date: str = Field(description="일정 시작의 KST 날짜 `YYYY-MM-DD`")
+    start: str = Field(description="일정 시작 ISO `+09:00`")
+    end: str | None = Field(description="첫 예약 묶음(시작 순 첫 번째)의 끝 ISO `+09:00`. 묶음이 없으면 null")
+    state: Literal["reserved", "reception", "consultation", "procedure", "home", "canceled", "noshow"] = Field(description=(
+        "상태 — 취소 · 부도가 먼저(`canceled` · `noshow`), 아니면 KOS 진행 단계로 정한다: `reserved`(예약 · 모르는 단계) · "
+        "`reception`(접수) · `consultation`(상담 대기 · 상담) · `procedure`(시술 대기 · 시술) · `home`(시술 끝 · 귀가)"))
+
+
+class ExtCustomerReservations(BaseModel):
+    reservations: list[ExtCustomerReservation] = Field(description=(
+        "오늘(KST) 0시 이후 일정 — 시작 오름차순 · 취소 · 부도 포함 · 개수 상한 없음. 없으면 `[]`"))

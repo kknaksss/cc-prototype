@@ -10,17 +10,33 @@
 import hmac
 import json
 import logging
+import re
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from app.config import Settings
 from app.domain.clock import KST, Clock, iso, parse
-from app.domain.errors import BadGateway, Conflict, NotFound, ServiceUnavailable
-from app.kos.reservation_sync import upsert_customer
+from app.domain.errors import BadGateway, BadRequest, Conflict, NotFound, ServiceUnavailable
+from app.domain.models import ResvGroup, Zone
+from app.domain.reservation_rules import (
+    PREV_RESULT,
+    ROOM_TASK_TITLE,
+    day_range,
+    is_full,
+    kst_min,
+    open_spans,
+    parse_day,
+    schedule_start,
+    state_of,
+    to_min,
+)
+from app.kos.reservation_sync import resources_of, upsert_customer
 from app.repository.repo import Repository
+from app.schemas.ext import ExtCustomerReservations, ExtVisits
 from app.schemas.reservations import CreateReservationRequest, ExistingCustomerRef, NewCustomer, NewCustomerRef
 from app.service import kos_errors
 from app.service.questionnaire import WINDOW_SEC, RateLimiter
-from app.service.reservations import PATH_VISITORS, ReservationService, ResvContext
+from app.service.reservations import PATH_BY_VISITOR, PATH_VISITORS, ReservationService, ResvContext
 
 log = logging.getLogger("procedure.ext")
 
@@ -33,6 +49,10 @@ NOT_FOUND = "일치하는 고객이 없어요"
 AMBIGUOUS = "고객을 특정할 수 없어요"
 RATE = "잠시 뒤 다시 시도해 주세요"
 UNAUTHORIZED = "API 키가 없거나 맞지 않아요"
+NOT_CONFIGURED = "외부 예약 설정이 비어 있어요"
+DAYS_AHEAD = 90  # 가능 시간대 날짜 범위 — 오늘(KST) ~ 오늘 + 90일(DEC-011 D-08)
+VISITS_MAX = 50  # 과거 시술 최근 몇 건(DEC-011 D-10)
+DAY_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 def _norm_name(v: Any) -> str:
@@ -231,15 +251,24 @@ class ExtService:
                 "purchasedDate": min(made).astimezone(KST).date().isoformat() if made else None,
                 "bundlePrice": {"value": int(value), "currency": price.get("currency") or ""}}
 
-    # ------------------------------------------------------------------ 예약(§6.5)
-    async def reserve(self, client: str, name: str, email: str, start: str, memo: str | None) -> dict[str, int]:
+    # ------------------------------------------------------------------ 기본 예약 그룹(§6.5 1단계 · §6.6 2단계)
+    def _ext_group(self) -> tuple[ResvGroup, list[tuple[Zone, int]]]:
+        """외부 예약 기본 그룹 + 켜진 구역 — env 빔 · 사본에 그 그룹 없음 · 켜진 구역 0 = 503.
+
+        KOS 를 부르기 전이다(D-33 · DEC-011 D-09). 예약 · 가능 시간대가 같이 쓴다.
+        """
         gid = self.s.kos_ext_reservation_group_id.strip()
         with self.repo.tx() as tx:
             ctx = ResvContext(tx)
             g = ctx.group_by_kos.get(gid) if gid else None
             enabled = ctx.enabled_zones(g) if g is not None else []
-        if g is None or not enabled:  # 사본 기준 · KOS 부르기 전(D-33 · 코디 Q3)
-            raise ServiceUnavailable("ext_not_configured", "외부 예약 설정이 비어 있어요")
+        if g is None or not enabled:
+            raise ServiceUnavailable("ext_not_configured", NOT_CONFIGURED)
+        return g, enabled
+
+    # ------------------------------------------------------------------ 예약(§6.5)
+    async def reserve(self, client: str, name: str, email: str, start: str, memo: str | None) -> dict[str, int]:
+        g, _ = self._ext_group()
         kind, v = await self.find(name, email)
         if kind == "many":
             raise Conflict("customer_ambiguous", AMBIGUOUS)
@@ -256,3 +285,122 @@ class ExtService:
                 raise Conflict("customer_ambiguous", AMBIGUOUS) from None
             raise
         return {"reservationId": out.reservationId, "customerId": out.customerId}
+
+    # ------------------------------------------------------------------ 예약 가능 시간대(§6.6)
+    def _day(self, value: str, now: datetime) -> date:
+        """`YYYY-MM-DD` · 오늘(KST) ~ 오늘 + 90일 — 그 밖 400(빈 값을 오늘로 보지 않는다)."""
+        if not DAY_RE.fullmatch(value or ""):
+            raise BadRequest("invalid_request", "date: YYYY-MM-DD 꼴이어야 해요")
+        day = parse_day(value, now)
+        today = now.astimezone(KST).date()
+        if not today <= day <= today + timedelta(days=DAYS_AHEAD):
+            raise BadRequest("invalid_request", f"date: 오늘(KST)부터 {DAYS_AHEAD}일 뒤까지만 볼 수 있어요")
+        return day
+
+    async def availability(self, date_value: str) -> dict[str, Any]:
+        now = self.clock.now()
+        day = self._day(date_value, now)
+        g, enabled = self._ext_group()
+        sync = self.resv.sync
+        if sync is None:
+            raise BadGateway("kos_unavailable", kos_errors.UNAVAILABLE)
+        try:  # 요청마다 1번 — 공유 사본을 바꿔 바로 뒤 예약 생성이 같은 값을 본다(DEC-011 D-12)
+            await sync.refresh_slots(day)
+        except Exception as e:
+            log.warning("KOS 외부 가능 시간대 정원 조회 실패: %s", kos_errors.describe(e))
+            raise BadGateway("kos_unavailable", kos_errors.UNAVAILABLE) from None
+        d0, d1 = day_range(day)
+        with self.repo.tx() as tx:
+            slots = {(sl.group_kos_id, sl.zone_kos_id, kst_min(sl.start_at, day)): sl for sl in tx.slots(d0, d1)}
+        iv = g.interval_minutes
+        out = []
+        for span_start, span_end in open_spans(g.timetable, day):
+            a, b = to_min(span_start), to_min(span_end)
+            m = a + (-a % iv)  # 자정 기준 간격 경계(`lines()` 와 같은 경계)
+            while iv > 0 and m + iv <= b:
+                at = d0 + timedelta(minutes=m)
+                seats = self._seats(g, enabled, slots, m)
+                if at > now and seats > 0:
+                    out.append({"start": iso(at), "remainingSeats": seats})
+                m += iv
+        return {"date": day.isoformat(), "intervalMinutes": iv, "slots": out}
+
+    @staticmethod
+    def _seats(g: ResvGroup, enabled: list[tuple[Zone, int]], slots: dict, m: int) -> int:
+        """켜진 구역별 남은 자리 합 — 예약 생성의 정원 검사(`is_full`)와 같은 사본 행 · 같은 규칙.
+
+        행이 없거나 capacity 가 null 인 구역은 넣지 않는다(자리 수를 모름 · DEC-011 D-11). 「참」인 구역 = 0.
+        """
+        total = 0
+        for z, _ in enabled:
+            sl = slots.get((g.kos_id, z.kos_id, m))
+            if sl is None or sl.capacity is None or is_full(sl.capacity, sl.reservation_count):
+                continue
+            total += max(0, sl.capacity - (sl.reservation_count or 0))
+        return total
+
+    # ------------------------------------------------------------------ 과거 시술 · 예약 내역(§6.7 · §6.8)
+    async def _schedules(self, name: str, email: str) -> list[dict[str, Any]]:
+        """고객 정하기(조회와 같은 함수 · 사본에 쓰지 않음) → 고객 일정 전부(KOS 공개 1번)."""
+        kind, v = await self.find(name, email)
+        if kind == "none":
+            raise NotFound(NOT_FOUND, "customer_not_found")
+        if kind == "many" or v is None:
+            raise Conflict("customer_ambiguous", AMBIGUOUS)
+        try:
+            resp = await self.resv.client().open(PATH_BY_VISITOR, {"visitorId": str(v["id"])})
+        except Exception as e:
+            log.warning("KOS 고객 일정 조회 실패: %s", kos_errors.describe(e))
+            raise BadGateway("kos_unavailable", kos_errors.UNAVAILABLE) from None
+        data = resp.get("data", [])  # 키 없음(`{}`) · `[]` = 일정 없음(§4.3 과 같은 규칙)
+        if not isinstance(data, list):  # 있으면서 배열 아님 = 실패(빈 목록이 아니다)
+            log.warning("KOS 고객 일정 응답 형식")
+            raise BadGateway("kos_unavailable", kos_errors.UNAVAILABLE)
+        return [x for x in data if isinstance(x, dict) and not x.get("deleted")]  # 지운 일정은 두 목록 다 뺀다(사본 쓰기와 같음)
+
+    @staticmethod
+    def _shape_error(e: Exception) -> BadGateway:
+        """일정 원소 모양이 깨져 처리 중 예외 = KOS 응답 모양 오류 → 502(1차 W1 과 같은 분류 · 원문 · 문구 없이 종류만)."""
+        log.warning("KOS 고객 일정 원소 형식: %s", type(e).__name__)
+        return BadGateway("kos_unavailable", kos_errors.UNAVAILABLE)
+
+    async def visits(self, name: str, email: str) -> dict[str, Any]:
+        schedules = await self._schedules(name, email)
+        now = self.clock.now()
+        try:
+            rows = []
+            for sch in schedules:
+                start = schedule_start(sch)
+                if start is None or start >= now:
+                    continue
+                status = (sch.get("reservation") or {}).get("status")
+                procs = [t.get("title") or "" for t in sch.get("tasks") or [] if isinstance(t, dict)
+                         and not (t.get("type") == "ETCETERA" and (t.get("title") or "").strip() == ROOM_TASK_TITLE)]
+                rows.append((start, {"date": start.astimezone(KST).date().isoformat(), "start": iso(start),
+                                     "result": PREV_RESULT.get(status or "", "other"), "procedures": procs}))
+            rows.sort(key=lambda x: x[0], reverse=True)
+            out = {"visits": [x[1] for x in rows[:VISITS_MAX]]}
+            return ExtVisits.model_validate(out).model_dump()  # 칸 타입까지 여기서 — 응답 모델 오류도 502(N1)
+        except (AttributeError, TypeError, ValueError, KeyError) as e:  # pydantic ValidationError ⊂ ValueError
+            raise self._shape_error(e) from None
+
+    async def reservations(self, name: str, email: str) -> dict[str, Any]:
+        schedules = await self._schedules(name, email)
+        today0 = day_range(self.clock.now().astimezone(KST).date())[0]
+        try:
+            rows = []
+            with self.repo.tx() as tx:
+                for sch in schedules:
+                    start = schedule_start(sch)
+                    if start is None or start < today0:
+                        continue
+                    resv = sch.get("reservation") or {}
+                    res = resources_of(sch)
+                    rid = tx.reservation_id_of(str(sch["id"])) if sch.get("id") else None  # 일정 KOS id 로만 · 새로 쓰지 않음
+                    rows.append((start, {"reservationId": rid, "date": start.astimezone(KST).date().isoformat(),
+                                         "start": iso(start), "end": iso(parse(res[0]["endAt"])) if res else None,
+                                         "state": state_of(resv.get("status"), sch.get("flowStep"))[0]}))
+            rows.sort(key=lambda x: x[0])
+            return ExtCustomerReservations.model_validate({"reservations": [x[1] for x in rows]}).model_dump()
+        except (AttributeError, TypeError, ValueError, KeyError) as e:
+            raise self._shape_error(e) from None

@@ -319,6 +319,14 @@ class ReservationSync:
         with self.repo.tx() as tx:
             tx.set_sync(key, now, "; ".join(errors) or None)
 
+    async def refresh_slots(self, day: date) -> None:
+        """그날 칸 정원만 새로 읽어 공유 사본을 바꾼다(SPEC-008 §6.6 3 — 외부 가능 시간대). 실패는 예외 그대로(사본 그대로)."""
+        async with self._locks.setdefault(day, asyncio.Lock()):  # 같은 날짜 하루 조회(`ensure`)와 겹치지 않게
+            with self.repo.tx() as tx:
+                groups = [g.kos_id for g in tx.resv_groups()]
+            start, end = day_range(day)
+            await self._slots(groups, start, end, self.clock.now())
+
     async def _slots(self, groups: list[str], start: datetime, end: datetime, now: datetime) -> None:
         if not groups:
             return

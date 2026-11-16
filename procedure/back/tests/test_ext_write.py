@@ -230,3 +230,34 @@ def test_w4_order_memo_logs_clean(env, caplog):
     fake.resv_fail["change-order-memo"] = (400, {"className": "x.InvalidRequestException"})
     assert order(cl, rid, "<글w4>", **{"X-Ext-Staff-Id": "staff-w4-y"}).status_code == 409
     assert caplog.records and _leaks(caplog, "staff-w4-y", rid, cust_id(c), "<이름78>", "vis-1", "s1", "<글w4>") == []
+
+
+# ------------------------------------------------------------------ 로컬 e2e 2 — 상담 메모는 KOS 에서 비울 수 없다
+@pytest.mark.parametrize("blank", ["", "  ", "\n\t "])
+def test_e2e2_consultation_memo_blank_400(env, blank):
+    c, fake, cl = env
+    rid, _ = seed(c, fake)
+    n, n_ev = len(fake.calls), len(events(c))
+    r = consult(cl, rid, blank, **{"X-Ext-Staff-Id": "st-1"})
+    assert (r.status_code, r.json()["error"]["code"]) == (400, "invalid_request")
+    assert r.json()["error"]["message"] == "body.consultationMemo: KOS 는 상담 메모를 비울 수 없어요"
+    assert kos(fake, n) == [] and len(events(c)) == n_ev  # KOS 호출 0 · event_log 0(kos_rejected 도 0)
+
+
+def test_e2e2_order_memo_blank_still_clears(env):
+    """오더 메모는 빈 값 = 비움 그대로(KOS 가 비운다)."""
+    c, fake, cl = env
+    rid, x = seed(c, fake)
+    n = len(fake.calls)
+    assert order(cl, rid, "").status_code == 200
+    assert bodies(fake, "change-order-memo", n) == [{"scheduleId": "s1", "orderMemo": ""}] and x["orderMemo"] == ""
+    assert consult(cl, rid, " <앞뒤 공백 글> ").status_code == 200  # 비지 않으면 글 그대로 보냄
+    assert bodies(fake, "update-schedule-consultation-info", n) == [{"scheduleId": "s1", "consultationMemo": " <앞뒤 공백 글> "}]
+
+
+def test_e2e2_swagger_lines(client):
+    spec = client.get("/api/openapi.json").json()
+    cm = spec["paths"]["/api/ext/reservations/{reservationId}/consultation-memo"]["put"]
+    assert "비울 수 없다" in cm["description"] and "KOS 는 상담 메모를 비울 수 없어요" in cm["responses"]["400"]["description"]
+    det = spec["paths"]["/api/ext/reservations/{reservationId}"]["get"]
+    assert "예약을 만든 직후" in det["description"] and "다시 부르면 된다" in det["description"]

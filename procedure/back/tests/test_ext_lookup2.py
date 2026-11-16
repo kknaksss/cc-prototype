@@ -284,3 +284,52 @@ def test_t71_old_five_ignore_staff_header(env):
         assert r.status_code == 200, r.text
     with c.repo.tx() as tx:
         assert {e["actor"] for e in tx.events("resv_create")} == {"ext:linky"}
+
+
+# ------------------------------------------------------------------ 로컬 e2e 1 — 내부 시술권 price.value 생략(0) · 거르기 먼저
+def no_value(b):
+    return {**b, "price": {"currency": "KRW"}}
+
+
+def test_e2e1_live_bundle_without_value_is_zero(env):
+    """① 산 묶음인데 price = {currency} 만 → bundlePrice.value 0 · 200."""
+    c, fake, cl = env
+    fake.bundles["v-1"] = {"data": [no_value(bundle("o-free", ["AVAILABLE"]))]}
+    r = by_name(cl)
+    assert r.status_code == 200
+    assert [(t["optionId"], t["bundlePrice"]) for t in r.json()["tickets"]] == [("o-free", {"value": 0, "currency": "KRW"})]
+
+
+def test_e2e1_dead_bundle_shape_not_checked(env):
+    """② value 없는(또는 price 가 깨진) 다 쓴 · 다 취소된 묶음이 섞여도 200 · 그 묶음은 안 나옴(거르기 먼저)."""
+    c, fake, cl = env
+    fake.dead_bundle = False
+    fake.bundles["v-1"] = {"data": [no_value(bundle("o-used", ["USED"])), no_value(bundle("o-cxl", ["CANCELED"])),
+                                    {**bundle("o-bad", ["USED"]), "price": "x"}, bundle("o-live", ["IN_USE"])]}
+    r = by_name(cl)
+    assert r.status_code == 200 and [t["optionId"] for t in r.json()["tickets"]] == ["o-live"]
+    fake.bundles["v-1"] = {}  # data 키 없음 → 「시술권 없음」 그대로
+    assert by_name(cl).json()["tickets"] == []
+
+
+@pytest.mark.parametrize("price", [None, "drop", "x", {"value": "1", "currency": "KRW"}, {"value": None}])
+def test_e2e1_live_bundle_bad_price_still_502(env, price):
+    """③ 산 묶음의 price 가 없음 · 객체 아님 · value 가 숫자 아닌 꼴 → 502 그대로."""
+    c, fake, cl = env
+    b = bundle("o-live", ["AVAILABLE"])
+    if price == "drop":
+        del b["price"]
+    else:
+        b["price"] = price
+    fake.bundles["v-1"] = {"data": [b]}
+    r = by_name(cl)
+    assert (r.status_code, r.json()["error"]["code"]) == (502, "kos_unavailable")
+
+
+def test_e2e1_fake_default_has_real_dead_bundle(env):
+    """④ fake 기본 내부 시술권 응답 = 실물처럼 value 없는 다 쓴 묶음 하나를 섞는다 → 200 · tickets []."""
+    c, fake, cl = env
+    n = len(fake.calls)
+    r = by_name(cl)
+    assert r.status_code == 200 and r.json()["tickets"] == []
+    assert any(p.endswith("/ticket/v1/queries/get-ticket-bundles") for p, _ in fake.calls[n:])

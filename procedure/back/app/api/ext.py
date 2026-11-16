@@ -383,6 +383,7 @@ ccc 예약 id(접수 목록 `reservationId`)로 예약 하나의 상세를 준�
   `previousVisits`(null — 빈 배열이 아니다).
 - 전화 · 이메일 · 여권 · 주소 · 고객 특이사항 · 정산 · KOS id 는 내지 않는다.
 """ + STAFF_NOTE + """- `200` 이면 열람 기록 1줄(`event_log` `ext_view` · 행위자 `ext:<연동처>[:<직원 id>]`).
+- **예약을 만든 직후**에는 KOS 반영이 늦어 `404 reservation_gone` 이 잠깐 날 수 있다 — 다시 부르면 된다.
 - 부작용: KOS 일정을 다시 읽어 서버 예약 사본을 덮어쓴다(직원 상세와 같다). KOS 쓰기 없음.
 - **KOS 호출**: 일정 상세 1 + 고객 읽기 1 + 문진 2 + 고객 일정 1 = 5(사본에 없으면 0 · `reservation_gone` 이면 1).
 """
@@ -424,7 +425,8 @@ async def board(c: Ctr, _: ExtClient) -> ExtBoard:
             summary="예약 상세 — 고객 · 희망 시술 · 지금 메모 · 문진 · 이전 방문", description=DETAIL_DOC,
             responses=errors(*COMMON, (400, "invalid_request", "`reservationId` 가 정수가 아님 · " + STAFF_400),
                              RESV_NOT_FOUND_ROW,
-                             (404, "reservation_gone", "KOS 에서 그 일정이 지워졌을 때(KOS 가 404). "
+                             (404, "reservation_gone", "KOS 에서 그 일정이 지워졌을 때(KOS 가 404). 예약을 만든 직후 "
+                                                       "KOS 반영이 늦을 때도 잠깐 난다(다시 부르면 된다). "
                                                        "message 「KOS 에서 사라진 예약이에요」"),
                              NO_KOS_502))
 async def reservation_detail(c: Ctr, client: ExtClient, staff: StrictStaff,
@@ -463,10 +465,18 @@ ORDER_DOC = SHARED + """
 CONSULT_DOC = SHARED + """
 예약(KOS 일정) 하나의 **상담 메모**를 글 전체로 **통째로 바꾼다**. **「차트 메모」 = 이 상담 메모**다. 지금 값은 예약 상세
 `reservation.consultationMemo` 로 읽는다. 예약 메모 · 오더 메모와 다른 칸이다.
+- **비울 수 없다** — KOS 가 상담 메모를 비우지 못한다(빈 값을 보내면 200 인데 그대로 남는다). 그래서 앞뒤 공백을 지우면 비는
+  값은 KOS 를 부르지 않고 `400 invalid_request`(message `body.consultationMemo: KOS 는 상담 메모를 비울 수 없어요`). 오더 메모는
+  빈 값으로 비울 수 있다.
+- 상담 전(예약 상태) 일정에도 쓸 수 있다. 쓴 뒤 같은 일정의 상담사 · 의사 칸은 그대로다.
 """ + WRITE_RULE + """- 기록: `event_log` `consultation_memo`(글 길이만 · 원문 없음) · 날짜 캐시 비움.
 - **KOS 호출**: 공개 상담 정보 쓰기 1(사본에 없으면 0).
 """
 WRITE_400 = (400, "invalid_request", "경로 id 가 정수가 아님 · 본문 칸 없음 · 타입(null 포함) · 모르는 키 · " + STAFF_400)
+CONSULT_400 = (400, "invalid_request", "경로 id 가 정수가 아님 · 본문 칸 없음 · 타입(null 포함) · 모르는 키 · "
+               "**앞뒤 공백을 지우면 빈 `consultationMemo`**(KOS 가 비우지 못함 · "
+               "message `body.consultationMemo: KOS 는 상담 메모를 비울 수 없어요`) · "
+               + STAFF_400)
 LANG_404 = (404, "customer_not_found", "ccc 사본에 그 고객이 없을 때(KOS 를 부르지 않는다) — 조회 `404` 와 같은 응답. "
             "message 「일치하는 고객이 없어요」")
 
@@ -489,7 +499,7 @@ async def order_memo(body: ExtOrderMemoRequest, c: Ctr, client: ExtClient, staff
 
 @router.put("/reservations/{reservationId}/consultation-memo", response_model=ExtOk,
             summary="상담 메모(= 차트 메모) 바꾸기(통째로)", description=CONSULT_DOC,
-            responses=errors(*COMMON, WRITE_400, RESV_NOT_FOUND_ROW, *WRITE_ERRORS))
+            responses=errors(*COMMON, CONSULT_400, RESV_NOT_FOUND_ROW, *WRITE_ERRORS))
 async def consultation_memo(body: ExtConsultationMemoRequest, c: Ctr, client: ExtClient, staff: StrictStaff,
                             reservationId: int = Path(description="ccc 예약 id(접수 목록 `reservationId`)")) -> ExtOk:
     await c.ext.consultation_memo(client, staff, reservationId, body.consultationMemo)

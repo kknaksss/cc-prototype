@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
+from pydantic_core import PydanticCustomError
 
 NAME_DESC = ("고객 이름(필수). 앞뒤 공백만 지워 KOS 이름 검색에 그대로 보낸다 — **KOS 에 등록된 띄어쓰기 그대로** 보내야 한다"
              "(KOS 검색은 가운데 공백을 그대로 견준다). 앞뒤 공백을 지우면 비는 값은 400")
@@ -388,10 +389,22 @@ class ExtOrderMemoRequest(_Req):
         "빈 문자열은 그대로 보낸다(비움)"), examples=["<오더 메모>"])
 
 
+CONSULT_MEMO_BLANK = "KOS 는 상담 메모를 비울 수 없어요"
+
+
 class ExtConsultationMemoRequest(_Req):
     consultationMemo: str = Field(description=(
         "상담 메모(= 차트 메모) 글 전체 — **통째로 바꾼다**. 지금 값은 예약 상세 `reservation.consultationMemo`. "
-        "빈 문자열은 그대로 보낸다(비움)"), examples=["<상담 메모>"])
+        "**빈 값은 받지 않는다** — 앞뒤 공백을 지우면 비는 값은 `400`(KOS 가 상담 메모를 비우지 못한다 · 빈 값을 보내면 "
+        "200 인데 그대로 남는다). 비우는 쓰기는 없다(오더 메모와 다르다)"), examples=["<상담 메모>"])
+
+    @field_validator("consultationMemo")
+    @classmethod
+    def _not_empty(cls, v: str) -> str:
+        """로컬 e2e 2 — KOS 공개 상담 정보 쓰기는 `""` · null 을 200 으로 받고 값을 바꾸지 않는다 → KOS 를 부르지 않고 400."""
+        if not v.strip():
+            raise PydanticCustomError("consultation_memo_blank", CONSULT_MEMO_BLANK)
+        return v
 
 
 # ------------------------------------------------------------------ 접수 목록(§6.11)

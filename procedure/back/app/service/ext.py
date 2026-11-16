@@ -322,8 +322,8 @@ class ExtService:
         data = tickets_resp.get("data", [])
         if not isinstance(data, list):
             raise BadGateway("kos_unavailable", kos_errors.UNAVAILABLE)
-        tickets = [self._ticket(b) for b in data if isinstance(b, dict)]
-        tickets = [t for t in tickets if t.pop("_live")]
+        # 거르기 먼저(e2e 1) — 산 묶음만 모양 검사 · 칸 만들기. 걸러진(다 쓴 · 다 취소된) 묶음의 모양은 보지 않는다
+        tickets = [self._ticket(b) for b in data if isinstance(b, dict) and self._live_bundle(b)]
         partial: list[str] = []
         cards: list[dict[str, Any]] | None
         try:
@@ -363,20 +363,30 @@ class ExtService:
         return self._keep(v) or cust.id, v
 
     @staticmethod
-    def _ticket(b: dict[str, Any]) -> dict[str, Any]:
+    def _bundle_tickets(b: dict[str, Any]) -> list[dict[str, Any]]:
+        return [t for s in b.get("ticketSets") or [] if isinstance(s, dict)
+                for t in s.get("tickets") or [] if isinstance(t, dict)]
+
+    @classmethod
+    def _live_bundle(cls, b: dict[str, Any]) -> bool:
+        """`AVAILABLE` 또는 `IN_USE` 가 1장 이상인 묶음만 낸다(§4.3 거르기)."""
+        return any(t.get("status") in LIVE_TICKETS for t in cls._bundle_tickets(b))
+
+    @classmethod
+    def _ticket(cls, b: dict[str, Any]) -> dict[str, Any]:
         conf = b.get("optionConfiguration") if isinstance(b.get("optionConfiguration"), dict) else {}
-        tickets = [t for s in b.get("ticketSets") or [] if isinstance(s, dict)
-                   for t in s.get("tickets") or [] if isinstance(t, dict)]
+        tickets = cls._bundle_tickets(b)
         made = [at for at in (parse(t.get("createdDateTimeUtc")) if isinstance(t.get("createdDateTimeUtc"), str) else None
                               for t in tickets) if at]
-        price = b.get("price") if isinstance(b.get("price"), dict) else {}
-        value = price.get("value")
-        if not isinstance(value, (int, float)) or isinstance(value, bool):  # KOS 필수 칸 — 없으면 응답 모양 오류
+        price = b.get("price")
+        if not isinstance(price, dict):  # KOS 필수 칸 — 없거나 객체가 아니면 응답 모양 오류
+            raise BadGateway("kos_unavailable", kos_errors.UNAVAILABLE)
+        value = price.get("value", 0)  # 내부 원천(protobuf JSON)은 0 을 빼고 보낸다 → `value` 없음 = 0(e2e 1)
+        if not isinstance(value, (int, float)) or isinstance(value, bool):  # 다른 꼴(문자열 · null 등) = 모양 오류
             raise BadGateway("kos_unavailable", kos_errors.UNAVAILABLE)
         return {"optionId": str(conf.get("optionId") or ""), "optionTitle": conf.get("optionTitle") or "",
                 "remainingCount": sum(1 for t in tickets if t.get("status") == "AVAILABLE"),
                 "inUseCount": sum(1 for t in tickets if t.get("status") == "IN_USE"), "totalCount": len(tickets),
-                "_live": any(t.get("status") in LIVE_TICKETS for t in tickets),
                 "purchasedDate": min(made).astimezone(KST).date().isoformat() if made else None,
                 "bundlePrice": {"value": int(value), "currency": price.get("currency") or ""}}
 

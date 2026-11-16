@@ -34,6 +34,25 @@ CLOSED_MAINS = ("canceled", "noshow")
 BUSY_FLOWS = ("RECEPTION", "CONSULTATION_WAITING", "CONSULTATION", "PROCEDURE_WAITING", "PROCEDURE")
 IN_CLINIC_FLOWS = (*BUSY_FLOWS, "PROCEDURE_DONE")
 AFTER_END_FLOWS = ("CONSULTATION_WAITING", "CONSULTATION", "PROCEDURE_WAITING", "PROCEDURE", "PROCEDURE_DONE", "COMPLETED")
+BEFORE_MAINS = ("reserved", "canceled", "noshow")  # 접수 뒤가 아닌 주 상태 — 직원 상세 `after` 문(SPEC-008 §6.11 3)
+
+
+def is_after(main: str) -> bool:
+    """접수 뒤 단계로 간 일정인가 — 직원 상세의 `after = main not in ("reserved", "canceled", "noshow")` 와 같은 문."""
+    return main not in BEFORE_MAINS
+
+
+def consultation_passed(after: bool, flow_step: str | None, events: list[dict[str, Any]]) -> bool:
+    """상담 거침 판정 하나(SPEC-008 §6.11 3 · DEC-012 D-09) — 직원 상세 `_flow` 와 외부 board 가 같이 부른다.
+
+    `after` 가 아니면 False. 아니면 ① 지금 단계가 상담 대기 · 상담 ② ccc 접수(`reception`)가 상담 대기로 끝남
+    ③ `consultation_add` 이벤트 — 셋 중 하나. KOS `consultationRequired` 는 읽지 않는다.
+    """
+    if not after:
+        return False
+    routed = any(e["type"] == "reception" and e["payload"].get("endStep") == "CONSULTATION_WAITING" for e in events) \
+        or any(e["type"] == "consultation_add" for e in events)
+    return flow_step in ("CONSULTATION_WAITING", "CONSULTATION") or routed
 ROOM_TASK_TITLE = "방 배정"
 NO_PROBLEM = ("없음", "아니오")  # §5.11 「확인 필요」 아님
 

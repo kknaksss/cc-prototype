@@ -74,10 +74,18 @@ DESCRIPTION = """
 email 이 없는 기존 고객은 조회하면 `404` 다. 그 고객을 처음 예약하면 KOS 에 고객이 하나 더 생길 수 있다(데스크가 정리한다).
 이름은 KOS 에 저장된 띄어쓰기 그대로 보내야 한다(띄어쓰기가 다르면 찾지 못해 `404`).
 
-- **경로 여섯**: `GET /api/ext/menu`(시술 · 상품 메뉴) · `POST /api/ext/customers/lookup`(이름 + 이메일 → 고객 + 남은 시술권) ·
-  `POST /api/ext/reservations`(이름 + 이메일 + 시작 시각 → 예약) · `GET /api/ext/availability?date=`(그날 예약 가능 시간대) ·
-  `POST /api/ext/customers/visits`(이름 + 이메일 → 과거 시술) · `POST /api/ext/customers/reservations`(이름 + 이메일 → 예약 내역).
-  tag 「외부 연동」.
+- **경로 열셋**: `GET /api/ext/menu`(시술 · 상품 메뉴) · `POST /api/ext/customers/lookup`(이름 + 이메일 또는 `customerId` →
+  고객 + 남은 시술권 + 선불카드) · `POST /api/ext/reservations`(이름 + 이메일 + 시작 시각 → 예약) ·
+  `GET /api/ext/availability?date=`(그날 예약 가능 시간대) · `POST /api/ext/customers/visits`(이름 + 이메일 → 과거 시술) ·
+  `POST /api/ext/customers/reservations`(이름 + 이메일 → 예약 내역) · `GET /api/ext/reservations/board`(오늘 접수 목록) ·
+  `GET /api/ext/reservations/{reservationId}`(예약 상세) · `PUT /api/ext/customers/{customerId}/language`(고객 언어) ·
+  `PUT /api/ext/reservations/{reservationId}/order-memo`(오더 메모) ·
+  `PUT /api/ext/reservations/{reservationId}/consultation-memo`(상담 메모 = 차트 메모) · `GET /api/ext/clinic`(병원 정보) ·
+  `GET /api/ext/clinics/{clinicId}/staff`(직원 목록). tag 「외부 연동」. 연동처마다 권한을 나누지 않는다.
+- **열람 헤더**(선택): `X-Ext-Staff-Id: <연동처 직원 id>` — 고객 조회 · 예약 상세 · 쓰기 셋(고객 언어 · 오더 메모 · 상담 메모)
+  다섯 경로만 읽는다. **연동처가 신고한 값이고 CC 가 검증하지 않는다** — 열람 기록(`event_log` `ext_view`) · 쓰기 행위자
+  (`ext:<연동처>:<직원 id>`)에 그대로 적는다. 꼴 = 영문 · 숫자 · `.` `_` `-` 1 ~ 64자. 꼴이 틀리면 고객 조회는 없는 것으로 보고,
+  새 경로 넷은 `400`. 그 밖 경로는 이 헤더를 보지 않는다.
 - **인증**: 헤더 **`X-Api-Key: <연동처 키>`**. 연동처(링키 · 차티)마다 키가 따로 있다(서버 env · 키 교체 = 배포 설정).
   Swagger **Authorize** 의 `ExtApiKey` 에 넣는다. 직원 API 와 섞이지 않는다 — 외부 경로는 `Authorization: Bearer` 를 보지 않고,
   직원 경로는 `X-Api-Key` 를 보지 않는다(각각 `401 ext_unauthorized` · `401 unauthorized`).

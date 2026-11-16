@@ -60,6 +60,15 @@ RESV_NAMES = {
 }
 MENU_NAMES = {"get-categories", "get-products", "get-product-options", "get-procedures", "get-medical-services",
               "get-machines", "get-medicines", "get-target-countries", "get-ticket-bundles"}
+# 내부 get-ticket-bundles 실물 모양(KOS0 ④ · 로컬 e2e 1) — 다 쓴 묶음은 price 가 `{currency}` 만(protobuf 가 0 값을 뺌)
+DEAD_BUNDLE = {"title": "<다 쓴 묶음>", "purchaseId": "pur-dead", "purchaseItemId": "pi-dead", "visitorId": "v-x",
+               "translsMap": {}, "price": {"currency": "KRW"},
+               "optionConfiguration": {"optionId": "opt-dead", "optionTitle": "<다 쓴 묶음>", "productTitle": ""},
+               "ticketSets": [{"title": "s", "ticketGroupId": "g-dead",
+                               "tickets": [{"id": "t-dead-1", "status": "USED", "price": {"currency": "KRW"},
+                                            "createdDateTimeUtc": "2026-09-01T03:00:00Z"},
+                                           {"id": "t-dead-2", "status": "CANCELED", "price": {"currency": "KRW"},
+                                            "createdDateTimeUtc": "2026-09-01T03:00:00Z"}]}]}
 DAY = datetime(2026, 10, 21, tzinfo=UTC)  # 시험 날짜(수요일) — KST 하루 = 전날 15:00Z ~ 15:00Z
 
 
@@ -183,6 +192,13 @@ class ResvFake:
         self._new = 0
         self.visitors_page: dict | None = None  # get-visitors 응답을 통째로(외부 조회 시험)
         self.bundles: dict[str, dict] = {}  # visitorId → get-ticket-bundles 응답 통째로(없으면 {})
+        self.dead_bundle = True  # 내부 시술권 응답 끝에 DEAD_BUNDLE 을 붙이나(명시 `{}` 응답에는 안 붙음)
+        self.prepaid: dict[str, dict] = {}  # visitorId → 공개 get-prepaid-card-summaries 응답 통째로(없으면 {})
+        self.event_logs: dict[str, object] = {}  # scheduleId → 내부 get-schedule-event-logs 응답 통째로(없으면 {"data": []})
+        self.hospital: dict = {"data": {}}  # 내부 get-hospital 응답 통째로
+        self.op_timetable: dict = {"data": {}}  # 내부 get-default-operation-timetable 응답 통째로
+        self.days_off: dict = {"data": []}  # 내부 get-default-days-off 응답 통째로
+        self.internal_accounts: dict | None = None  # 내부 account/v2 get-accounts 응답 통째로(None = 공개와 같은 목록)
         # 시술 · 상품 메뉴(SPEC-008 §4.1) — 작업 이름 → data 값(배열이 아니면 모양 오류 시험). 기본 = 빈 메뉴
         self.menu: dict[str, object] = {n: [] for n in MENU_NAMES - {"get-product-options", "get-ticket-bundles"}}
         self.option_services: dict[str, dict] = {}  # SINGLE 옵션 id → getProductOptions 의 medicalService(없으면 응답에서 빠짐)
@@ -190,9 +206,12 @@ class ResvFake:
         # (그룹 id, 구역 id, KST "HH:MM") → {capacity, reservationCount} 덮어쓰기 · None = 그 칸 행 없음
         self.slot_patch: dict[tuple[str, str, str], dict | None] = {}
 
-    def menu_handle(self, name, body):
+    def menu_handle(self, name, body, kind="open"):
         if name == "get-ticket-bundles":
-            return httpx.Response(200, json=deepcopy(self.bundles.get(body.get("visitorId"), {})))
+            out = deepcopy(self.bundles.get(body.get("visitorId"), {"data": []}))
+            if kind == "internal" and self.dead_bundle and isinstance(out.get("data"), list):
+                out["data"].append(deepcopy(DEAD_BUNDLE))  # 실물(KOS0 · e2e 1) — 다 쓴 묶음 · price.value 생략(0)
+            return httpx.Response(200, json=out)
         if name == "get-product-options":
             opts = [o for p in self.menu.get("get-products") or [] if isinstance(p, dict) for o in p.get("options") or []]
             out = [{**{k: v for k, v in deepcopy(o).items() if k != "compositions"},
@@ -551,6 +570,8 @@ class FakeKos(ResvFake):
             return httpx.Response(401, json={})
         if name == "get-user-account":
             return httpx.Response(200, json={"data": {"id": SYSTEM, "name": "시스템"}})
+        if name == "get-accounts" and kind == "internal" and self.internal_accounts is not None:
+            return httpx.Response(200, json=deepcopy(self.internal_accounts))
         if name == "get-accounts":
             return httpx.Response(200, json={"data": deepcopy(self.accounts)})
         if name == "get-rooms":
@@ -559,8 +580,30 @@ class FakeKos(ResvFake):
             today = [x for x in self.resv if (x.get("zone") or {}).get("id") == ZONE and x.get("listed", True)]
             return httpx.Response(200, json={"data": [{"zone": {"id": ZONE},
                                                        "schedules": deepcopy(self.schedules) + _public(today)}]})
+        if name == "get-prepaid-card-summaries":
+            return httpx.Response(200, json=deepcopy(self.prepaid.get(body.get("visitorId"), {})))
+        if name == "get-schedule-event-logs":
+            return httpx.Response(200, json=deepcopy(self.event_logs.get(body.get("scheduleId"), {"data": []})))
+        if name in ("change-order-memo", "update-schedule-consultation-info"):  # 외부 쓰기(SPEC-008 §6.14 · §6.15)
+            if name in self.resv_fail:
+                st, payload = self.resv_fail[name]
+                return httpx.Response(st, json=payload)
+            x = self._resv_sch(body.get("scheduleId"))
+            if x is None:
+                return httpx.Response(400, json={"className": "InvalidRequestException"})
+            if name == "change-order-memo":
+                x["orderMemo"] = body["orderMemo"]
+            else:
+                x.setdefault("consultation", {})["consultationMemo"] = body["consultationMemo"]
+            return httpx.Response(200, json={})
+        if name == "get-hospital":
+            return httpx.Response(200, json=deepcopy(self.hospital))
+        if name == "get-default-operation-timetable":
+            return httpx.Response(200, json=deepcopy(self.op_timetable))
+        if name == "get-default-days-off":
+            return httpx.Response(200, json=deepcopy(self.days_off))
         if name in MENU_NAMES:
-            return self.menu_handle(name, body)
+            return self.menu_handle(name, body, kind)
         if name in RESV_NAMES or (name in ("change-flow-step", "change-tasks-room")
                                   and self._resv_sch(body.get("scheduleId") or body.get("id"))):
             return self.resv_handle(name, body, kind)

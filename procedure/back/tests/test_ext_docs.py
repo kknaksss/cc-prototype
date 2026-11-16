@@ -1,10 +1,19 @@
-"""SPEC-008 §8 Swagger — T29(외부 tag · ExtApiKey · security · 오류 표 · 설명 문장 · 0.3.0 외부 여섯)."""
+"""SPEC-008 §8 Swagger — T29(외부 tag · ExtApiKey · security · 오류 표 · 설명 문장 · 0.3.0 외부 여섯) · T70(0.4.0 열셋)."""
 
 from app.api.docs import STATUS_TEXT, T_EXT
 from app.openapi_docs import BEARER, EXT_KEY
 
 OPS = {("get", "/api/ext/menu"), ("post", "/api/ext/customers/lookup"), ("post", "/api/ext/reservations"),
-       ("get", "/api/ext/availability"), ("post", "/api/ext/customers/visits"), ("post", "/api/ext/customers/reservations")}
+       ("get", "/api/ext/availability"), ("post", "/api/ext/customers/visits"), ("post", "/api/ext/customers/reservations"),
+       # 0.4.0(charty 1차) — 일곱
+       ("get", "/api/ext/reservations/board"), ("get", "/api/ext/reservations/{reservationId}"),
+       ("put", "/api/ext/customers/{customerId}/language"), ("put", "/api/ext/reservations/{reservationId}/order-memo"),
+       ("put", "/api/ext/reservations/{reservationId}/consultation-memo"), ("get", "/api/ext/clinic"),
+       ("get", "/api/ext/clinics/{clinicId}/staff")}
+STAFF_OPS = {("post", "/api/ext/customers/lookup"), ("get", "/api/ext/reservations/{reservationId}"),
+             ("put", "/api/ext/customers/{customerId}/language"), ("put", "/api/ext/reservations/{reservationId}/order-memo"),
+             ("put", "/api/ext/reservations/{reservationId}/consultation-memo")}
+PATH_PARAMS = {("reservationId", "path"), ("customerId", "path"), ("clinicId", "path")}
 OVERLAP = "오늘 이미 시작한 일정은 과거 시술과 예약 내역 둘 다에 나온다"
 
 
@@ -59,9 +68,13 @@ def test_t29_ext_swagger(client):
     # 이름 · 이메일은 경로 · 질의에 없다 — 질의 칸은 가능 시간대 `date` 하나만(고침 1 W3)
     params = [((m, p), x) for p, item in spec["paths"].items() if p.startswith("/api/ext") for m, op in item.items()
               for x in op.get("parameters", [])]
-    assert {(x["name"], x["in"]) for _, x in params} == {("X-Api-Key", "header"), ("date", "query")}
-    assert [k for k, x in params if x["in"] != "header"] == [("get", "/api/ext/availability")]
-    assert all(x["in"] in ("header", "query") for _, x in params)
+    # 0.4.0 — 넓힘(지우지 않음): + 열람 헤더(다섯 operation 에만) · 경로 정수 칸 셋. name · email 이 질의 · 경로에 생기면 실패
+    assert {(x["name"], x["in"]) for _, x in params} == {("X-Api-Key", "header"), ("date", "query"),
+                                                        ("X-Ext-Staff-Id", "header")} | PATH_PARAMS
+    assert [k for k, x in params if x["in"] == "query"] == [("get", "/api/ext/availability")]
+    assert {k for k, x in params if x["name"] == "X-Ext-Staff-Id"} == STAFF_OPS
+    assert all(x["in"] in ("header", "query", "path") for _, x in params)
+    assert all(x["schema"].get("type") == "integer" for _, x in params if x["in"] == "path")
 
 
 def test_t29_add1_docs(client):
@@ -89,5 +102,45 @@ def test_t29_add1_docs(client):
     assert "최근 50건까지" in flat(vi) and "예약 메모 · 상담 메모 · 의사 이름은 내지 않는다" in flat(vi)
     assert "**null**" in flat(cr) and "취소 · 부도 포함" in flat(cr)
     section = spec["info"]["description"].split("## 외부 연동 API — `/api/ext/*`\n", 1)[1]
-    assert "**경로 여섯**" in section and "`GET /api/ext/availability?date=`" in section and "외부 경로 전부 합산" in section
-    assert "셋" not in section.replace("오프셋", "")
+    assert "**경로 열셋**" in section and "`GET /api/ext/availability?date=`" in section and "외부 경로 전부 합산" in section
+    assert "셋" not in section.replace("오프셋", "").replace("열셋", "").replace("쓰기 셋", "")  # 0.4.0 열셋 · 쓰기 셋
+
+
+def test_t70_charty1_docs(client):
+    """0.4.0 일곱 + lookup — 공통 응답 줄 · 설명 문장 · 옛 문장 없음 · 헤더 설명."""
+    spec = _spec(client)
+    flat = lambda t: " ".join(t.split())  # noqa: E731
+    for m, p in OPS:
+        op = spec["paths"][p][m]
+        assert {"401", "429", "405", "500"} <= set(op["responses"]), (m, p)
+        assert op["summary"] and op["description"]
+    look = spec["paths"]["/api/ext/customers/lookup"]["post"]
+    d = flat(look["description"])
+    assert "사용 중 장만 남은 묶음도 나온다" in d and "`inUseCount`" in d and "사용 중 장도 센다" in d
+    assert "`prepaidCards: null`" in d and "`partialErrors: [\"prepaidCards\"]`" in d and "`customerId`" in d
+    assert "`body: …`" in flat(look["responses"]["400"]["description"])
+    resp = spec["components"]["schemas"]["ExtLookupResponse"]
+    for text in (d, str(resp)):
+        assert "AVAILABLE` 이 0장인 묶음은 KOS 가 주지 않는다" not in text and "사용 가능한 묶음" not in text
+    board = flat(spec["paths"]["/api/ext/reservations/board"]["get"]["description"])
+    assert "희망 상담사" in board and "가장 늦게 배정된 방" in board and "따로 정한다" in board
+    assert "화면을 자주 불러도 확인 호출은 늘지 않는다" in board
+    detail = spec["paths"]["/api/ext/reservations/{reservationId}"]["get"]
+    assert "과거 시술 경로" in flat(detail["description"]) and "`reservation_gone`" in detail["responses"]["404"]["description"]
+    assert "`reservation_not_found`" in detail["responses"]["404"]["description"]
+    lang = flat(spec["paths"]["/api/ext/customers/{customerId}/language"]["put"]["description"])
+    assert "덮어쓰기 위험" in lang and "KOS 먼저" in lang
+    assert "예약 메모(`reservation.memo`)와 다른 칸" in flat(
+        spec["paths"]["/api/ext/reservations/{reservationId}/order-memo"]["put"]["description"])
+    assert "「차트 메모」 = 이 상담 메모" in flat(
+        spec["paths"]["/api/ext/reservations/{reservationId}/consultation-memo"]["put"]["description"])
+    assert "전역 유일하지 않다" in flat(spec["paths"]["/api/ext/clinic"]["get"]["description"])
+    staff = spec["paths"]["/api/ext/clinics/{clinicId}/staff"]["get"]
+    assert "역할 이름(`roleName`)으로 구분한다" in flat(staff["description"])
+    assert "`clinic_not_found`" in staff["responses"]["404"]["description"]
+    for m, p in STAFF_OPS:
+        h = next(x for x in spec["paths"][p][m]["parameters"] if x["name"] == "X-Ext-Staff-Id")
+        assert "신고한 값" in h["description"] and "검증하지 않는다" in h["description"] and not h.get("required")
+        assert ("없는 것으로 본다" if p.endswith("lookup") else "`400 invalid_request`") in h["description"]
+    section = spec["info"]["description"].split("## 외부 연동 API — `/api/ext/*`\n", 1)[1]
+    assert "`X-Ext-Staff-Id" in section and "/api/ext/clinics/{clinicId}/staff" in section

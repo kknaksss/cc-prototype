@@ -293,6 +293,17 @@ CREATE TABLE IF NOT EXISTS ext_call (
     status INTEGER NOT NULL, outcome TEXT NOT NULL  -- ok | 오류 code
 );
 CREATE INDEX IF NOT EXISTS ext_call_at ON ext_call (at);
+-- 처음 상담 대기 시각(SPEC-008 §3.6) — first_at 이 있는 행만 굳는다 · null = 시도 기록 · 지우지 않고 쌓는다
+CREATE TABLE IF NOT EXISTS consult_wait_first (
+    reservation_kos_id TEXT PRIMARY KEY,         -- KOS 일정 id(= reservation.kos_id)
+    first_at TEXT,                               -- 처음 CONSULTATION_WAITING 시각(UTC ISO) · 찾았을 때만
+    source TEXT,                                 -- kos_event_log · (대안) cc_poll · first_at 이 null 이면 null
+    checked_at TEXT NOT NULL,                    -- 마지막으로 이력 부르기를 예약한 시각(시도 예약 — 부르기 전에 적음)
+    last_failed INTEGER NOT NULL DEFAULT 0,      -- 마지막 시도 실패 · 결과 전 = 1 · 못 찾음 = 0
+    retries INTEGER NOT NULL DEFAULT 0,          -- 실패 재시도로 부른 횟수(3 이면 그만)
+    wait_called INTEGER NOT NULL DEFAULT 0,      -- 지금 대기 구간의 「대기를 새로 봄」 몫을 불렀나
+    final_tried INTEGER NOT NULL DEFAULT 0       -- 귀가 뒤 마지막 1번을 불렀나
+);
 """
 
 

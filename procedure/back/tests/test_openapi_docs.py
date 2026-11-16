@@ -92,9 +92,10 @@ def test_bearer_security_matches_require_login(client):
             op = spec["paths"][r.path_format][m.lower()]
             assert (op.get("security") == [{BEARER: []}]) is needs(r.dependant), f"{m} {r.path_format}"
             secured += needs(r.dependant)
-    # 로그인 없는 곳 = login · health · stream(?token=) · 공개 문진 2 · 외부 연동 6(ExtApiKey · SPEC-008 §8 0.3.0 —
-    # 메뉴 · 조회 · 예약 · 가능 시간대 · 과거 시술 · 예약 내역) — 나머지는 모두 Bearer
-    assert secured == n_ops - 5 - 6
+    # 로그인 없는 곳 = login · health · stream(?token=) · 공개 문진 2 · 외부 연동 13(ExtApiKey · SPEC-008 §8 0.3.0 —
+    # 메뉴 · 조회 · 예약 · 가능 시간대 · 과거 시술 · 예약 내역 · 0.4.0 — 접수 목록 · 예약 상세 · 고객 언어 · 오더 메모 ·
+    # 상담 메모 · 병원 정보 · 직원 목록) — 나머지는 모두 Bearer
+    assert secured == n_ops - 5 - 13
     assert spec["paths"]["/api/auth/me"]["get"]["security"] == [{BEARER: []}]
     assert spec["paths"]["/api/visits/{visit_id}/home"]["post"]["security"] == [{BEARER: []}]
     assert "security" not in spec["paths"]["/api/auth/login"]["post"]

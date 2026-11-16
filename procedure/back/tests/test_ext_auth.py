@@ -6,6 +6,7 @@ import pytest
 
 from tests.conftest import ADMIN
 from tests.ext_env import CHARTY, H_CHARTY, H_LINKY, LINKY, ext_calls, make_ext_env
+from tests.fake_kos import kst
 
 IP = "203.0.113.7"  # 문서용 주소(RFC 5737)
 LOOKUP = "/api/ext/customers/lookup"
@@ -291,4 +292,48 @@ def test_t44_one_limit_across_six(env):
     for _ in range(30):
         assert cl.get("/api/ext/availability", params={"date": "2026-10-22"}, headers=H_LINKY).status_code == 200
     r = cl.post("/api/ext/customers/visits", json={"name": "고객", "email": "a@example.com"}, headers=H_LINKY)
+    assert (r.status_code, code(r)) == (429, "too_many_requests")
+
+
+# ------------------------------------------------------------------ T68 새 일곱 공유 규칙(0.4.0)
+NEW7 = [("get", "/api/ext/reservations/board", {}), ("get", "/api/ext/reservations/{rid}", {}),
+        ("put", "/api/ext/customers/{cid}/language", {"json": {"language": "ja"}}),
+        ("put", "/api/ext/reservations/{rid}/order-memo", {"json": {"orderMemo": "x"}}),
+        ("put", "/api/ext/reservations/{rid}/consultation-memo", {"json": {"consultationMemo": "x"}}),
+        ("get", "/api/ext/clinic", {}), ("get", "/api/ext/clinics/1/staff", {})]
+
+
+def test_t68_shared_rules_new_seven(env):
+    c, fake, cl, mono = env
+    fake.add_resv("s-77", start=kst(11), flow="RECEPTION", status="IN_PROGRESS")
+    c.kos.resv.invalidate("2026-10-21")
+    cl.get("/api/ext/reservations/board", headers=H_LINKY)
+    with c.repo.tx() as tx:
+        rid = tx.reservation_id_of("s-77")
+        cid = tx.reservation(rid).customer_id
+    for m, path, kw in NEW7:
+        url = path.format(rid=rid, cid=cid)
+        r = getattr(cl, m)(url, **kw)
+        assert (r.status_code, code(r)) == (401, "ext_unauthorized") and r.headers["cache-control"] == "no-store", url
+        mono[0] += 61.0
+        r = getattr(cl, m)(url, headers=H_LINKY, **kw)
+        assert r.status_code == 200 and r.headers["cache-control"] == "no-store", (url, r.text)
+    want = {f"{m.upper()} {p.replace('{rid}', '{reservationId}').replace('{cid}', '{customerId}')}"
+            .replace("/clinics/1/", "/clinics/{clinicId}/") for m, p, _ in NEW7}
+    got = {x["endpoint"] for x in ext_calls(c) if x["client"] == "linky"}
+    assert want <= got  # 경로 틀만 — 실제 id 숫자 없음
+    assert all(f"/{rid}" not in x["endpoint"] and f"/{cid}/" not in x["endpoint"] for x in ext_calls(c))
+    r = cl.post("/api/ext/clinic", headers=H_LINKY)
+    assert (r.status_code, code(r)) == (405, "http_error")
+    r = cl.delete(f"/api/ext/reservations/{rid}/order-memo", headers=H_LINKY)
+    assert (r.status_code, code(r)) == (405, "http_error")
+
+
+def test_t68_one_limit_across_thirteen(env):
+    c, fake, cl, mono = env
+    for _ in range(30):
+        assert cl.get("/api/ext/menu", headers=H_LINKY).status_code == 200
+    for _ in range(30):
+        assert cl.get("/api/ext/clinic", headers=H_LINKY).status_code == 200
+    r = cl.get("/api/ext/reservations/board", headers=H_LINKY)
     assert (r.status_code, code(r)) == (429, "too_many_requests")

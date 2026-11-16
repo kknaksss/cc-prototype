@@ -288,3 +288,18 @@ def test_n2_schedule_read_4xx_401_502(env, status):
     fake.fail_paths["get-schedules-by-visitor"] = status
     for url in (VISITS, RESV):
         assert (post(cl, url).status_code, code(post(cl, url))) == (502, "kos_unavailable"), (status, url)
+
+
+# ------------------------------------------------------------------ T71 ⓐ ⓑ ⓒ — 본문 모델 그대로(0.4.2 · 검수 r2 N1)
+@pytest.mark.parametrize("url", [VISITS, RESV])
+def test_t71_customer_request_model_unchanged(env, url):
+    c, fake, cl = env
+    n = len(fake.calls)
+    for body in ({"customerId": 1}, {"name": "고객", "email": EMAIL, "customerId": 1}):  # ⓐ 모르는 키
+        r = cl.post(url, json=body, headers=H_LINKY)
+        assert (r.status_code, code(r)) == (400, "invalid_request")
+    assert kos_calls(fake, n) == []
+    r = cl.post(url, json={"name": "고객"}, headers=H_LINKY)  # ⓑ 지금 message 꼴
+    assert r.status_code == 400 and r.json()["error"]["message"].startswith("body.email: ")
+    schema = cl.get("/api/openapi.json").json()["components"]["schemas"]["ExtCustomerRequest"]  # ⓒ
+    assert {"name", "email"} <= set(schema["required"]) and "customerId" not in schema["properties"]

@@ -128,7 +128,8 @@ def test_t14_no_tickets_vs_no_customer_vs_failure(env):
     fake.visitors_page = page(v("v-1"))
     r = post(cl)
     assert r.status_code == 200 and r.json()["tickets"] == []  # 묶음 {}
-    assert calls(fake, "get-ticket-bundles")[-1] == {"visitorId": "v-1"}
+    assert calls(fake, "get-ticket-bundles")[-1] == {"visitorId": "v-1",  # 0.4.0 — 내부 시술권(T50)
+                                                     "sort": {"by": "ticket.createdDateTimeUtc", "order": 2}}
     fake.bundles["v-1"] = {"data": []}
     assert post(cl).json()["tickets"] == []
     fake.fail_paths["get-ticket-bundles"] = 500
@@ -154,9 +155,9 @@ def test_t15_ticket_line(env):
     r = post(cl)
     assert r.status_code == 200
     assert r.json()["tickets"] == [
-        {"optionId": "opt-s1", "optionTitle": "산 이름", "remainingCount": 1, "totalCount": 3,
+        {"optionId": "opt-s1", "optionTitle": "산 이름", "remainingCount": 1, "inUseCount": 1, "totalCount": 3,
          "purchasedDate": "2026-10-01", "bundlePrice": {"value": 33000, "currency": "KRW"}},  # 14:00Z = KST 23:00
-        {"optionId": "opt-gone", "optionTitle": "옛 묶음", "remainingCount": 2, "totalCount": 3,
+        {"optionId": "opt-gone", "optionTitle": "옛 묶음", "remainingCount": 2, "inUseCount": 0, "totalCount": 3,
          "purchasedDate": "2026-10-01", "bundlePrice": {"value": 50000, "currency": "KRW"}}]  # 15:30Z = KST 다음날
     text = r.text
     assert "purchasePrice" not in text and "VatIncluded" not in text
@@ -168,7 +169,8 @@ def test_t16_customer_fields(env):
     fake.visitors_page = page(v("v-1", isNew=True, lastVisitedDateTimeUtc="2026-10-20T15:10:00.000Z"))
     r = post(cl)
     cust = r.json()["customer"]
-    assert set(r.json()) == {"customer", "tickets"} and set(cust) == {"customerId", "name", "isNew", "lastVisitDate"}
+    assert set(r.json()) == {"customer", "tickets", "prepaidCards", "partialErrors"}
+    assert set(cust) == {"customerId", "name", "isNew", "lastVisitDate"}
     assert cust["isNew"] is True and cust["lastVisitDate"] == "2026-10-21"
     for leak in ("v-1", "C-v-1", "1990-01-02", "1000000000", "X0000000", EMAIL, "JP", "FEMALE"):
         assert leak not in r.text

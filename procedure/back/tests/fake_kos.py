@@ -183,6 +183,12 @@ class ResvFake:
         self._new = 0
         self.visitors_page: dict | None = None  # get-visitors 응답을 통째로(외부 조회 시험)
         self.bundles: dict[str, dict] = {}  # visitorId → get-ticket-bundles 응답 통째로(없으면 {})
+        self.prepaid: dict[str, dict] = {}  # visitorId → 공개 get-prepaid-card-summaries 응답 통째로(없으면 {})
+        self.event_logs: dict[str, object] = {}  # scheduleId → 내부 get-schedule-event-logs 응답 통째로(없으면 {"data": []})
+        self.hospital: dict = {"data": {}}  # 내부 get-hospital 응답 통째로
+        self.op_timetable: dict = {"data": {}}  # 내부 get-default-operation-timetable 응답 통째로
+        self.days_off: dict = {"data": []}  # 내부 get-default-days-off 응답 통째로
+        self.internal_accounts: dict | None = None  # 내부 account/v2 get-accounts 응답 통째로(None = 공개와 같은 목록)
         # 시술 · 상품 메뉴(SPEC-008 §4.1) — 작업 이름 → data 값(배열이 아니면 모양 오류 시험). 기본 = 빈 메뉴
         self.menu: dict[str, object] = {n: [] for n in MENU_NAMES - {"get-product-options", "get-ticket-bundles"}}
         self.option_services: dict[str, dict] = {}  # SINGLE 옵션 id → getProductOptions 의 medicalService(없으면 응답에서 빠짐)
@@ -551,6 +557,8 @@ class FakeKos(ResvFake):
             return httpx.Response(401, json={})
         if name == "get-user-account":
             return httpx.Response(200, json={"data": {"id": SYSTEM, "name": "시스템"}})
+        if name == "get-accounts" and kind == "internal" and self.internal_accounts is not None:
+            return httpx.Response(200, json=deepcopy(self.internal_accounts))
         if name == "get-accounts":
             return httpx.Response(200, json={"data": deepcopy(self.accounts)})
         if name == "get-rooms":
@@ -559,6 +567,28 @@ class FakeKos(ResvFake):
             today = [x for x in self.resv if (x.get("zone") or {}).get("id") == ZONE and x.get("listed", True)]
             return httpx.Response(200, json={"data": [{"zone": {"id": ZONE},
                                                        "schedules": deepcopy(self.schedules) + _public(today)}]})
+        if name == "get-prepaid-card-summaries":
+            return httpx.Response(200, json=deepcopy(self.prepaid.get(body.get("visitorId"), {})))
+        if name == "get-schedule-event-logs":
+            return httpx.Response(200, json=deepcopy(self.event_logs.get(body.get("scheduleId"), {"data": []})))
+        if name in ("change-order-memo", "update-schedule-consultation-info"):  # 외부 쓰기(SPEC-008 §6.14 · §6.15)
+            if name in self.resv_fail:
+                st, payload = self.resv_fail[name]
+                return httpx.Response(st, json=payload)
+            x = self._resv_sch(body.get("scheduleId"))
+            if x is None:
+                return httpx.Response(400, json={"className": "InvalidRequestException"})
+            if name == "change-order-memo":
+                x["orderMemo"] = body["orderMemo"]
+            else:
+                x.setdefault("consultation", {})["consultationMemo"] = body["consultationMemo"]
+            return httpx.Response(200, json={})
+        if name == "get-hospital":
+            return httpx.Response(200, json=deepcopy(self.hospital))
+        if name == "get-default-operation-timetable":
+            return httpx.Response(200, json=deepcopy(self.op_timetable))
+        if name == "get-default-days-off":
+            return httpx.Response(200, json=deepcopy(self.days_off))
         if name in MENU_NAMES:
             return self.menu_handle(name, body)
         if name in RESV_NAMES or (name in ("change-flow-step", "change-tasks-room")

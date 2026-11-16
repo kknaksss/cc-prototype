@@ -199,6 +199,36 @@ class Tx:
     def add_event(self, at: datetime, actor: str, type_: str, visit_id: int | None, payload: dict[str, Any]) -> int:
         return self._insert("event_log", {"at": at, "actor": actor, "type": type_, "visit_id": visit_id, "payload": payload})
 
+    def events_for_reservations(self, types: tuple[str, ...], reservation_ids: list[int]) -> list[dict[str, Any]]:
+        """그 type 이면서 payload.reservationId 가 그 id 인 줄만(외부 접수 목록 · 코드 검수 r1 W5). `events()` 는 그대로."""
+        if not types or not reservation_ids:
+            return []
+        sql = (f"SELECT * FROM event_log WHERE type IN ({','.join('?' * len(types))}) "
+               f"AND json_extract(payload, '$.reservationId') IN ({','.join('?' * len(reservation_ids))}) ORDER BY id")
+        return [{**dict(r), "payload": json.loads(r["payload"])} for r in self.con.execute(sql, [*types, *reservation_ids])]
+
+    # ---------------------------------------------------------------- 처음 상담 대기 시각(SPEC-008 §3.6)
+    def consult_waits(self, kos_ids: list[str]) -> dict[str, dict[str, Any]]:
+        if not kos_ids:
+            return {}
+        marks = ",".join("?" * len(kos_ids))
+        rows = self.con.execute(f"SELECT * FROM consult_wait_first WHERE reservation_kos_id IN ({marks})", kos_ids)
+        return {r["reservation_kos_id"]: dict(r) for r in rows}
+
+    def put_consult_wait(self, kos_id: str, fields: dict[str, Any]) -> None:
+        """그 칸만 고친다 — 굳은 행(first_at 있음)은 고치지 않는다. 행이 없으면 만든다(그때는 checked_at 이 있어야 한다)."""
+        cols = list(fields)
+        cur = self.con.execute(f"UPDATE consult_wait_first SET {', '.join(f'{c} = ?' for c in cols)} "
+                               "WHERE reservation_kos_id = ? AND first_at IS NULL", [*fields.values(), kos_id])
+        if cur.rowcount == 0 and not self.con.execute("SELECT 1 FROM consult_wait_first WHERE reservation_kos_id = ?",
+                                                      (kos_id,)).fetchone():
+            self.con.execute(f"INSERT INTO consult_wait_first (reservation_kos_id, {', '.join(cols)}) "
+                             f"VALUES (?{', ?' * len(cols)})", [kos_id, *fields.values()])
+
+    def set_visit_order_memo(self, kos_id: str, memo: str) -> int:
+        """시술 현황 사본 visit 의 오더 메모만 — 행이 있을 때만 UPDATE(없으면 0 · 새 행 만들지 않음 · SPEC-008 §6.14 4)."""
+        return self.con.execute("UPDATE visit SET order_memo = ? WHERE kos_id = ?", (memo, kos_id)).rowcount
+
     def start_anesthesia(self, visit_id: int, at: datetime, event_id: int) -> int:
         return self._insert("anesthesia", {"visit_id": visit_id, "started_at": at, "start_event_id": event_id})
 
@@ -598,6 +628,13 @@ class Tx:
         out = {r["id"]: _customer(r) for r in self.con.execute("SELECT * FROM customer")}
         return out if ids is None else {k: v for k, v in out.items() if k in ids}
 
+    def customers_in(self, ids: list[int]) -> dict[int, Customer]:
+        """그 id 의 고객 사본만(외부 접수 목록 — 그날 줄의 고객 · 코드 검수 r1 W5). `customers()` 는 그대로."""
+        if not ids:
+            return {}
+        marks = ",".join("?" * len(ids))
+        return {r["id"]: _customer(r) for r in self.con.execute(f"SELECT * FROM customer WHERE id IN ({marks})", ids)}
+
     def rooms(self) -> list[Room]:
         return [_room(r) for r in self.con.execute('SELECT * FROM room ORDER BY "order", title, id')]
 
@@ -850,6 +887,16 @@ class Repository:
     @contextmanager
     def tx(self) -> Iterator[Tx]:
         with self.db.connect() as con:
+            yield Tx(con)
+
+    @contextmanager
+    def immediate(self) -> Iterator[Tx]:
+        """짧은 쓰기 트랜잭션 — 시작할 때 쓰기 잠금(`BEGIN IMMEDIATE`).
+
+        안에서 await · KOS 호출을 하지 않는다(SPEC-008 §6.11 4).
+        """
+        with self.db.connect() as con:
+            con.execute("BEGIN IMMEDIATE")
             yield Tx(con)
 
     def world(self) -> World:

@@ -26,6 +26,7 @@ from app.domain.reservation_rules import (
     axis,
     blank,
     can,
+    consultation_passed,
     consultation_started_at,
     day_range,
     draggable,
@@ -578,10 +579,14 @@ class ReservationService:
                        identity_locked=identity_locked(today_resvs, cust.id if cust else None)),
         })
 
-    async def _detail_reads(self, r: Reservation, cust, main: str) -> dict[str, Any]:
-        """상세 KOS 읽기 — 하나가 실패해도 나머지는 쓴다(§7.3 · OQ-757)."""
+    async def _detail_reads(self, r: Reservation, cust, main: str, *, amount: bool = True) -> dict[str, Any]:
+        """상세 KOS 읽기 — 하나가 실패해도 나머지는 쓴다(§7.3 · OQ-757).
+
+        amount = 귀가 · 수납 id 있는 예약의 수납 금액도 부르나(직원 기본 True · 외부 상세는 False — SPEC-008 §6.12 4).
+        `previous_err` = 이전 방문 조회 실패 문구(직원 응답은 지금처럼 `previous = []` 만 쓴다 · 외부 상세가 null 로 낸다).
+        """
         out: dict[str, Any] = {"visitor": (None, "고객 정보 없음"), "form": None, "submit": None, "submit_err": None,
-                               "form_err": None, "previous": [], "amount": None}
+                               "form_err": None, "previous": [], "previous_err": None, "amount": None}
         rt = self.runtime
         if rt is None or cust is None:
             if rt is None:
@@ -592,7 +597,7 @@ class ReservationService:
         vid = cust.kos_id
         calls = [client.internal(PATH_VISITOR, {"id": vid}), client.open(PATH_Q_FORM, {"visitorId": vid}),
                  client.open(PATH_Q_SUBMIT, {"visitorId": vid}), client.open(PATH_BY_VISITOR, {"visitorId": vid})]
-        want_amount = main == "home" and bool(r.purchase_ids)
+        want_amount = amount and main == "home" and bool(r.purchase_ids)
         if want_amount:
             calls.append(client.open(PATH_PURCHASES, {"purchaseIds": r.purchase_ids}))
         got = await asyncio.gather(*calls, return_exceptions=True)
@@ -614,6 +619,8 @@ class ReservationService:
             out["submit"] = submit
         if not isinstance(prev, BaseException):
             out["previous"] = [x for x in prev.get("data") or [] if isinstance(x, dict)]
+        else:
+            out["previous_err"] = kos_errors.describe(prev)
         if want_amount and not isinstance(got[4], BaseException):
             out["amount"] = purchase_amount([p for p in got[4].get("data") or [] if isinstance(p, dict)])
         return out
@@ -650,10 +657,8 @@ class ReservationService:
         reception = [e for e in events if e["type"] == "reception"]
         calls = [e for e in events if e["type"] == "counselor_call"]
         cons, c_at = None, None
-        # 상담 거침 = 지금 상담 단계 · ccc 접수가 상담 대기로 끝남 · [+ 상담 추가](KOS consultationRequired 는 안 읽는다 · 10-27)
-        routed = any(e["type"] == "reception" and e["payload"].get("endStep") == "CONSULTATION_WAITING" for e in events) \
-            or any(e["type"] == "consultation_add" for e in events)
-        if r.flow_step in ("CONSULTATION_WAITING", "CONSULTATION") or routed:
+        # 상담 거침 = 판정 함수 하나(외부 board 와 같이 · SPEC-008 §6.11 3) — KOS consultationRequired 는 안 읽는다(10-27)
+        if consultation_passed(after, r.flow_step, events):
             states = {"CONSULTATION_WAITING": "waiting", "CONSULTATION": "doing", "RECEPTION": "none"}
             state = states.get(r.flow_step or "", "done")
             last = calls[-1] if calls else None
@@ -1053,7 +1058,7 @@ class ReservationService:
         return NoticeResponse.model_validate({"notice": {"id": n.id, "content": n.content, "releasedAt": iso(n.released_at)}})
 
     # ------------------------------------------------------------------ §5.13 고객 정보 · 특이사항
-    async def personal(self, actor: Account, customer_id: int, personal: PersonalIn) -> None:
+    async def personal(self, actor: Account | str, customer_id: int, personal: PersonalIn) -> None:
         with self.repo.tx() as tx:
             cust = tx.customer(customer_id)
             if cust is None:

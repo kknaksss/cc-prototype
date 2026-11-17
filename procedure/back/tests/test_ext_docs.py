@@ -137,6 +137,10 @@ def test_t70_charty1_docs(client):
     assert "전역 유일하지 않다" in flat(spec["paths"]["/api/ext/clinic"]["get"]["description"])
     staff = spec["paths"]["/api/ext/clinics/{clinicId}/staff"]["get"]
     assert "역할 이름(`roleName`)으로 구분한다" in flat(staff["description"])
+    staff_doc = flat(staff["description"])
+    assert "`kosAccountId`" in staff_doc and "이메일 · 실명 · KOS id 는 내지 않는다" not in staff_doc
+    item = spec["components"]["schemas"]["ExtStaff"]["properties"]
+    assert all(item[k].get("description") for k in ("email", "realName", "kosAccountId"))
     assert "`clinic_not_found`" in staff["responses"]["404"]["description"]
     for m, p in STAFF_OPS:
         h = next(x for x in spec["paths"][p][m]["parameters"] if x["name"] == "X-Ext-Staff-Id")
@@ -144,3 +148,4 @@ def test_t70_charty1_docs(client):
         assert ("없는 것으로 본다" if p.endswith("lookup") else "`400 invalid_request`") in h["description"]
     section = spec["info"]["description"].split("## 외부 연동 API — `/api/ext/*`\n", 1)[1]
     assert "`X-Ext-Staff-Id" in section and "/api/ext/clinics/{clinicId}/staff" in section
+    assert "예외 — 직원 목록 `kosAccountId` 는 직원의 KOS 계정 id 문자열" in section  # 0.4.7 앱 설명 id 줄

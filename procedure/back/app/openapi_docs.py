@@ -106,7 +106,7 @@ email 이 없는 기존 고객은 조회하면 `404` 다. 그 고객을 처음 �
 - **금액**: `{value: 정수(원), currency}`. 메뉴 정가 `listPriceExVat` = 부가세 별도. 시술권 `bundlePrice` = KOS 묶음 가격 그대로
   (고객이 낸 돈이 아니고 부가세 포함 여부를 표기하지 않는다).
 - **id**: 메뉴 · 시술권의 카테고리 · 상품 · 옵션 · 시술 id = KOS id 문자열 · 고객 · 예약 id = ccc 정수
-  (고객의 KOS id 는 내지 않는다).
+  (고객의 KOS id 는 내지 않는다 · 예외 — 직원 목록 `kosAccountId` 는 직원의 KOS 계정 id 문자열).
 
 ## 통역 WebSocket — `WS /api/interpret`
 OpenAPI 는 WebSocket 을 싣지 못해 여기 적는다. 한국어 ↔ 고른 언어 양방향 실시간 통역 중계(자막 + 번역 음성).

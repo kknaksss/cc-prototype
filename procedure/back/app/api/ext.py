@@ -518,13 +518,16 @@ CLINIC_DOC = SHARED + """
 - **KOS 호출**: 병원 1 + 운영 시간 1 + 휴무 1 = 3(동시).
 """
 STAFF_DOC = SHARED + """
-병원(`clinicId`)의 직원 목록 — `staffId` · 이름 · 역할 이름 · 역할 태그 · 활성. 비활성 직원도 싣는다 · KOS 차례.
+병원(`clinicId`)의 직원 목록 — `staffId` · 이름 · 역할 이름 · 역할 태그 · 활성 · `email` · `realName` ·
+`kosAccountId`. 비활성 직원도 싣는다 · KOS 차례.
 
 - **외주 직원은 역할 이름(`roleName`)으로 구분한다**(예 「CS팀(콜센터)」). `roleTags` 에 `CALL_COUNSELOR` 가 있다고
   외주가 아니다 — 코디 · 관리자에게도 붙는다.
 - `staffId` = ccc 직원 사본 id(접수 목록 · 예약 상세의 `counselor.staffId` 와 같다). 사본에 아직 없는 새 계정(1시간 동기화 전)은
   `staffId = null` · `roleTags = []`.
-- KOS 시스템 계정 · 서버 제외 목록 계정은 뺀다. 이메일 · 실명 · KOS id 는 내지 않는다.
+- KOS 시스템 계정 · 서버 제외 목록 계정은 뺀다.
+- `email` · `realName` · `kosAccountId` 를 낸다 — `kosAccountId` 는 KOS 계정 id 이고 `staffId`(ccc)와 다른 체계다 ·
+  `email` · `realName` 은 KOS 에 값이 없으면 null. `realName` 은 `name`(KOS 표시 이름)과 다른 칸이다.
 - **KOS 호출**: 내부 계정 목록 1(`clinicId` 가 다르면 0).
 """
 NO_KOS_OR_FAIL = (502, "kos_unavailable", "KOS 조회가 실패했을 때(네트워크 · 5xx · 4xx · KOS 인증 실패 · 응답 모양 오류) · "

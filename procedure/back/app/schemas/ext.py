@@ -498,6 +498,12 @@ class ExtStaff(BaseModel):
         "역할 태그(`ADMIN` · `DOCTOR` · `COUNSELOR` · `NURSE` · `SKINCARE` · `CALL_COUNSELOR` · `COORDINATOR`) — ccc 직원 "
         "사본 값. 사본에 없는 계정이면 `[]`. `CALL_COUNSELOR` 가 있다고 외주가 아니다(코디 · 관리자에게도 붙는다)"))
     active: bool = Field(description="활성 계정인가(KOS 값 · 비활성 직원도 싣는다)")
+    email: str | None = Field(description="이메일(KOS 지금 값). KOS 에 값이 없으면 null")
+    realName: str | None = Field(description=(
+        "실명(KOS `realName` 지금 값). KOS 에 값이 없으면 null. `name`(KOS 표시 이름)과 다른 칸이다"))
+    kosAccountId: str = Field(description=(
+        "KOS 계정 id(문자열 · null 없음 · 사본에 없는 계정도 값이 있다). `staffId`(ccc)와 다른 체계다 — 다른 ext 응답의 "
+        "`staffId` 와 이 값을 잇는 곳은 이 목록뿐이다"))
 
 
 class ExtStaffList(BaseModel):

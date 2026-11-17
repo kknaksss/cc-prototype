@@ -897,5 +897,6 @@ class ExtService:
             st = copy.get(kid)
             out.append({"staffId": st.id if st else None, "name": str(a.get("name") or ""),
                         "roleName": a.get("roleName") or None, "roleTags": list(st.role_tags) if st else [],
-                        "active": bool(a.get("activate"))})
+                        "active": bool(a.get("activate")), "email": a.get("email") or None,
+                        "realName": a.get("realName") or None, "kosAccountId": kid})
         return {"clinicId": clinic_id, "staff": out}

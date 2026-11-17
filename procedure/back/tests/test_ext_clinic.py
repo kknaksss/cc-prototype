@@ -1,8 +1,10 @@
 """SPEC-008 0.4.0 · 0.4.3 §6.16 `GET /api/ext/clinic` · §6.17 `GET /api/ext/clinics/{clinicId}/staff` — T66 · T67."""
 
+import logging
+
 import pytest
 
-from tests.ext_env import H_LINKY, make_ext_env
+from tests.ext_env import H_LINKY, ext_calls, make_ext_env
 from tests.fake_kos import SYSTEM
 
 TOKEN_CALLS = {"exchange-token", "sign-in", "get-user-account"}
@@ -118,11 +120,37 @@ def test_t67_staff(env):
     doc, nurse, new = d["staff"]
     with c.repo.tx() as tx:
         copy = {x.kos_id: x for x in tx.staff()}
-    assert doc == {"staffId": copy["doc-a"].id, "name": "가 원장", "roleName": "원장", "roleTags": ["DOCTOR"], "active": True}
-    assert nurse["active"] is False and nurse["roleTags"] == ["NURSE"]
-    assert new == {"staffId": None, "name": "<새 직원>", "roleName": "CS팀(콜센터)", "roleTags": [], "active": True}
-    for leak in ("@example.com", "<실명", "u-doc-a", "doc-a", "L-0", "mfa", "roleId"):
+    keys = {"staffId", "name", "roleName", "roleTags", "active", "email", "realName", "kosAccountId"}
+    assert all(set(x) == keys for x in d["staff"])  # 0.4.7 D-48 — 여덟
+    assert doc == {"staffId": copy["doc-a"].id, "name": "가 원장", "roleName": "원장", "roleTags": ["DOCTOR"], "active": True,
+                   "email": "doc-a@example.com", "realName": "<실명doc-a>", "kosAccountId": "doc-a"}
+    assert nurse["active"] is False and nurse["roleTags"] == ["NURSE"] and nurse["kosAccountId"] == "nurse-0"
+    assert new == {"staffId": None, "name": "<새 직원>", "roleName": "CS팀(콜센터)", "roleTags": [], "active": True,
+                   "email": "new-1@example.com", "realName": "<실명new-1>", "kosAccountId": "new-1"}  # 사본 없어도 id
+    for leak in ("u-doc-a", "L-0", "mfa", "roleId", "userId", "licenseNumber", "r-1"):
         assert leak not in r.text
+
+
+def test_t67_staff_email_realname_null(env, caplog):
+    c, fake, cl = env
+    caplog.set_level(logging.DEBUG)
+    blank, empty, gone = (internal(k, f"<표시{k}>", "원장") for k in ("kos-acct-x1", "kos-acct-x2", "kos-acct-x3"))
+    blank |= {"email": None, "realName": None}
+    empty |= {"email": "", "realName": ""}
+    del gone["email"], gone["realName"]
+    fake.internal_accounts = {"data": [blank, empty, gone, internal("kos-acct-x4", "<표시4>", "원장")]}
+    n = len(fake.calls)
+    r = cl.get("/api/ext/clinics/1/staff", headers=H_LINKY)
+    assert r.status_code == 200, r.text
+    assert kos(fake, n) == ["get-accounts"]
+    got = r.json()["staff"]
+    assert [(x["email"], x["realName"]) for x in got[:3]] == [(None, None)] * 3
+    assert [x["kosAccountId"] for x in got] == ["kos-acct-x1", "kos-acct-x2", "kos-acct-x3", "kos-acct-x4"]
+    assert [x["name"] for x in got] == ["<표시kos-acct-x1>", "<표시kos-acct-x2>", "<표시kos-acct-x3>", "<표시4>"]
+    assert (got[3]["email"], got[3]["realName"]) == ("kos-acct-x4@example.com", "<실명kos-acct-x4>")
+    dump = repr(ext_calls(c)) + caplog.text  # 응답 밖에 세 값 0
+    for v in ("kos-acct-x", "@example.com", "<실명"):
+        assert v not in dump, v
 
 
 def test_t67_errors(env):
@@ -132,6 +160,10 @@ def test_t67_errors(env):
     assert (r.status_code, r.json()["error"]["code"]) == (404, "clinic_not_found") and kos(fake, n) == []
     assert cl.get("/api/ext/clinics/x/staff", headers=H_LINKY).status_code == 400
     fake.internal_accounts = {"data": {"x": 1}}
+    assert cl.get("/api/ext/clinics/1/staff", headers=H_LINKY).status_code == 502
+    no_id = internal("x", "<이름>", "원장")
+    del no_id["id"]
+    fake.internal_accounts = {"data": [internal("kos-acct-ok", "<이름>", "원장"), no_id]}  # id 없는 원소 하나 → 502
     assert cl.get("/api/ext/clinics/1/staff", headers=H_LINKY).status_code == 502
     fake.internal_accounts = None
     fake.fail_paths["get-accounts"] = 500
